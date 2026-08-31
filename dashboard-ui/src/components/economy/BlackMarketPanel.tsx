@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Check, PackagePlus, RefreshCw, RotateCcw, ShoppingCart, Store, Truck, WalletCards } from 'lucide-react';
+import { Archive, Check, PackagePlus, RefreshCw, RotateCcw, ShoppingCart, Store, Trash2, Truck, WalletCards } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -31,7 +31,6 @@ interface Listing {
   name: string;
   description: string | null;
   price: string;
-  maxPerPurchase: number;
   active: boolean;
   archivedAt: string | null;
   createdAt: string;
@@ -78,6 +77,7 @@ interface VendorPayoutDraft {
 }
 
 const MAX_MARKET_PRICE = 1_000_000_000_000_000n;
+const MAX_TECHNICAL_QUANTITY = 2_147_483_647;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 function hasControlChars(value: string): boolean {
@@ -115,7 +115,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   const qc = useQueryClient();
   const scope = `slot=${encodeURIComponent(slot)}`;
   const [vendorName, setVendorName] = useState('');
-  const [listing, setListing] = useState({ vendorAccountId: '', name: '', description: '', price: '', maxPerPurchase: '10' });
+  const [listing, setListing] = useState({ vendorAccountId: '', name: '', description: '', price: '' });
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string, PurchaseDraft>>({});
   const [payoutDrafts, setPayoutDrafts] = useState<Record<string, VendorPayoutDraft>>({});
   const [refundReasons, setRefundReasons] = useState<Record<string, string>>({});
@@ -204,10 +204,9 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       name: listing.name,
       description: listing.description.trim() || null,
       price: listing.price.trim(),
-      maxPerPurchase: Number(listing.maxPerPurchase),
     }),
     onSuccess: row => {
-      setListing(current => ({ ...current, name: '', description: '', price: '', maxPerPurchase: '10' }));
+      setListing(current => ({ ...current, name: '', description: '', price: '' }));
       setMessage({ ok: true, text: syncText(`Angebot „${row.name}“ erstellt.`, row.syncWarning) });
       invalidate();
     },
@@ -220,7 +219,18 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       setMessage({ ok: true, text: syncText(`Angebot „${row.name}“ archiviert.`, row.syncWarning) });
       invalidate();
     },
-    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
+    onError: (error: Error) => setMessage({ ok: false, text: `Archivierung fehlgeschlagen: ${error.message}` }),
+  });
+
+  const removeListing = useMutation({
+    mutationFn: (id: string) => api.del<{ ok: boolean; removed: { id: string; name: string; mode: 'CONTROL_HIDDEN' }; syncWarning?: string | null }>(
+      `/api/v2/guilds/${guildId}/economy/black-market/listings/${id}?${scope}`,
+    ),
+    onSuccess: result => {
+      setMessage({ ok: true, text: syncText(`Angebot „${result.removed.name}“ entfernt. Bestehende Bestellungen und Audit-Historie bleiben erhalten.`, result.syncWarning) });
+      invalidate();
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Entfernen fehlgeschlagen: ${error.message}` }),
   });
 
   const purchaseListing = useMutation({
@@ -272,8 +282,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     && listing.name.trim().length >= 1 && listing.name.trim().length <= 120
     && !hasControlChars(listing.name.trim())
     && listing.description.length <= 500
-    && /^\d+$/.test(listing.price) && BigInt(listing.price || '0') >= 1n && BigInt(listing.price || '0') <= MAX_MARKET_PRICE
-    && /^\d+$/.test(listing.maxPerPurchase) && Number(listing.maxPerPurchase) >= 1 && Number(listing.maxPerPurchase) <= 1000;
+    && /^\d+$/.test(listing.price) && BigInt(listing.price || '0') >= 1n && BigInt(listing.price || '0') <= MAX_MARKET_PRICE;
 
   return (
     <Card>
@@ -297,7 +306,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Gegenstände sind Freitext: schreibe sie genau so hinein, wie sie angezeigt werden sollen — inklusive Emoji, z. B. „🔫 M4A1“. Angebote besitzen keinen Mengenbestand mehr; verfügbar ist ein Angebot, solange es aktiv ist. V-Bot ergänzt automatisch die Server-Währung {currencyName} {currencyEmoji}. Kauf, Zahlung und Bestellung bleiben atomar gebucht.
+        Gegenstände sind Freitext: schreibe sie genau so hinein, wie sie angezeigt werden sollen — inklusive Emoji, z. B. „🔫 M4A1“. Angebote besitzen weder Mengenbestand noch ein konfigurierbares Kauflimit. Sie bleiben verfügbar, solange sie aktiv sind. Entfernen blendet das Angebot aus und beendet Direktkäufe, ohne bestehende Bestellungen oder Audit-Historie zu zerstören. V-Bot ergänzt automatisch die Server-Währung {currencyName} {currencyEmoji}.
       </p>
 
       <BlackMarketDiscordSettings guildId={guildId} slot={slot} canManage={canManage} onMessage={setMessage} />
@@ -354,13 +363,9 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                 <span className="text-muted block mb-1">Gegenstand / Item</span>
                 <Input value={listing.name} onChange={e => setListing(current => ({ ...current, name: e.target.value }))} maxLength={120} placeholder="z. B. 🔫 M4A1" />
               </label>
-              <label className="text-xs">
+              <label className="text-xs sm:col-span-2">
                 <span className="text-muted block mb-1">Preis in {currencyName} {currencyEmoji}</span>
                 <Input value={listing.price} onChange={e => setListing(current => ({ ...current, price: e.target.value.trim() }))} inputMode="numeric" placeholder="Preis" />
-              </label>
-              <label className="text-xs">
-                <span className="text-muted block mb-1">Max. pro Kauf</span>
-                <Input value={listing.maxPerPurchase} onChange={e => setListing(current => ({ ...current, maxPerPurchase: e.target.value.trim() }))} inputMode="numeric" placeholder="Max. pro Kauf" />
               </label>
               <label className="text-xs sm:col-span-2">
                 <span className="text-muted block mb-1">Beschreibung (optional)</span>
@@ -381,23 +386,36 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
             const buyDraft = purchaseDrafts[row.id] ?? { quantity: '1', sourcePocket: 'WALLET' as const };
             const buyQuantity = Number(buyDraft.quantity);
             const buyValid = row.active && /^\d+$/.test(buyDraft.quantity)
-              && Number.isSafeInteger(buyQuantity) && buyQuantity >= 1 && buyQuantity <= Math.min(1000, row.maxPerPurchase);
+              && Number.isSafeInteger(buyQuantity) && buyQuantity >= 1 && buyQuantity <= MAX_TECHNICAL_QUANTITY;
             return (
               <div key={row.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2"><strong className="text-white break-words">{row.name}</strong><Badge variant={row.active ? 'ok' : 'neutral'}>{row.active ? 'AKTIV' : 'ARCHIVIERT'}</Badge></div>
-                    <p className="text-xs text-muted mt-1">Preis <strong className="text-white">{money(row.price, currencyEmoji)}</strong> · Limit {row.maxPerPurchase}</p>
+                    <p className="text-xs text-muted mt-1">Preis <strong className="text-white">{money(row.price, currencyEmoji)}</strong></p>
                     {row.description && <p className="text-xs text-muted/80 mt-1">{row.description}</p>}
                   </div>
-                  {row.active && canManage && (
-                    <Button aria-label={`Angebot ${row.name} archivieren`} size="sm" variant="danger" disabled={archiveListing.isPending} onClick={() => archiveListing.mutate(row.id)}><Archive className="h-3.5 w-3.5" /></Button>
+                  {canManage && (
+                    <div className="flex items-center gap-2">
+                      {row.active && (
+                        <Button aria-label={`Angebot ${row.name} archivieren`} size="sm" variant="ghost" disabled={archiveListing.isPending || removeListing.isPending} onClick={() => archiveListing.mutate(row.id)}><Archive className="h-3.5 w-3.5" /></Button>
+                      )}
+                      <Button
+                        aria-label={`Angebot ${row.name} entfernen`}
+                        size="sm"
+                        variant="danger"
+                        disabled={removeListing.isPending || archiveListing.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Angebot „${row.name}“ wirklich entfernen? Bestehende Bestellungen bleiben erhalten.`)) removeListing.mutate(row.id);
+                        }}
+                      ><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
                   )}
                 </div>
 
                 {row.active && (
                   <div className="mt-3 pt-3 border-t border-border/50 flex flex-wrap items-end gap-2">
-                    <label className="text-xs"><span className="text-muted block mb-1">Kaufmenge</span><Input aria-label={`Kaufmenge ${row.name}`} className="w-20" value={buyDraft.quantity} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, quantity: e.target.value.trim() } }))} inputMode="numeric" /></label>
+                    <label className="text-xs"><span className="text-muted block mb-1">Kaufmenge</span><Input aria-label={`Kaufmenge ${row.name}`} className="w-28" value={buyDraft.quantity} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, quantity: e.target.value.trim() } }))} inputMode="numeric" /></label>
                     <label className="text-xs"><span className="text-muted block mb-1">Bezahlen aus</span><Select aria-label={`Bezahlen aus ${row.name}`} value={buyDraft.sourcePocket} onChange={e => setPurchaseDrafts(current => ({ ...current, [row.id]: { ...buyDraft, sourcePocket: e.target.value as 'WALLET' | 'BANK' } }))}><option value="WALLET">Wallet</option><option value="BANK">Bank</option></Select></label>
                     <Button size="sm" disabled={!buyValid || purchaseListing.isPending} onClick={() => { setMessage(null); purchaseListing.mutate({ id: row.id, quantity: buyQuantity, sourcePocket: buyDraft.sourcePocket }); }}><ShoppingCart className="h-3.5 w-3.5 mr-1" />{purchaseListing.isPending ? 'Buche…' : 'Kaufen'}</Button>
                   </div>
