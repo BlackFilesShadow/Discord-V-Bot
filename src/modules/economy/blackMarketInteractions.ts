@@ -13,7 +13,7 @@ import { asGuildId, asNitradoConnId, asUserDiscordId, type GuildId, type Nitrado
 import { logger } from '../../utils/logger';
 import { buyInventorylessMarketListing } from './blackMarketInventoryless';
 import { syncMarketDiscordProjection } from './blackMarketDiscord';
-import { syncVirtualAccountProjection } from './virtualAccountDiscord';
+import { syncVirtualAccountProjectionLive } from './virtualAccountLiveUpdates';
 import type { VirtualAccountRawDb } from './virtualAccounts';
 
 interface ListingScopeRow {
@@ -54,7 +54,7 @@ async function replyError(interaction: ButtonInteraction | ModalSubmitInteractio
   const payload = {
     embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Direktkauf abgelehnt').setDescription(message)],
     flags: MessageFlags.Ephemeral,
-    allowedMentions: { parse: [] as never[] },
+    allowedMentions: { parse: [] },
   } as const;
   if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
   else await interaction.reply(payload);
@@ -117,7 +117,7 @@ export async function handleMarketDirectBuyModal(interaction: ModalSubmitInterac
       try {
         await Promise.all([
           syncMarketDiscordProjection(interaction.client, scope.guildId, scope.connId),
-          syncVirtualAccountProjection(interaction.client, scope.guildId, scope.connId, result.purchase.vendorAccountId),
+          syncVirtualAccountProjectionLive(interaction.client, scope.guildId, scope.connId, result.purchase.vendorAccountId),
         ]);
       } catch (syncError) {
         logger.error(`Schwarzmarkt Live-Sync nach Direktkauf fehlgeschlagen (${result.purchase.id}):`, syncError as Error);
