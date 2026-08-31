@@ -57,7 +57,7 @@ const matrix = JSON.parse(read('docs/dashboard-button-matrix.json')) as ButtonMa
 
 // docs/dashboard-button-matrix.json is immutable stage-24 evidence tied to
 // inventoriedMainSha. Intentional post-stage changes are tracked explicitly here
-// so historical evidence is preserved while the live replacement surfaces stay
+// so historical evidence is preserved while live replacement surfaces stay
 // under an equally strict architecture gate.
 const POST_STAGE_LABEL_OVERRIDES: Readonly<Record<string, string>> = {
   'dashboard-ui/src/components/KillfeedTab.tsx#KillfeedTab:4': '🌐 Online List',
@@ -74,6 +74,8 @@ const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/Virtu
 const CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT = 15;
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
 const CURRENT_BLACK_MARKET_BUTTON_COUNT = 10;
+const CURRENT_BLACK_MARKET_DISCORD_SETTINGS = 'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx';
+const CURRENT_BLACK_MARKET_DISCORD_BUTTON_COUNT = 2;
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_GOODBYE_BUTTON_COUNT = 3;
 
@@ -162,12 +164,14 @@ function classify(label: string, handler: string): ButtonKind {
   return 'client-or-delegated';
 }
 
-function currentButtonSignatures(): Array<Omit<MatrixButton, 'id' | 'sourceKey' | 'line' | 'coverageRef' | 'profile' | 'pendingGuard'>> {
+type CurrentButton = Omit<MatrixButton, 'id' | 'sourceKey' | 'line' | 'coverageRef' | 'profile' | 'pendingGuard'>;
+
+function currentButtonSignatures(): CurrentButton[] {
   const excluded = new Set([
     'dashboard-ui/src/components/ui/Button.tsx',
     'dashboard-ui/src/components/ui/Switch.tsx',
   ]);
-  const buttons: Array<Omit<MatrixButton, 'id' | 'sourceKey' | 'line' | 'sourceId' | 'coverageRef' | 'profile' | 'pendingGuard'>> = [];
+  const buttons: Array<Omit<CurrentButton, 'sourceId'>> = [];
   for (const absolute of reachableUiModules()) {
     if (!absolute.endsWith('.tsx')) continue;
     const file = path.relative(root, absolute).replace(/\\/g, '/');
@@ -238,15 +242,15 @@ describe('stage 24 dashboard button matrix architecture', () => {
       entry.file === CURRENT_KILLFEED_PANEL ? { ...entry, count: entry.count - 2 } : entry
     ));
 
-    // Preserve the immutable stage-24 inventory while requiring deliberate
-    // post-stage surfaces to be present with their exact reviewed button counts.
     expect(normalizedActual.filter(entry => (
       entry.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL
       && entry.file !== CURRENT_BLACK_MARKET_PANEL
+      && entry.file !== CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       && entry.file !== CURRENT_GOODBYE_PANEL
     ))).toEqual(declared.filter(entry => (
       entry.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL
       && entry.file !== CURRENT_BLACK_MARKET_PANEL
+      && entry.file !== CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       && entry.file !== CURRENT_GOODBYE_PANEL
     )));
     expect(actual.find(entry => entry.file === CURRENT_KILLFEED_PANEL))
@@ -255,6 +259,8 @@ describe('stage 24 dashboard button matrix architecture', () => {
       .toEqual({ file: CURRENT_VIRTUAL_ACCOUNT_PANEL, count: CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT });
     expect(actual.find(entry => entry.file === CURRENT_BLACK_MARKET_PANEL))
       .toEqual({ file: CURRENT_BLACK_MARKET_PANEL, count: CURRENT_BLACK_MARKET_BUTTON_COUNT });
+    expect(actual.find(entry => entry.file === CURRENT_BLACK_MARKET_DISCORD_SETTINGS))
+      .toEqual({ file: CURRENT_BLACK_MARKET_DISCORD_SETTINGS, count: CURRENT_BLACK_MARKET_DISCORD_BUTTON_COUNT });
     expect(actual.find(entry => entry.file === CURRENT_GOODBYE_PANEL))
       .toEqual({ file: CURRENT_GOODBYE_PANEL, count: CURRENT_GOODBYE_BUTTON_COUNT });
     expect(actual.some(entry => entry.file === HISTORICAL_VIRTUAL_ACCOUNT_PANEL)).toBe(false);
@@ -293,10 +299,12 @@ describe('stage 24 dashboard button matrix architecture', () => {
     expect(normalizedCurrentSignatures.filter(button => (
       button.file !== CURRENT_VIRTUAL_ACCOUNT_PANEL
       && button.file !== CURRENT_BLACK_MARKET_PANEL
+      && button.file !== CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       && button.file !== CURRENT_GOODBYE_PANEL
     ))).toEqual(declaredSignatures.filter(button => (
       button.file !== HISTORICAL_VIRTUAL_ACCOUNT_PANEL
       && button.file !== CURRENT_BLACK_MARKET_PANEL
+      && button.file !== CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       && button.file !== CURRENT_GOODBYE_PANEL
     )));
 
@@ -331,8 +339,6 @@ describe('stage 24 dashboard button matrix architecture', () => {
     const replacement = currentSignatures.filter(button => button.file === CURRENT_VIRTUAL_ACCOUNT_PANEL);
     expect(replacement).toHaveLength(CURRENT_VIRTUAL_ACCOUNT_BUTTON_COUNT);
     expect(replacement.every(button => button.label !== '<dynamic-or-icon-only>' && button.label.trim().length > 0)).toBe(true);
-    // Native buttons must state type explicitly; shared Button has the separately
-    // verified safe type="button" default from the shared component.
     expect(replacement.every(button => button.tag === 'Button' || button.type !== 'implicit-button')).toBe(true);
     const directAsync = replacement.filter(button => /\.mutate\(|\.refetch\(/.test(button.handler));
     expect(directAsync.length).toBeGreaterThan(0);
@@ -345,6 +351,14 @@ describe('stage 24 dashboard button matrix architecture', () => {
     const blackMarketDirectAsync = blackMarket.filter(button => /\.mutate\(|\.refetch\(/.test(button.handler));
     expect(blackMarketDirectAsync.length).toBeGreaterThan(0);
     expect(blackMarketDirectAsync.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
+
+    const marketDiscord = currentSignatures.filter(button => button.file === CURRENT_BLACK_MARKET_DISCORD_SETTINGS);
+    expect(marketDiscord).toHaveLength(CURRENT_BLACK_MARKET_DISCORD_BUTTON_COUNT);
+    expect(marketDiscord.every(button => button.label !== '<dynamic-or-icon-only>' && button.label.trim().length > 0)).toBe(true);
+    expect(marketDiscord.every(button => button.tag === 'Button' || button.type !== 'implicit-button')).toBe(true);
+    const marketDiscordAsync = marketDiscord.filter(button => /\.mutate\(|\.refetch\(/.test(button.handler));
+    expect(marketDiscordAsync).toHaveLength(CURRENT_BLACK_MARKET_DISCORD_BUTTON_COUNT);
+    expect(marketDiscordAsync.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
   });
 
   test('maps every button to all eight mandatory checks and real surface evidence', () => {

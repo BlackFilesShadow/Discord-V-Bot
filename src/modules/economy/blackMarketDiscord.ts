@@ -7,12 +7,14 @@ import {
   EmbedBuilder,
   PermissionFlagsBits,
   TextChannel,
+  type Message,
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId } from '../../types/scope';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
 import { getConfig } from './repository';
 import { listMarketListings, type MarketListingView } from './blackMarket';
+import { marketDirectBuyVersion } from './marketDirectBuyContract';
 
 const CATALOG_ITEMS_PER_MESSAGE = 5;
 const syncInFlight = new Map<string, Promise<MarketDiscordProjectionView | null>>();
@@ -114,14 +116,51 @@ async function requireProjectionChannel(client: Client, guildId: GuildId, channe
   return channel;
 }
 
+function isUnknownDiscordResource(error: unknown, code: number): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = (error as { code?: unknown }).code;
+  return value === code || value === String(code);
+}
+
+/**
+ * Unknown Message (10008) means the managed message is genuinely gone and may
+ * be recreated. Permission, rate-limit and transient API errors are propagated
+ * so the projection never creates a duplicate merely because Discord could not
+ * be read at that moment.
+ */
+async function fetchManagedMessage(channel: TextChannel, messageId: string): Promise<Message | null> {
+  try {
+    return await channel.messages.fetch(messageId);
+  } catch (error) {
+    if (isUnknownDiscordResource(error, 10008)) return null;
+    throw error;
+  }
+}
+
 async function deleteDiscordMessage(client: Client, row: ProjectionMessageRow): Promise<void> {
-  const channel = await client.channels.fetch(row.channelId).catch(() => null);
-  if (!channel || channel.type !== ChannelType.GuildText) return;
-  const message = await (channel as TextChannel).messages.fetch(row.messageId).catch(() => null);
-  await message?.delete().catch(() => undefined);
+  let channel;
+  try {
+    channel = await client.channels.fetch(row.channelId);
+  } catch (error) {
+    if (isUnknownDiscordResource(error, 10003)) return;
+    throw error;
+  }
+  if (!channel) return;
+  if (channel.type !== ChannelType.GuildText) {
+    throw new Error(`Verwalteter Schwarzmarkt-Kanal ${row.channelId} ist kein Textkanal mehr.`);
+  }
+  const message = await fetchManagedMessage(channel as TextChannel, row.messageId);
+  if (!message) return;
+  try {
+    await message.delete();
+  } catch (error) {
+    if (!isUnknownDiscordResource(error, 10008)) throw error;
+  }
 }
 
 async function removeProjectionMessage(client: Client, row: ProjectionMessageRow): Promise<void> {
+  // Keep database ownership when Discord deletion fails. Otherwise the next
+  // sync would forget the still-existing message and create an unmanaged clone.
   await deleteDiscordMessage(client, row);
   await prisma.economyMarketDiscordMessage.deleteMany({ where: { id: row.id, projectionId: row.projectionId } });
 }
@@ -170,15 +209,16 @@ function directBuyEmbed(listing: MarketListingView, currencyName: string, curren
   return embed;
 }
 
-function directBuyComponents(listingId: string) {
+function directBuyComponents(listing: MarketListingView) {
+  const version = marketDirectBuyVersion(listing);
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`marketbuy:w:${listingId}`)
+      .setCustomId(`marketbuy:w:${listing.id}:${version}`)
       .setLabel('Aus Wallet kaufen')
       .setEmoji('🛒')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId(`marketbuy:b:${listingId}`)
+      .setCustomId(`marketbuy:b:${listing.id}:${version}`)
       .setLabel('Aus Bank kaufen')
       .setEmoji('🏦')
       .setStyle(ButtonStyle.Primary),
@@ -206,7 +246,7 @@ async function upsertCatalogMessages(args: {
     const payload = { embeds: [catalogEmbed({ listings: pages[pageIndex], pageIndex, totalPages: pages.length, currencyName: args.currencyName, currencyEmoji: args.currencyEmoji })], allowedMentions: { parse: [] as never[] } };
     const row = existingCatalog.find(candidate => candidate.pageIndex === pageIndex) ?? null;
     let message = row?.channelId === args.channel.id
-      ? await args.channel.messages.fetch(row.messageId).catch(() => null)
+      ? await fetchManagedMessage(args.channel, row.messageId)
       : null;
 
     if (row && row.channelId !== args.channel.id) await deleteDiscordMessage(args.client, row);
@@ -260,12 +300,12 @@ async function upsertDirectBuyMessages(args: {
   for (const listing of args.listings) {
     const payload = {
       embeds: [directBuyEmbed(listing, args.currencyName, args.currencyEmoji)],
-      components: directBuyComponents(listing.id),
+      components: directBuyComponents(listing),
       allowedMentions: { parse: [] as never[] },
     };
     const row = existingDirect.find(candidate => candidate.listingId === listing.id) ?? null;
     let message = row?.channelId === args.channel.id
-      ? await args.channel.messages.fetch(row.messageId).catch(() => null)
+      ? await fetchManagedMessage(args.channel, row.messageId)
       : null;
 
     if (row && row.channelId !== args.channel.id) await deleteDiscordMessage(args.client, row);

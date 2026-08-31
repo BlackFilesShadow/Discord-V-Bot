@@ -18,11 +18,19 @@ interface LockedListing {
   maxPerPurchase: number;
   active: boolean;
   archivedAt: Date | null;
+  updatedAt: Date;
 }
 
 interface ListingItemRow {
   className: string;
   quantity: number;
+}
+
+interface ExpectedListingSnapshot {
+  expectedUnitPrice?: bigint;
+  expectedVendorAccountId?: string;
+  expectedMaxPerPurchase?: number;
+  expectedUpdatedAt?: Date;
 }
 
 function rawDb(): VirtualAccountRawDb {
@@ -72,6 +80,21 @@ function assertReplay(row: MarketPurchaseView, args: {
   if (!same) throw new Error('Market-Idempotency-Key wurde mit anderen Kaufdaten wiederverwendet.');
 }
 
+function assertExpectedSnapshot(listing: {
+  vendorAccountId: string;
+  price: bigint;
+  maxPerPurchase: number;
+  updatedAt: Date;
+}, expected: ExpectedListingSnapshot): void {
+  const stale = (expected.expectedUnitPrice !== undefined && listing.price !== expected.expectedUnitPrice)
+    || (expected.expectedVendorAccountId !== undefined && listing.vendorAccountId !== expected.expectedVendorAccountId)
+    || (expected.expectedMaxPerPurchase !== undefined && listing.maxPerPurchase !== expected.expectedMaxPerPurchase)
+    || (expected.expectedUpdatedAt !== undefined && listing.updatedAt.getTime() !== expected.expectedUpdatedAt.getTime());
+  if (stale) {
+    throw new Error('Die Direktkauf-Anzeige ist veraltet. Bitte den Kauf ueber die aktuelle Nachricht erneut oeffnen.');
+  }
+}
+
 /**
  * Mengenunabhaengiger Schwarzmarkt-Kauf.
  *
@@ -79,6 +102,11 @@ function assertReplay(row: MarketPurchaseView, args: {
  * Der Kauf sperrt das Listing weiterhin innerhalb derselben DB-Transaktion,
  * prueft Preis/Vendor/Kauflimit, bucht User -> Vendor und erzeugt Bestellung +
  * Fulfillment atomar. Es gibt bewusst keine Bestandspruefung oder -mutation.
+ *
+ * Direktkauf darf optional einen zuvor angezeigten Listing-Snapshot mitsenden.
+ * Dieser wird sowohl vor der Buchung als auch unter dem FOR-UPDATE-Lock erneut
+ * geprueft, damit Preis-/Haendler-/Limit-Aenderungen keinen veralteten Kauf
+ * ausloesen koennen.
  */
 export async function buyInventorylessMarketListing(args: {
   guildId: GuildId;
@@ -88,6 +116,10 @@ export async function buyInventorylessMarketListing(args: {
   quantity: number;
   sourcePocket?: EconomyPocket;
   idempotencyKey: string;
+  expectedUnitPrice?: bigint;
+  expectedVendorAccountId?: string;
+  expectedMaxPerPurchase?: number;
+  expectedUpdatedAt?: Date;
 }): Promise<{ booked: boolean; purchase: MarketPurchaseView; listing: MarketListingView }> {
   if (!Number.isSafeInteger(args.quantity) || args.quantity < 1 || args.quantity > MAX_PER_PURCHASE) {
     throw new Error(`Menge muss zwischen 1 und ${MAX_PER_PURCHASE} liegen.`);
@@ -96,6 +128,8 @@ export async function buyInventorylessMarketListing(args: {
   if (sourcePocket !== 'WALLET' && sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
   const key = purchaseKey(args.listingId, args.idempotencyKey);
 
+  // Idempotent replay must win over a later listing edit. A purchase that was
+  // already booked successfully stays replayable even if the offer changed.
   const replay = await existingPurchaseByKey(args.guildId, args.nitradoConnId, key);
   if (replay) {
     assertReplay(replay, { ...args, sourcePocket });
@@ -109,6 +143,7 @@ export async function buyInventorylessMarketListing(args: {
   if (!cfg.enabled) throw new Error('Economy ist auf diesem Gameserver deaktiviert.');
   const initial = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
   if (!initial || !initial.active || initial.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
+  assertExpectedSnapshot(initial, args);
   if (args.quantity > initial.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${initial.maxPerPurchase} erlaubt.`);
   const amount = initial.price * BigInt(args.quantity);
 
@@ -129,11 +164,12 @@ export async function buyInventorylessMarketListing(args: {
   }, {
     beforeClaim: async raw => {
       const rows = await raw.$queryRawUnsafe<LockedListing[]>(
-        'SELECT "id", "vendorAccountId", "name", "price", "maxPerPurchase", "active", "archivedAt" FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
+        'SELECT "id", "vendorAccountId", "name", "price", "maxPerPurchase", "active", "archivedAt", "updatedAt" FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
         args.listingId, String(args.guildId), String(args.nitradoConnId),
       );
       const listing = rows[0];
       if (!listing || !listing.active || listing.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
+      assertExpectedSnapshot(listing, args);
       if (listing.vendorAccountId !== initial.vendorAccountId || listing.price !== initial.price) {
         throw new Error('Listing wurde waehrend des Kaufs geaendert. Bitte erneut versuchen.');
       }

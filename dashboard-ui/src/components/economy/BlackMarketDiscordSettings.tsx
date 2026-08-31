@@ -108,7 +108,13 @@ export function BlackMarketDiscordSettings({
             ? <Badge variant="warn">SYNC-FEHLER</Badge>
             : current?.lastSyncedAt ? <Badge variant="ok">LIVE</Badge> : <Badge variant="neutral">NICHT AKTIV</Badge>}
           {canManage && (
-            <Button size="sm" variant="ghost" disabled={sync.isPending || projection.isLoading} onClick={() => sync.mutate()}>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Discord-Schwarzmarkt jetzt synchronisieren"
+              disabled={sync.isPending || projection.isLoading}
+              onClick={() => sync.mutate()}
+            >
               <RefreshCw className={`h-3.5 w-3.5 mr-1 ${sync.isPending ? 'animate-spin' : ''}`} />Sync
             </Button>
           )}
@@ -138,7 +144,12 @@ export function BlackMarketDiscordSettings({
           </div>
 
           <div className="md:col-span-2 flex flex-wrap items-center gap-2">
-            <Button size="sm" disabled={save.isPending || invalid || channels.isError} onClick={() => save.mutate()}>
+            <Button
+              size="sm"
+              aria-label="Discord-Schwarzmarkt speichern und synchronisieren"
+              disabled={save.isPending || invalid || channels.isError}
+              onClick={() => save.mutate()}
+            >
               <Save className="h-3.5 w-3.5 mr-1" />{save.isPending ? 'Synchronisiere…' : 'Speichern & sofort synchronisieren'}
             </Button>
             {current && (
