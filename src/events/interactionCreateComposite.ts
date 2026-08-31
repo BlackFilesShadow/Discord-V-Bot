@@ -11,6 +11,7 @@ import {
   handleVirtualManagerMoveButton,
   handleVirtualManagerSelect,
 } from '../modules/economy/virtualAccountInteractions';
+import { handleMarketDirectBuyButton, handleMarketDirectBuyModal } from '../modules/economy/blackMarketInteractions';
 import { handleWhitelistApprovalButton } from '../modules/whitelist/whitelistApprovalButton';
 import { handleFlagActivityButton } from '../modules/gameplayFeeds/flagActivity';
 
@@ -19,10 +20,15 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
     return i.customId.startsWith('vacct:')
       || i.customId.startsWith('vacct_mgr:')
       || i.customId.startsWith('vacct_mgr_move:')
+      || i.customId.startsWith('marketbuy:')
       || i.customId.startsWith('wlreq:u:')
       || i.customId.startsWith('flagshort:v1:');
   }
-  if (i.isModalSubmit()) return i.customId.startsWith('vacct:deposit_modal:') || i.customId.startsWith('vacct_mgr_modal:');
+  if (i.isModalSubmit()) {
+    return i.customId.startsWith('vacct:deposit_modal:')
+      || i.customId.startsWith('vacct_mgr_modal:')
+      || i.customId.startsWith('marketbuy_modal:');
+  }
   if (i.isStringSelectMenu()) return i.customId.startsWith('vacct_mgr_sel:');
   return false;
 }
@@ -50,6 +56,7 @@ const interactionCreateComposite: BotEvent = {
     if (i.isButton()) {
       if (i.customId.startsWith('flagshort:v1:')) return handleFlagActivityButton(i);
       if (i.customId.startsWith('wlreq:u:')) return handleWhitelistApprovalButton(i);
+      if (i.customId.startsWith('marketbuy:')) return handleMarketDirectBuyButton(i);
       if (i.customId.startsWith('vacct:deposit:')) return handleVirtualAccountDepositButton(i);
       if (i.customId.startsWith('vacct_mgr_move:')) return handleVirtualManagerMoveButton(i);
       if (i.customId.startsWith('vacct_mgr:')) return handleVirtualManagerButton(i);
@@ -58,6 +65,7 @@ const interactionCreateComposite: BotEvent = {
       return handleVirtualManagerSelect(i);
     }
     if (i.isModalSubmit()) {
+      if (i.customId.startsWith('marketbuy_modal:')) return handleMarketDirectBuyModal(i);
       if (i.customId.startsWith('vacct:deposit_modal:')) return handleVirtualAccountDepositModal(i);
       if (i.customId.startsWith('vacct_mgr_modal:')) return handleVirtualManagerModal(i);
     }
