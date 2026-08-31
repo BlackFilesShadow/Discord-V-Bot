@@ -3,6 +3,7 @@ import {
   ButtonInteraction,
   ChannelType,
   Client,
+  ComponentType,
   EmbedBuilder,
   MessageFlags,
   ModalBuilder,
@@ -118,9 +119,12 @@ async function assertCurrentDiscordMessage(
     throw new Error('Die Kaufaktion stammt nicht von einer aktuell verwalteten V-Bot-Nachricht.');
   }
 
-  const currentCustomIds = message.components.flatMap(row => row.components.map(component => (
-    'customId' in component ? component.customId : null
-  ))).filter((value): value is string => typeof value === 'string');
+  const currentCustomIds = message.components
+    .filter(row => row.type === ComponentType.ActionRow)
+    .flatMap(row => row.components.map(component => (
+      'customId' in component ? component.customId : null
+    )))
+    .filter((value): value is string => typeof value === 'string');
   if (!currentCustomIds.includes(expectedButtonCustomId)) {
     throw new Error('Die Direktkauf-Nachricht wurde inzwischen aktualisiert. Bitte den Kauf erneut öffnen.');
   }
