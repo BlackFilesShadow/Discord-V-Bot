@@ -59,6 +59,24 @@ let running = false;
 type LiveConn = AdmBindingSnapshot;
 type AdmFile = AdmRemoteFile;
 
+type CursorFileState = {
+  lastModifiedAt: number;
+  lastKnownSize: bigint;
+  processedByteOffset: bigint;
+};
+
+/**
+ * A completed ADM file can be replaced in-place by Nitrado while keeping the
+ * same filename and byte size. Size-only candidate detection would miss that
+ * rotation forever. A newer mtime on an otherwise fully consumed same-size
+ * file is therefore treated as a new generation and must restart at byte 0.
+ */
+export function shouldRestartReusedAdmFile(file: AdmFile, cursor: CursorFileState): boolean {
+  return file.modified_at > cursor.lastModifiedAt
+    && file.size === Number(cursor.lastKnownSize)
+    && file.size === Number(cursor.processedByteOffset);
+}
+
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
@@ -354,7 +372,8 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
         },
       });
       if (cursor) {
-        if (file.size !== Number(cursor.processedByteOffset) || file.size < Number(cursor.lastKnownSize)) candidates.push(file);
+        const replacedInPlace = shouldRestartReusedAdmFile(file, cursor);
+        if (replacedInPlace || file.size !== Number(cursor.processedByteOffset) || file.size < Number(cursor.lastKnownSize)) candidates.push(file);
         continue;
       }
       if (
@@ -376,13 +395,16 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
         },
       });
       try {
+        const startOffset = cursor && !shouldRestartReusedAdmFile(file, cursor)
+          ? Number(cursor.processedByteOffset)
+          : 0;
         await ingestFile(
           conn,
           client,
           profile.profileDir,
           profile.timeZone,
           file,
-          cursor ? Number(cursor.processedByteOffset) : 0,
+          startOffset,
         );
       } catch (error) {
         if (isAdmBindingFenceError(error)) throw error;
