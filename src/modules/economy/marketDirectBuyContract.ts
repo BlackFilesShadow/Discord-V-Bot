@@ -9,7 +9,6 @@ interface DirectBuyContextRow {
   listingId: string;
   vendorAccountId: string;
   price: bigint;
-  maxPerPurchase: number;
   updatedAt: Date;
   channelId: string;
   messageId: string;
@@ -21,7 +20,6 @@ export interface MarketDirectBuyContext {
   listingId: string;
   vendorAccountId: string;
   price: bigint;
-  maxPerPurchase: number;
   updatedAt: Date;
   channelId: string;
   messageId: string;
@@ -32,7 +30,6 @@ export function marketDirectBuyVersion(listing: {
   id: string;
   vendorAccountId: string;
   price: bigint | string;
-  maxPerPurchase: number;
   updatedAt: Date | string;
 }): string {
   const updatedAt = listing.updatedAt instanceof Date ? listing.updatedAt.toISOString() : new Date(listing.updatedAt).toISOString();
@@ -41,7 +38,6 @@ export function marketDirectBuyVersion(listing: {
       listing.id,
       listing.vendorAccountId,
       listing.price.toString(),
-      String(listing.maxPerPurchase),
       updatedAt,
     ].join('|'))
     .digest('hex')
@@ -68,7 +64,6 @@ export async function resolveManagedDirectBuyContext(args: {
        l."id" AS "listingId",
        l."vendorAccountId",
        l."price",
-       l."maxPerPurchase",
        l."updatedAt",
        m."channelId",
        m."messageId"
@@ -105,7 +100,6 @@ export async function resolveManagedDirectBuyContext(args: {
     listingId: row.listingId,
     vendorAccountId: row.vendorAccountId,
     price: row.price,
-    maxPerPurchase: row.maxPerPurchase,
     updatedAt: row.updatedAt,
     channelId: row.channelId,
     messageId: row.messageId,
@@ -113,7 +107,6 @@ export async function resolveManagedDirectBuyContext(args: {
       id: row.listingId,
       vendorAccountId: row.vendorAccountId,
       price: row.price,
-      maxPerPurchase: row.maxPerPurchase,
       updatedAt: row.updatedAt,
     }),
   };
