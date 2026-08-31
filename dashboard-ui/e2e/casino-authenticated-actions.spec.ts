@@ -134,7 +134,7 @@ async function noPageOverflow(page: Page): Promise<void> {
 test.describe('Casino authenticated dashboard contract', () => {
   test('hydriert reale Serverwerte und zeigt Fixed-Odds + W/D/L korrekt', async ({ page }) => {
     await stubCasino(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
 
     await expect(page.getByRole('heading', { name: 'Casino-Games' })).toBeVisible();
 
@@ -154,7 +154,7 @@ test.describe('Casino authenticated dashboard contract', () => {
 
   test('SLOT sendet Win-Prozent, Fixed-Odds-Games senden es niemals', async ({ page }) => {
     const mutations = await stubCasino(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
 
     const slot = row(page, 'SLOT');
     await expect(slot.locator('input').nth(0)).toHaveValue('63');
@@ -177,7 +177,7 @@ test.describe('Casino authenticated dashboard contract', () => {
 
   test('Update-Fehler wird im Casino-Block sichtbar statt verschluckt', async ({ page }) => {
     await stubCasino(page, { updateErrorType: 'DICE' });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
 
     const dice = row(page, 'DICE');
     await expect(dice.getByText('1/6', { exact: true })).toBeVisible();
@@ -190,7 +190,7 @@ for (const width of [320, 360, 375, 390, 430] as const) {
   test(`${width}px Casino bleibt ohne Seiten-Overflow`, async ({ page }) => {
     await stubCasino(page);
     await page.setViewportSize({ width, height: 900 });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
     await expect(page.getByRole('heading', { name: 'Casino-Games' })).toBeVisible();
     await expect(row(page, 'COINFLIP').getByText('50/50', { exact: true })).toBeVisible();
     await noPageOverflow(page);

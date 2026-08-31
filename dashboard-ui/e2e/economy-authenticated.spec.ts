@@ -118,15 +118,15 @@ test.describe('Economy authenticated E2E', () => {
     await stubAuthenticatedEconomy(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
 
-    await expect(page.getByText('Virtuelle Konten', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText('Bank und Casino Funktionen', { exact: true })).toBeVisible();
-    await expect(page.getByText('Killfeed & ADM', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Bank und Casino Funktionen', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Killfeed & ADM', exact: true })).toBeVisible();
     await expect(page.getByText('Admin-Auszahlung')).toHaveCount(1);
     await expect(page.getByText('Eventkasse')).toBeVisible();
     await expect(page.getByText('Discord-User / GUID')).toBeVisible();
     await expect(page.getByText('Grund (optional)')).toBeVisible();
 
-    await page.getByText('Bank und Casino Funktionen', { exact: true }).click();
+    await page.getByRole('button', { name: 'Bank und Casino Funktionen', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Bank' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Casino-Games' })).toBeVisible();
     await expect(page.getByText('Admin-Auszahlung')).toHaveCount(0);

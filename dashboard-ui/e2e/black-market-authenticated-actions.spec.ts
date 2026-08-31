@@ -288,7 +288,7 @@ test.describe('Black Market authenticated action contract', () => {
     await page.getByLabel('Angebot Altes Kit entfernen').click();
     await expect.poll(() => mutationOf(state, 'remove')).toBeTruthy();
     expect(mutationOf(state, 'remove')?.query).toBe(`?slot=${SLOT}`);
-    await expect(page.getByText('Altes Kit')).toHaveCount(0);
+    await expect(page.getByText('Altes Kit', { exact: true })).toHaveCount(0);
   });
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {

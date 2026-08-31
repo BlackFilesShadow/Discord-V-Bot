@@ -177,7 +177,7 @@ function mutation(mutations: Mutation[], path: string) {
 }
 
 async function gotoVirtualAccounts(page: Page): Promise<void> {
-  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
   await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
 }
 
