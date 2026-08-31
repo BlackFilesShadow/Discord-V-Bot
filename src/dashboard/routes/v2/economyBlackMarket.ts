@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
+import { tryGetDashboardClient } from '../../clientRegistry';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import {
   archiveMarketListing,
   archiveMarketVendor,
-  buyMarketListing,
   createMarketListing,
   createMarketVendor,
   listMarketListings,
@@ -15,9 +15,15 @@ import {
   markMarketPurchaseDelivered,
   payoutMarketVendor,
   refundMarketPurchase,
-  restockMarketListing,
   setMarketListingItems,
 } from '../../../modules/economy/blackMarket';
+import { buyInventorylessMarketListing } from '../../../modules/economy/blackMarketInventoryless';
+import {
+  configureMarketDiscordProjection,
+  getMarketDiscordProjection,
+  syncMarketDiscordProjection,
+} from '../../../modules/economy/blackMarketDiscord';
+import { syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
 
 export const economyBlackMarketRouter = Router({ mergeParams: true });
 type Req = Parameters<Parameters<typeof economyBlackMarketRouter.get>[1]>[0];
@@ -46,7 +52,10 @@ function operationKey(req: Req, prefix: string): string {
   }
   return candidate;
 }
-const listingJson = (row: Awaited<ReturnType<typeof listMarketListings>>[number]) => ({ ...row, price: row.price.toString() });
+const listingJson = (row: Awaited<ReturnType<typeof listMarketListings>>[number]) => {
+  const { stock: _legacyStock, ...rest } = row;
+  return { ...rest, price: row.price.toString() };
+};
 const purchaseJson = (row: Awaited<ReturnType<typeof listMarketPurchases>>[number]) => ({ ...row, unitPrice: row.unitPrice.toString(), amount: row.amount.toString() });
 const vendorJson = (row: Awaited<ReturnType<typeof listMarketVendors>>[number]) => ({
   ...row,
@@ -54,6 +63,30 @@ const vendorJson = (row: Awaited<ReturnType<typeof listMarketVendors>>[number]) 
   pendingLiability: row.pendingLiability.toString(),
   withdrawableBalance: row.withdrawableBalance.toString(),
 });
+
+async function immediateMarketSync(req: Req): Promise<string | null> {
+  const { scope, connId } = scoped(req);
+  const client = tryGetDashboardClient();
+  if (!client) return 'Bot nicht bereit; Discord-Verkaufsliste konnte noch nicht synchronisiert werden.';
+  try {
+    await syncMarketDiscordProjection(client, scope.guildId, connId);
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+async function immediateVirtualSync(req: Req, accountId: string): Promise<string | null> {
+  const { scope, connId } = scoped(req);
+  const client = tryGetDashboardClient();
+  if (!client) return 'Bot nicht bereit; virtueller Kontostand konnte noch nicht synchronisiert werden.';
+  try {
+    await syncVirtualAccountProjection(client, scope.guildId, connId, accountId);
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
 
 economyBlackMarketRouter.get('/vendors', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
@@ -84,7 +117,8 @@ economyBlackMarketRouter.post('/vendors/:vendorId/payout', requireGuildPermissio
       idempotencyKey: operationKey(req, 'vp'),
       reason: req.body?.reason == null ? null : String(req.body.reason),
     });
-    res.json({ booked: result.booked, vendor: vendorJson(result.vendor) });
+    const syncWarning = await immediateVirtualSync(req, result.vendor.id);
+    res.json({ booked: result.booked, vendor: vendorJson(result.vendor), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -92,7 +126,8 @@ economyBlackMarketRouter.post('/vendors/:vendorId/archive', requireGuildPermissi
   const { scope, connId } = scoped(req);
   try {
     const vendor = await archiveMarketVendor({ guildId: scope.guildId, nitradoConnId: connId, vendorAccountId: String(req.params.vendorId), actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
-    res.json(vendorJson(vendor));
+    const syncWarning = await immediateVirtualSync(req, vendor.id);
+    res.json({ ...vendorJson(vendor), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -106,13 +141,20 @@ economyBlackMarketRouter.post('/listings', requireGuildPermission('economy.manag
   const { scope, connId } = scoped(req);
   try {
     const row = await createMarketListing({
-      guildId: scope.guildId, nitradoConnId: connId, vendorAccountId: String(req.body?.vendorAccountId ?? ''),
-      sku: String(req.body?.sku ?? ''), name: String(req.body?.name ?? ''), description: req.body?.description == null ? null : String(req.body.description),
-      price: parseBig(req.body?.price, 'price'), stock: parseIntSafe(req.body?.stock, 'stock'),
-      maxPerPurchase: parseIntSafe(req.body?.maxPerPurchase ?? 10, 'maxPerPurchase'), deliveryItems: req.body?.deliveryItems,
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      vendorAccountId: String(req.body?.vendorAccountId ?? ''),
+      sku: String(req.body?.sku ?? ''),
+      name: String(req.body?.name ?? ''),
+      description: req.body?.description == null ? null : String(req.body.description),
+      price: parseBig(req.body?.price, 'price'),
+      stock: 0,
+      maxPerPurchase: parseIntSafe(req.body?.maxPerPurchase ?? 10, 'maxPerPurchase'),
+      deliveryItems: req.body?.deliveryItems,
       createdByDiscordId: asUserDiscordId(scope.actorDiscordId),
     });
-    res.status(201).json(listingJson(row));
+    const syncWarning = await immediateMarketSync(req);
+    res.status(201).json({ ...listingJson(row), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -120,31 +162,44 @@ economyBlackMarketRouter.put('/listings/:listingId/items', requireGuildPermissio
   const { scope, connId } = scoped(req);
   try {
     const row = await setMarketListingItems({ guildId: scope.guildId, nitradoConnId: connId, listingId: String(req.params.listingId), deliveryItems: req.body?.deliveryItems, actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
-    res.json(listingJson(row));
+    const syncWarning = await immediateMarketSync(req);
+    res.json({ ...listingJson(row), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
-economyBlackMarketRouter.post('/listings/:listingId/restock', requireGuildPermission('economy.manage'), async (req, res) => {
-  const { scope, connId } = scoped(req);
-  try {
-    const row = await restockMarketListing({ guildId: scope.guildId, nitradoConnId: connId, listingId: String(req.params.listingId), stock: parseIntSafe(req.body?.stock, 'stock'), price: req.body?.price === undefined ? undefined : parseBig(req.body.price, 'price'), maxPerPurchase: req.body?.maxPerPurchase === undefined ? undefined : parseIntSafe(req.body.maxPerPurchase, 'maxPerPurchase'), actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
-    res.json(listingJson(row));
-  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+// Bestand ist fachlich entfernt. Der alte Endpunkt bleibt nur als expliziter
+// Kompatibilitaets-Gate bestehen und mutiert keine Daten mehr.
+economyBlackMarketRouter.post('/listings/:listingId/restock', requireGuildPermission('economy.manage'), async (_req, res) => {
+  res.status(410).json({ error: 'Bestand wurde aus Schwarzmarkt-Angeboten entfernt. Angebote sind aktiv oder archiviert und haben keine Mengenbegrenzung.' });
 });
 
 economyBlackMarketRouter.post('/listings/:listingId/archive', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   try {
     const row = await archiveMarketListing({ guildId: scope.guildId, nitradoConnId: connId, listingId: String(req.params.listingId), actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
-    res.json(listingJson(row));
+    const syncWarning = await immediateMarketSync(req);
+    res.json({ ...listingJson(row), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
 economyBlackMarketRouter.post('/listings/:listingId/purchase', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   try {
-    const result = await buyMarketListing({ guildId: scope.guildId, nitradoConnId: connId, listingId: String(req.params.listingId), userDiscordId: asUserDiscordId(scope.actorDiscordId), quantity: parseIntSafe(req.body?.quantity ?? 1, 'quantity'), sourcePocket: req.body?.sourcePocket === undefined || req.body?.sourcePocket === 'WALLET' ? 'WALLET' : req.body?.sourcePocket === 'BANK' ? 'BANK' : (() => { throw new Error('sourcePocket muss WALLET oder BANK sein.'); })(), idempotencyKey: operationKey(req, 'dashboard') });
-    res.json({ booked: result.booked, purchase: purchaseJson(result.purchase), listing: listingJson(result.listing) });
+    const result = await buyInventorylessMarketListing({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      listingId: String(req.params.listingId),
+      userDiscordId: asUserDiscordId(scope.actorDiscordId),
+      quantity: parseIntSafe(req.body?.quantity ?? 1, 'quantity'),
+      sourcePocket: req.body?.sourcePocket === undefined || req.body?.sourcePocket === 'WALLET' ? 'WALLET' : req.body?.sourcePocket === 'BANK' ? 'BANK' : (() => { throw new Error('sourcePocket muss WALLET oder BANK sein.'); })(),
+      idempotencyKey: operationKey(req, 'dashboard'),
+    });
+    const [marketWarning, virtualWarning] = await Promise.all([
+      immediateMarketSync(req),
+      immediateVirtualSync(req, result.purchase.vendorAccountId),
+    ]);
+    const syncWarning = [marketWarning, virtualWarning].filter(Boolean).join(' · ') || null;
+    res.json({ booked: result.booked, purchase: purchaseJson(result.purchase), listing: listingJson(result.listing), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -172,6 +227,49 @@ economyBlackMarketRouter.post('/purchases/:purchaseId/refund', requireGuildPermi
   const { scope, connId } = scoped(req);
   try {
     const result = await refundMarketPurchase({ guildId: scope.guildId, nitradoConnId: connId, purchaseId: String(req.params.purchaseId), actorDiscordId: asUserDiscordId(scope.actorDiscordId), reason: String(req.body?.reason ?? '') });
-    res.json({ booked: result.booked, purchase: purchaseJson(result.purchase) });
+    const [marketWarning, virtualWarning] = await Promise.all([
+      immediateMarketSync(req),
+      immediateVirtualSync(req, result.purchase.vendorAccountId),
+    ]);
+    const syncWarning = [marketWarning, virtualWarning].filter(Boolean).join(' · ') || null;
+    res.json({ booked: result.booked, purchase: purchaseJson(result.purchase), syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyBlackMarketRouter.get('/discord', requireGuildPermission('economy.view'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  res.json({ projection: await getMarketDiscordProjection(scope.guildId, connId) });
+});
+
+economyBlackMarketRouter.put('/discord', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  const client = tryGetDashboardClient();
+  if (!client) { res.status(503).json({ error: 'Bot nicht bereit; Discord-Integration kann nicht validiert werden.' }); return; }
+  const catalogChannelId = typeof req.body?.catalogChannelId === 'string' && req.body.catalogChannelId.trim() ? req.body.catalogChannelId.trim() : null;
+  const directBuyEnabled = req.body?.directBuyEnabled === true;
+  const directBuyChannelId = typeof req.body?.directBuyChannelId === 'string' && req.body.directBuyChannelId.trim() ? req.body.directBuyChannelId.trim() : null;
+  try {
+    const projection = await configureMarketDiscordProjection(client, {
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      catalogChannelId,
+      directBuyEnabled,
+      directBuyChannelId,
+    });
+    logAuditDb('MARKET_DISCORD_PROJECTION_CONFIGURED', 'ECONOMY', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { nitradoConnId: connId, catalogChannelId, directBuyEnabled, directBuyChannelId },
+    });
+    res.json({ projection });
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyBlackMarketRouter.post('/discord/sync', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  const client = tryGetDashboardClient();
+  if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
+  try {
+    res.json({ projection: await syncMarketDiscordProjection(client, scope.guildId, connId) });
+  } catch (error) { res.status(502).json({ error: (error as Error).message }); }
 });
