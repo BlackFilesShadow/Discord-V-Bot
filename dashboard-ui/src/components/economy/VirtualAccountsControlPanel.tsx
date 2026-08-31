@@ -105,6 +105,15 @@ interface AccountMutationResponse {
   syncWarning?: string | null;
 }
 
+interface DeletedAccountResponse {
+  id: string;
+  name: string;
+  mode: 'HARD_DELETED' | 'CONTROL_HIDDEN';
+  walletRemoved: string;
+  bankRemoved: string;
+  domainPreserved: boolean;
+}
+
 interface AccountDraft {
   description: string;
   channelId: string;
@@ -553,19 +562,22 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
   });
 
   const remove = useMutation({
-    mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: { id: string; name: string; mode: 'HARD_DELETED' | 'CONTROL_HIDDEN' } }>(
+    mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: DeletedAccountResponse }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}?slot=${encodeURIComponent(slot)}`,
     ),
     onSuccess: result => {
       setEditingId(null);
       setAuditAccountId('');
       setDeleteConfirmId(null);
-      setMessage({
-        ok: true,
-        text: result.deleted.mode === 'CONTROL_HIDDEN'
-          ? `Lotterie-Konto „${result.deleted.name}“ wurde aus der Kontoverwaltung entfernt. Historie und Audit bleiben erhalten.`
-          : `Konto „${result.deleted.name}“ wurde dauerhaft gelöscht.`,
-      });
+      const removedMoney = BigInt(result.deleted.walletRemoved) > 0n || BigInt(result.deleted.bankRemoved) > 0n;
+      const detail = result.deleted.domainPreserved
+        ? 'Das Fachsystem und seine Historie bleiben unverändert erhalten.'
+        : removedMoney
+          ? `Wallet ${fmtBig(result.deleted.walletRemoved)} und Bank ${fmtBig(result.deleted.bankRemoved)} wurden kontrolliert auf 0 gesetzt; Audit-Historie bleibt erhalten.`
+          : result.deleted.mode === 'HARD_DELETED'
+            ? 'Das leere Konto wurde dauerhaft gelöscht.'
+            : 'Historie und Audit bleiben erhalten.';
+      setMessage({ ok: true, text: `Konto „${result.deleted.name}“ wurde aus den virtuellen Konten entfernt. ${detail}` });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-manager-panel', guildId, slot] });
     },
@@ -596,7 +608,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Bei aktivierter Discord-Integration liegt das Transaktionsarchiv zwingend in einem separaten Kanal. Lotterie-, Markt- und Serverbank-Systemkonten bleiben fachlich geschützt.
+        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Löschen steht bei aktiven, abgelaufenen und archivierten Konten zur Verfügung. Historische oder fachlich gebundene Konten werden sicher aus dieser Verwaltung ausgeblendet statt Referenzen zu zerstören.
       </p>
 
       {message && (
@@ -611,7 +623,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
             <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />Serverbank</p>
             {treasury && <Badge variant="ok">aktiv</Badge>}
           </div>
-          <p className="text-xs text-muted">Die Serverbank ist ein geschütztes CUSTOM-Treasury-Konto mit eigenem Wallet + Bankreserve. Sie kann anschließend wie jedes andere Konto gestaltet und mit Managern versehen werden.</p>
+          <p className="text-xs text-muted">Die Serverbank ist ein CUSTOM-Treasury-Konto mit eigenem Wallet + Bankreserve. Wird sie gelöscht, kann unmittelbar eine neue Serverbank angelegt werden; historische Buchungen bleiben erhalten.</p>
           {treasury ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm text-white">{treasury.accountEmoji} {treasury.name} · {fmtBig(treasury.totalBalance)} {treasury.currencyEmoji}</span>
@@ -672,10 +684,6 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
         {rows.map(account => {
           const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
           const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
-          const customDeleteSupported = account.kind === 'CUSTOM' && account.accountPurpose === 'GENERAL';
-          const archivedLotteryDeleteSupported = account.kind === 'LOTTERY_POT' && account.status === 'ARCHIVED' && account.accountPurpose === 'GENERAL';
-          const deleteSupported = customDeleteSupported || archivedLotteryDeleteSupported;
-          const canDelete = customDeleteSupported || (archivedLotteryDeleteSupported && pocketsEmpty);
           const deleteArmed = deleteConfirmId === account.id;
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
@@ -712,6 +720,21 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                   <Button size="sm" variant="ghost" onClick={() => { setDeleteConfirmId(null); setAuditAccountId(auditAccountId === account.id ? '' : account.id); }}>
                     <History className="h-3.5 w-3.5 mr-1" />Audit
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    disabled={remove.isPending || archive.isPending}
+                    onClick={() => {
+                      if (!deleteArmed) {
+                        setDeleteConfirmId(account.id);
+                        return;
+                      }
+                      remove.mutate(account.id);
+                    }}
+                    title="Konto unabhängig von Status und Kontostand aus den virtuellen Konten entfernen. Historische bzw. fachlich gebundene Daten bleiben geschützt."
+                  >
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
+                  </Button>
                   {account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && (
                     <Button
                       size="sm"
@@ -723,35 +746,12 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                       <Archive className="h-3.5 w-3.5 mr-1" />Archivieren
                     </Button>
                   )}
-                  {deleteSupported && (
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={!canDelete || remove.isPending || archive.isPending}
-                      onClick={() => {
-                        if (!deleteArmed) {
-                          setDeleteConfirmId(account.id);
-                          return;
-                        }
-                        remove.mutate(account.id);
-                      }}
-                      title={archivedLotteryDeleteSupported
-                        ? (canDelete
-                          ? 'Archivierten Lotterie-Pot aus der Kontoverwaltung entfernen. Lotterie- und Audit-Historie bleiben erhalten.'
-                          : 'Lotterie-Pot kann erst bei Wallet=0 und Bank=0 entfernt werden.')
-                        : 'Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Konten mit Buchungs- oder geschützter Systemhistorie bleiben geschützt.'}
-                    >
-                      <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
-                    </Button>
-                  )}
                 </div>
               </div>
 
-              {deleteArmed && canDelete && (
+              {deleteArmed && (
                 <p className="mt-2 text-[11px] text-danger">
-                  {archivedLotteryDeleteSupported
-                    ? 'Der archivierte Lotterie-Pot wird aus der Kontoverwaltung entfernt. Die historische Lotterie, Buchungen und Audit-Daten bleiben erhalten. Klicke „Wirklich löschen?“ erneut zur Bestätigung.'
-                    : 'Beim Löschen werden Wallet und Bank atomar auf 0 gesetzt. Dauerhaftes Löschen bleibt nur ohne Buchungs- oder geschützte Systemhistorie möglich. Klicke „Wirklich löschen?“ erneut zur Bestätigung.'}
+                  Das Konto wird aus diesem Bereich entfernt. Bei CUSTOM-Konten werden vorhandenes Wallet-/Bankguthaben kontrolliert auf 0 gesetzt und historisch protokolliert. Lotterie-/Markt-Systemkonten behalten ihre Fachlogik und Historie unverändert. Klicke „Wirklich löschen?“ erneut zur Bestätigung.
                 </p>
               )}
 
@@ -813,14 +813,15 @@ function LegacyAdminPayout({
     const mapped: ComboboxOption[] = (members.data?.members ?? []).map(member => ({
       id: member.id,
       label: member.displayName || member.username,
-      hint: `Discord ${member.discordId}`,
+      hint: `Discord ${member.discordId} · GUID ${member.id}`,
       avatar: avatarUrl(member),
     }));
     if (selectedMember && !mapped.some(option => option.id === selectedMember.id)) mapped.unshift(selectedMember);
     return mapped;
   }, [members.data?.members, selectedMember]);
   const payoutAccounts = accounts.filter(account => account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && BigInt(account.totalBalance) > 0n);
-  const valid = form.accountId && USER_GUID_RE.test(form.userId) && /^\d+$/.test(form.amount) && BigInt(form.amount || '0') > 0n && form.reason.trim().length >= 3 && form.reason.trim().length <= 180;
+  const reasonValid = form.reason.trim().length === 0 || form.reason.trim().length <= 180;
+  const valid = form.accountId && USER_GUID_RE.test(form.userId) && /^\d+$/.test(form.amount) && BigInt(form.amount || '0') > 0n && reasonValid;
   const mutation = useMutation({
     mutationFn: () => api.post<{ ok: boolean; booked: boolean; account: VirtualAccountControl }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/${form.accountId}/payout?slot=${encodeURIComponent(slot)}`,
@@ -829,7 +830,7 @@ function LegacyAdminPayout({
         amount: form.amount,
         sourcePocket: form.sourcePocket,
         targetPocket: form.targetPocket,
-        reason: form.reason.trim(),
+        reason: form.reason.trim() || 'Admin-Auszahlung',
         operationId,
       },
     ),
@@ -847,7 +848,7 @@ function LegacyAdminPayout({
   return (
     <div className="mt-5 rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
       <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Admin-Auszahlung</p>
-      <p className="text-xs text-muted">Bestehende Dashboard-Funktion bleibt erhalten. Das Ziel wird unmittelbar vor der Buchung erneut als aktives menschliches Guild-Mitglied geprüft.</p>
+      <p className="text-xs text-muted">Einmalige zentrale Admin-Auszahlung. Der Discord-User wird per Dropdown gewählt; intern wird die zugehörige User-GUID an den vorhandenen sicheren Buchungspfad übergeben. Die Begründung ist optional.</p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-sm">
           <span className="text-muted">Konto</span>
@@ -857,7 +858,7 @@ function LegacyAdminPayout({
           </Select>
         </label>
         <div className="text-sm">
-          <span className="text-muted">Empfänger</span>
+          <span className="text-muted">Discord-User / GUID</span>
           <Combobox
             value={form.userId || null}
             onChange={(id, opt) => {
@@ -868,7 +869,7 @@ function LegacyAdminPayout({
             options={options}
             onSearch={setQuery}
             loading={members.isFetching}
-            placeholder="Guild-Mitglied suchen…"
+            placeholder="Discord-User suchen…"
           />
         </div>
         <label className="text-sm">
@@ -890,8 +891,8 @@ function LegacyAdminPayout({
           </Select>
         </label>
         <label className="text-sm md:col-span-2">
-          <span className="text-muted">Grund</span>
-          <Input value={form.reason} onChange={event => { setForm({ ...form, reason: event.target.value }); setOperationId(createIdempotencyKey()); }} maxLength={180} placeholder="Mindestens 3 Zeichen" />
+          <span className="text-muted">Grund (optional)</span>
+          <Input value={form.reason} onChange={event => { setForm({ ...form, reason: event.target.value }); setOperationId(createIdempotencyKey()); }} maxLength={180} placeholder="Optional" />
         </label>
       </div>
       <Button disabled={!valid || mutation.isPending} onClick={() => mutation.mutate()}>
