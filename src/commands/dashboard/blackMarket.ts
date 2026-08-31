@@ -2,8 +2,12 @@ import { EmbedBuilder, MessageFlags, SlashCommandBuilder, SlashCommandSubcommand
 import type { Command } from '../../types';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
-import { buyMarketListing, listMarketListings, listMarketPurchasesForUser } from '../../modules/economy/blackMarket';
+import { listMarketListings, listMarketPurchasesForUser } from '../../modules/economy/blackMarket';
+import { buyInventorylessMarketListing } from '../../modules/economy/blackMarketInventoryless';
+import { syncMarketDiscordProjection } from '../../modules/economy/blackMarketDiscord';
+import { syncVirtualAccountProjection } from '../../modules/economy/virtualAccountDiscord';
 import { getConfig } from '../../modules/economy/repository';
+import { logger } from '../../utils/logger';
 
 function addSlot(builder: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
   return builder.addIntegerOption(o => o.setName('slot').setDescription('Gameserver-Slot (bei mehreren Servern erforderlich)').setRequired(false).setMinValue(1).setMaxValue(MAX_GAME_SERVERS_PER_GUILD));
@@ -49,11 +53,11 @@ export const blackMarketCommand: Command = {
 
     if (sub === 'list') {
       const rows = await listMarketListings(scope.guildId, connId, false);
-      const visible = rows.filter(row => row.stock > 0).slice(0, 20);
+      const visible = rows.slice(0, 20);
       const description = visible.length
         ? visible.map(row => [
           `**${row.name}**`,
-          `💰 Preis: **${row.price.toLocaleString('de-DE')} ${cfg.emoji}** · Bestand: **${row.stock}** · Limit: **${row.maxPerPurchase}**`,
+          `💰 Preis: **${row.price.toLocaleString('de-DE')} ${cfg.emoji}** · Max. pro Kauf: **${row.maxPerPurchase}**`,
           row.description || null,
           `Listing-ID: \`${row.id}\``,
         ].filter(Boolean).join('\n')).join('\n\n')
@@ -87,7 +91,7 @@ export const blackMarketCommand: Command = {
 
     try {
       const sourcePocket = (interaction.options.getString('quelle') ?? 'WALLET') as 'WALLET' | 'BANK';
-      const result = await buyMarketListing({
+      const result = await buyInventorylessMarketListing({
         guildId: scope.guildId,
         nitradoConnId: connId,
         listingId: interaction.options.getString('listing', true),
@@ -105,6 +109,12 @@ export const blackMarketCommand: Command = {
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });
+      if (result.booked) {
+        void Promise.all([
+          syncMarketDiscordProjection(interaction.client, scope.guildId, connId),
+          syncVirtualAccountProjection(interaction.client, scope.guildId, connId, result.purchase.vendorAccountId),
+        ]).catch(error => logger.error(`Schwarzmarkt Live-Sync nach Slash-Kauf fehlgeschlagen (${result.purchase.id}):`, error as Error));
+      }
     } catch (error) {
       await interaction.reply({ content: bounded(`❌ ${(error as Error).message}`, 1900), flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
     }
