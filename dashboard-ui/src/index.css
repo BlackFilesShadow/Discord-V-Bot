@@ -177,7 +177,7 @@ html[data-density='comfortable'] {
   /* Smoother focus everywhere */
   *:focus { outline: none; }
   *:focus-visible {
-    outline: 2px solid rgb(var(--color-accent) / 0.72);
+    outline: 2px solid rgb(var(--color-focus));
     outline-offset: 2px;
   }
 }
@@ -220,9 +220,9 @@ html[data-density='comfortable'] {
       0 24px 48px -16px rgba(0, 0, 0, 0.7),
       0 0 0 1px rgb(var(--color-accent) / 0);
     transition:
-      box-shadow 380ms cubic-bezier(0.22, 1, 0.36, 1),
-      border-color 380ms cubic-bezier(0.22, 1, 0.36, 1),
-      transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+      box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 220ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
     transform: translateZ(0);
   }
   .card-premium::before {
@@ -243,7 +243,7 @@ html[data-density='comfortable'] {
             mask-composite: exclude;
     pointer-events: none;
     opacity: 0.85;
-    transition: opacity 380ms ease;
+    transition: opacity 220ms ease;
   }
   .card-premium::after {
     content: '';
@@ -255,64 +255,131 @@ html[data-density='comfortable'] {
     border-radius: inherit;
     opacity: 0.6;
   }
-  .card-premium[data-interactive='true']:hover {
-    border-color: rgb(var(--color-accent) / 0.32);
-    transform: translateY(-1px);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.10),
-      0 1px 0 rgba(0, 0, 0, 0.5),
-      0 32px 64px -16px rgba(0, 0, 0, 0.8),
-      0 0 0 1px rgb(var(--color-accent) / 0.18),
-      0 0 60px -8px rgb(var(--color-accent-glow) / 0.26);
+  @media (hover: hover) {
+    .card-premium[data-interactive='true']:hover {
+      border-color: rgb(var(--color-accent) / 0.32);
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.10),
+        0 1px 0 rgba(0, 0, 0, 0.5),
+        0 32px 64px -16px rgba(0, 0, 0, 0.8),
+        0 0 0 1px rgb(var(--color-accent) / 0.18),
+        0 0 60px -8px rgb(var(--color-accent-glow) / 0.26);
+    }
+    .card-premium[data-interactive='true']:hover::before { opacity: 1; }
   }
-  .card-premium[data-interactive='true']:hover::before { opacity: 1; }
 
   /* ── Premium Primary Button (theme-aware brand action) ─────────────── */
   .btn-premium-primary {
     position: relative;
+    isolation: isolate;
     overflow: hidden;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.16) 0%, rgba(255, 255, 255, 0) 50%),
-      linear-gradient(135deg, rgb(var(--color-accent-hover)) 0%, rgb(var(--color-accent)) 52%, rgb(var(--color-accent-dim)) 100%);
+      radial-gradient(120% 160% at 0% 0%, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 52%),
+      linear-gradient(135deg, rgb(var(--color-accent-hover)) 0%, rgb(var(--color-accent)) 50%, rgb(var(--color-accent-dim)) 100%);
     color: rgb(var(--color-on-accent));
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    border: 1px solid rgb(var(--color-accent-hover) / 0.42);
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.35),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.30),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-      0 8px 24px -8px rgb(var(--color-accent-glow) / 0.54),
+      inset 0 1px 0 rgba(255, 255, 255, 0.32),
+      inset 0 -1px 0 rgba(0, 0, 0, 0.28),
+      0 8px 22px -9px rgb(var(--color-accent-glow) / 0.50),
       0 0 0 1px rgba(0, 0, 0, 0.2);
-    transition: filter 200ms ease, box-shadow 280ms ease, transform 100ms ease;
+    transition: filter 180ms ease, border-color 180ms ease, box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1), transform 140ms ease;
+  }
+  .btn-premium-primary::before {
+    content: '';
+    position: absolute;
+    inset: 1px;
+    z-index: -1;
+    border-radius: inherit;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), transparent 44%);
+    pointer-events: none;
   }
   .btn-premium-primary::after {
-    /* Shimmer sweep on hover */
+    /* Kurzer Lichtimpuls: sichtbar, aber nie als dauerhafte Dekoration. */
     content: '';
     position: absolute;
     top: 0; left: -150%;
     width: 80%; height: 100%;
     background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.28) 50%, transparent 100%);
     transform: skewX(-18deg);
-    transition: left 700ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: left 420ms cubic-bezier(0.22, 1, 0.36, 1);
     pointer-events: none;
   }
-  .btn-premium-primary:hover {
-    filter: brightness(1.08) saturate(1.05);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.42),
-      inset 0 -1px 0 rgba(0, 0, 0, 0.35),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-      0 14px 36px -8px rgb(var(--color-accent-glow) / 0.68),
-      0 0 0 1px rgba(0, 0, 0, 0.2);
+  @media (hover: hover) {
+    .btn-premium-primary:not(:disabled):hover {
+      filter: brightness(1.05) saturate(1.06);
+      border-color: rgb(var(--color-accent-hover) / 0.70);
+      transform: translateY(-1px);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.38),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.30),
+        0 14px 30px -10px rgb(var(--color-accent-glow) / 0.66),
+        0 0 0 1px rgba(0, 0, 0, 0.2);
+    }
+    .btn-premium-primary:not(:disabled):hover::after { left: 150%; }
   }
-  .btn-premium-primary:hover::after { left: 150%; }
-  .btn-premium-primary:active { transform: translateY(1px) scale(0.985); }
+  .btn-premium-primary:not(:disabled):active { transform: translateY(0) scale(0.99); }
   .btn-premium-primary:focus-visible {
     box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.40),
+      inset 0 1px 0 rgba(255, 255, 255, 0.38),
       inset 0 -1px 0 rgba(0, 0, 0, 0.30),
-      0 12px 32px -8px rgb(var(--color-accent-glow) / 0.64),
-      0 0 0 3px rgb(var(--color-accent) / 0.42);
+      0 12px 28px -10px rgb(var(--color-accent-glow) / 0.58),
+      0 0 0 3px rgb(var(--color-accent) / 0.42),
+      0 0 0 5px rgb(var(--color-bg) / 0.94);
   }
+
+  /* Nicht-destruktive Varianten behalten ihre Bedeutung, erhalten aber
+     dieselbe ruhige Tiefen- und Press-Logik wie die Primäraktion. */
+  .btn-premium-secondary,
+  .btn-premium-outline,
+  .btn-premium-ghost {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid transparent;
+    transition: background 180ms ease, border-color 180ms ease, box-shadow 220ms cubic-bezier(0.22, 1, 0.36, 1), color 180ms ease, transform 140ms ease;
+  }
+  .btn-premium-secondary {
+    color: rgb(var(--color-fg));
+    background: linear-gradient(180deg, rgb(var(--color-bg-hover) / 0.74), rgb(var(--color-bg-elev) / 0.96));
+    border-color: rgb(var(--color-border) / 0.88);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.07), 0 8px 18px -14px rgba(0,0,0,0.78);
+  }
+  .btn-premium-outline {
+    color: rgb(var(--color-fg));
+    background: linear-gradient(180deg, rgb(var(--color-bg-elev) / 0.20), rgb(var(--color-bg-card) / 0.10));
+    border-color: rgb(var(--color-border) / 0.84);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+  }
+  .btn-premium-ghost {
+    color: rgb(var(--color-fg));
+    background: transparent;
+  }
+  @media (hover: hover) {
+    .btn-premium-secondary:not(:disabled):hover,
+    .btn-premium-outline:not(:disabled):hover,
+    .btn-premium-ghost:not(:disabled):hover {
+      transform: translateY(-1px);
+    }
+    .btn-premium-secondary:not(:disabled):hover {
+      border-color: rgb(var(--color-accent) / 0.42);
+      background: linear-gradient(180deg, rgb(var(--color-bg-hover)), rgb(var(--color-bg-elev)));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 12px 24px -15px rgba(0,0,0,0.82), 0 0 22px -15px rgb(var(--color-accent-glow) / 0.46);
+    }
+    .btn-premium-outline:not(:disabled):hover {
+      border-color: rgb(var(--color-accent) / 0.58);
+      background: rgb(var(--color-accent) / 0.08);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.055), 0 0 18px -14px rgb(var(--color-accent-glow) / 0.42);
+    }
+    .btn-premium-ghost:not(:disabled):hover {
+      background: rgb(var(--color-fg) / 0.055);
+      border-color: rgb(var(--color-border) / 0.54);
+    }
+  }
+  .btn-premium-secondary:not(:disabled):active,
+  .btn-premium-outline:not(:disabled):active,
+  .btn-premium-ghost:not(:disabled):active { transform: scale(0.99); }
 
   /* Danger remains unmistakably destructive and intentionally flatter than primary. */
   .btn-premium-danger {
@@ -320,20 +387,51 @@ html[data-density='comfortable'] {
     background: linear-gradient(180deg, rgb(var(--color-danger) / 0.16), rgb(var(--color-danger) / 0.08));
     border: 1px solid rgb(var(--color-danger) / 0.44);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 20px -14px rgb(var(--color-danger) / 0.62);
-    transition: background 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 100ms ease;
+    transition: background 180ms ease, border-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 140ms ease;
   }
-  .btn-premium-danger:hover {
-    color: rgb(var(--color-fg));
-    background: linear-gradient(180deg, rgb(var(--color-danger) / 0.30), rgb(var(--color-danger) / 0.16));
-    border-color: rgb(var(--color-danger) / 0.72);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 12px 26px -14px rgb(var(--color-danger) / 0.70);
+  @media (hover: hover) {
+    .btn-premium-danger:not(:disabled):hover {
+      color: rgb(var(--color-fg));
+      background: linear-gradient(180deg, rgb(var(--color-danger) / 0.30), rgb(var(--color-danger) / 0.16));
+      border-color: rgb(var(--color-danger) / 0.72);
+      transform: translateY(-1px);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 12px 26px -14px rgb(var(--color-danger) / 0.70);
+    }
   }
-  .btn-premium-danger:active { transform: translateY(1px); }
+  .btn-premium-danger:not(:disabled):active { transform: translateY(0) scale(0.99); }
   .btn-premium-danger:focus-visible { box-shadow: 0 0 0 3px rgb(var(--color-danger) / 0.24); }
+
+  /* Switches erhalten einen klaren Zustand ohne die bisherige harte
+     Farbumschaltung. Semantik und Click-Verhalten bleiben im React-Primitive. */
+  .switch-premium {
+    border: 1px solid rgb(var(--color-border) / 0.86);
+    background: linear-gradient(180deg, rgb(var(--color-bg-hover) / 0.70), rgb(var(--color-bg-elev) / 0.94));
+    box-shadow: inset 0 1px 1px rgba(0,0,0,0.34), 0 1px 0 rgba(255,255,255,0.035);
+    transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+  }
+  .switch-premium[aria-checked='true'] {
+    border-color: rgb(var(--color-accent-hover) / 0.64);
+    background: linear-gradient(135deg, rgb(var(--color-accent-hover)), rgb(var(--color-accent)) 58%, rgb(var(--color-accent-dim)));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.26), 0 0 18px -8px rgb(var(--color-accent-glow) / 0.62);
+  }
+  .switch-premium-thumb {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.72);
+    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease;
+  }
+  .switch-premium[aria-checked='true'] .switch-premium-thumb {
+    box-shadow: 0 2px 6px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.78);
+  }
+  @media (hover: hover) {
+    .switch-premium:not(:disabled):hover { border-color: rgb(var(--color-accent) / 0.52); }
+  }
 
   /* Focus ring helper */
   .focus-ring {
     @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2 focus-visible:ring-offset-bg;
+  }
+  .focus-ring:focus-visible {
+    outline: 2px solid rgb(var(--color-focus));
+    outline-offset: 2px;
   }
 
   .hairline {
@@ -613,6 +711,9 @@ html[data-density='comfortable'] {
     padding: 0.875rem 1rem 0.875rem 2.75rem;
   }
   .palette-input::placeholder { color: rgb(var(--color-muted) / 0.72); }
+  .palette-input:focus-visible {
+    box-shadow: inset 0 -2px 0 rgb(var(--color-focus));
+  }
   .palette-row {
     display: flex; align-items: center; gap: 0.625rem;
     padding: 0.5rem 0.875rem;
@@ -724,7 +825,9 @@ html[data-density='comfortable'] {
   *, *::before, *::after {
     animation-duration: 0ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
     transition-duration: 0ms !important;
+    transition-delay: 0ms !important;
   }
 }
 

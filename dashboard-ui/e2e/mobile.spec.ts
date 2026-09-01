@@ -202,4 +202,23 @@ test.describe('Dashboard Theme', () => {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
   });
+
+  test('respektiert reduzierte Bewegung fuer Overlay und gemeinsame Buttons', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await stubAuth(page);
+    await page.goto('/');
+
+    const primary = page.getByRole('button', { name: /Discord/i });
+    await expect(primary).toBeVisible();
+    const motion = await primary.evaluate((element) => {
+      const primary = element as HTMLButtonElement;
+      return {
+        overlayAnimation: getComputedStyle(document.body, '::before').animationName,
+        transitionDurations: getComputedStyle(primary).transitionDuration.split(',').map(value => value.trim()),
+      };
+    });
+
+    expect(motion.overlayAnimation).toBe('none');
+    expect(motion.transitionDurations).toEqual(expect.arrayContaining(['0s']));
+  });
 });
