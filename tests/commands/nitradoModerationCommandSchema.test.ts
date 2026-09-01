@@ -1,13 +1,11 @@
 import {
   serverBanCommand,
   serverUnbanCommand,
-  serverBanListCommand,
 } from '../../src/commands/dashboard/serverBan';
 import {
   whitelistCommand,
   wlAddCommand,
   wlRemoveCommand,
-  wlListCommand,
 } from '../../src/commands/dashboard/whitelist';
 
 function option(command: { data: { toJSON: () => any } }, name: string): any {
@@ -21,8 +19,8 @@ describe('Nitrado moderation command schema', () => {
     expect(option(serverBanCommand, 'identifier')).toEqual(expect.objectContaining({ required: true }));
   });
 
-  it('Ban/Unban/List waehlen Server per Alias-Autocomplete und lassen Auswahl optional', () => {
-    for (const command of [serverBanCommand, serverUnbanCommand, serverBanListCommand]) {
+  it('Ban und Unban waehlen Server per Alias-Autocomplete und lassen Auswahl optional', () => {
+    for (const command of [serverBanCommand, serverUnbanCommand]) {
       expect(option(command, 'slot')).toEqual(expect.objectContaining({
         required: false,
         autocomplete: true,
@@ -34,7 +32,7 @@ describe('Nitrado moderation command schema', () => {
   });
 
   it('Whitelist-Verwaltung verwendet dieselbe Alias-Auswahl', () => {
-    for (const command of [whitelistCommand, wlAddCommand, wlRemoveCommand, wlListCommand]) {
+    for (const command of [whitelistCommand, wlAddCommand, wlRemoveCommand]) {
       expect(option(command, 'slot')).toEqual(expect.objectContaining({
         required: false,
         autocomplete: true,
@@ -42,5 +40,12 @@ describe('Nitrado moderation command schema', () => {
       }));
       expect(command.autocomplete).toBeDefined();
     }
+  });
+
+  it('lässt Listenanzeige bewusst den festen Kanal-Katalogen', () => {
+    const serverBanSource = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../../src/commands/dashboard/serverBan.ts'), 'utf8');
+    const whitelistSource = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../../src/commands/dashboard/whitelist.ts'), 'utf8');
+    expect(serverBanSource).not.toContain('serverBanListCommand');
+    expect(whitelistSource).not.toContain('wlListCommand');
   });
 });

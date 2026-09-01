@@ -1623,6 +1623,10 @@ model ServerSettings {
   whitelistInfoMessageId       String?
   whitelistApproveLogChannelId String?
   whitelistDenyLogChannelId    String?
+  whitelistCatalogChannelId    String?
+  whitelistCatalogMessageId    String?
+  banCatalogChannelId          String?
+  banCatalogMessageId          String?
   createdAt                    DateTime          @default(now())
   updatedAt                    DateTime          @updatedAt
 

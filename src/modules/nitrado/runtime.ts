@@ -14,6 +14,7 @@ import { startBankInterestCron, stopBankInterestCron } from '../economy/interest
 import { startBanExpiryRuntime, stopBanExpiryRuntime } from '../bans/expiryRuntime';
 import { startBanReconciliationCron, stopBanReconciliationCron } from '../bans/banReconciliation';
 import { startMarketOrderReadyRuntime, stopMarketOrderReadyRuntime } from '../economy/marketOrderReadyRuntime';
+import { startServerListCatalogSync, stopServerListCatalogSync } from './serverListCatalog';
 
 export interface NitradoRuntimeHandle {
   stopAndDrain(): Promise<void>;
@@ -24,6 +25,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startBanExpiryRuntime();
   startBanReconciliationCron();
   startMarketOrderReadyRuntime();
+  startServerListCatalogSync(client);
   startTokenValidationCron(client);
   startPermaOnlyCron();
   startWhitelistSyncCron();
@@ -56,6 +58,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
       stopBanReconciliationCron();
       stopBanExpiryRuntime();
       stopMarketOrderReadyRuntime();
+      stopServerListCatalogSync();
       await drainAndStopJobWorker();
     },
   };

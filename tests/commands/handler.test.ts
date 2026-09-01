@@ -67,7 +67,7 @@ describe('Command Handler (Sektion 5)', () => {
 
     expect(client.commands.has('server-ban')).toBe(true);
     expect(client.commands.has('server-unban')).toBe(true);
-    expect(client.commands.has('server-ban-list')).toBe(true);
+    expect(client.commands.has('server-ban-list')).toBe(false);
 
     expect(client.commands.has('add-money')).toBe(true);
     expect(client.commands.has('remove-money')).toBe(true);
