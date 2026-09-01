@@ -1,0 +1,41 @@
+name: Repair dashboard lockfile
+
+on:
+  push:
+    branches:
+      - fix/market-order-production-flow
+
+permissions:
+  contents: write
+
+jobs:
+  repair-dashboard-lockfile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: fix/market-order-production-flow
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard-ui/package-lock.json
+      - name: Apply non-breaking dashboard audit fixes
+        working-directory: dashboard-ui
+        run: npm audit fix --package-lock-only --ignore-scripts --no-fund
+      - name: Commit refreshed dashboard lockfile
+        shell: bash
+        run: |
+          if git diff --quiet -- dashboard-ui/package-lock.json; then
+            echo "dashboard-ui/package-lock.json already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard-ui/package-lock.json
+          git commit -m "fix(security): refresh dashboard vulnerable transitives"
+          git push origin HEAD:fix/market-order-production-flow
