@@ -307,6 +307,24 @@ describe('Konsolen-Linking ueber PlayerSessions', () => {
     expect(result).toEqual({ ok: false, reason: 'PLAYER_NAME_TAKEN', playerName: 'Void__Architect' });
   });
 
+  it('isoliert denselben Namen und dieselbe GUID auf einem anderen Gameserver', async () => {
+    const { client } = makeClient([
+      {
+        guildId: SCOPE.guildId,
+        nitradoConnId: 'conn-2',
+        userDiscordId: USER_OWNER,
+        identityHash: identityHash('guid-1', SECRET),
+        status: 'VERIFIED',
+        challengeCode: null,
+        challengeExpiresAt: null,
+        verifiedAt: NOW,
+      },
+    ], [session({ gameId: 'guid-1', playerName: 'Void__Architect', durationSeconds: 600 })]);
+
+    await expect(linkByPlayerName(client, SCOPE, USER_OTHER, 'Void__Architect', SECRET, NOW))
+      .resolves.toMatchObject({ ok: true, alreadyLinked: false });
+  });
+
   it('verweigert einen zweiten unterschiedlichen Spieler fuer denselben Discord-Account', async () => {
     const { client } = makeClient([
       {
