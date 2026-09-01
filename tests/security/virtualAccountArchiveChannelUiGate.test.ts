@@ -9,4 +9,10 @@ describe('virtual-account archive channel UI gate', () => {
     expect(source).toContain("if (draft.channelId && draft.archiveChannelId && draft.channelId === draft.archiveChannelId)");
     expect(source).toContain('channels.filter(channel => channel.id !== draft.channelId)');
   });
+
+  it('uses functional state updates so a channel selection cannot overwrite an archive selection', () => {
+    expect(source).toContain('setDraft: (update: (current: AccountDraft) => AccountDraft) => void');
+    expect(source).toContain('setDraft(current => ({ ...current, ...value }))');
+    expect(source).toContain('setCreateDraft(current => ({ ...current, ...update(current) }))');
+  });
 });

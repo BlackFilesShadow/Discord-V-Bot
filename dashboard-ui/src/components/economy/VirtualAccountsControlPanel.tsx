@@ -312,11 +312,11 @@ function AccountFields({
   disabled,
 }: {
   draft: AccountDraft;
-  setDraft: (next: AccountDraft) => void;
+  setDraft: (update: (current: AccountDraft) => AccountDraft) => void;
   channels: DiscordChannel[];
   disabled?: boolean;
 }) {
-  const patch = (value: Partial<AccountDraft>) => setDraft({ ...draft, ...value });
+  const patch = (value: Partial<AccountDraft>) => setDraft(current => ({ ...current, ...value }));
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <label className="text-sm md:col-span-2">
@@ -679,7 +679,12 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
             <Input type="datetime-local" value={createDraft.expiresAt} onChange={event => setCreateDraft({ ...createDraft, expiresAt: event.target.value })} />
           </label>
         </div>
-        <AccountFields draft={createDraft} setDraft={next => setCreateDraft({ ...createDraft, ...next })} channels={textChannels} disabled={create.isPending} />
+        <AccountFields
+          draft={createDraft}
+          setDraft={update => setCreateDraft(current => ({ ...current, ...update(current) }))}
+          channels={textChannels}
+          disabled={create.isPending}
+        />
         <div>
           <p className="text-xs font-medium text-white mb-2">Kontoverwalter</p>
           <ManagerPicker guildId={guildId} slot={slot} managers={createDraft.managers} onChange={managers => setCreateDraft({ ...createDraft, managers })} disabled={create.isPending} />
