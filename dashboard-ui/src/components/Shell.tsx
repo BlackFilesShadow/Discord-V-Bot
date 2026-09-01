@@ -16,6 +16,7 @@ import { useHotkey, MOD_LABEL } from '@/lib/hotkeys';
 import { CommandPalette } from '@/components/CommandPalette';
 import { DevLoginPanel } from '@/components/DevLoginPanel';
 import { BotAdminLoginPanel } from '@/components/BotAdminLoginPanel';
+import { NitradoDriftBanner } from '@/components/NitradoDriftBanner';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { Kbd } from '@/components/ui/Kbd';
 
@@ -34,6 +35,10 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   const botAdminActive = useBotAdminSession().active;
   const elevated = devActive || botAdminActive;
   const loc = useLocation();
+  const serverSlotMatch = /^\/servers\/([^/]+)\/server\/([1-5])(?:\/|$)/.exec(loc.pathname);
+  const serverDriftScope = serverSlotMatch
+    ? { guildId: serverSlotMatch[1], slot: serverSlotMatch[2] }
+    : null;
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(
@@ -234,7 +239,12 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
             )}
           </>
         )}
-        <main className="dashboard-main flex-1 overflow-y-auto p-4 sm:p-6" role="main">{children}</main>
+        <main className="dashboard-main flex-1 overflow-y-auto p-4 sm:p-6" role="main">
+          {serverDriftScope && (
+            <NitradoDriftBanner guildId={serverDriftScope.guildId} slot={serverDriftScope.slot} />
+          )}
+          {children}
+        </main>
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
