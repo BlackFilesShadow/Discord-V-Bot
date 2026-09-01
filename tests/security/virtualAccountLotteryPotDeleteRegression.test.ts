@@ -39,12 +39,24 @@ describe('virtual account removal regression', () => {
     expect(deletion).not.toContain('DELETE FROM "EconomyMarketPurchase"');
   });
 
-  it('stores a scoped tombstone with account FK and hides it from the control list', () => {
+  it('stores a scoped tombstone with account FK and marks it hidden-but-restorable in the control list', () => {
     expect(migration).toContain('CREATE TABLE "EconomyVirtualAccountControlHidden"');
     expect(migration).toContain('FOREIGN KEY ("accountId") REFERENCES "EconomyVirtualAccount"("id")');
     expect(migration).toContain('ON DELETE CASCADE ON UPDATE CASCADE');
     expect(control).toContain('listHiddenVirtualAccountIds');
-    expect(control).toContain('accounts.filter(account => !hiddenIds.has(account.id))');
+    expect(control).toContain('hiddenIds.has(account.id)');
+    expect(control).toContain('restoreHiddenVirtualAccount');
+    expect(control).toContain("'/control/accounts/:accountId/restore'");
+  });
+
+  it('restores a hidden account strictly scoped to guild+connection', () => {
+    expect(deletion).toContain('export async function restoreHiddenVirtualAccount');
+    expect(deletion).toContain('DELETE FROM "EconomyVirtualAccountControlHidden" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3');
+    expect(control).toContain("requireGuildPermission('economy.manage')");
+    const restoreStart = control.indexOf("post('/control/accounts/:accountId/restore'");
+    const restoreHandler = control.slice(restoreStart, control.indexOf("post('/control/accounts',", restoreStart));
+    expect(restoreHandler).toContain('getVirtualAccountById(scope.guildId, connId, accountId)');
+    expect(restoreHandler).toContain('restoreHiddenVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId })');
   });
 
   it('shows one two-click delete action next to Audit for all account kinds/statuses/balances', () => {

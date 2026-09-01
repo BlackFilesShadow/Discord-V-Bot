@@ -36,6 +36,7 @@ interface VirtualAccountControl {
   id: string;
   kind: 'CUSTOM' | 'LOTTERY_POT' | 'MARKET_VENDOR';
   name: string;
+  hidden: boolean;
   walletBalance: string;
   bankBalance: string;
   totalBalance: string;
@@ -561,6 +562,18 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
+  const restore = useMutation({
+    mutationFn: (accountId: string) => api.post<AccountMutationResponse>(
+      `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}/restore?slot=${encodeURIComponent(slot)}`,
+      {},
+    ),
+    onSuccess: result => {
+      setMessage({ ok: true, text: `Konto „${result.account.name}“ ist wieder in den virtuellen Konten sichtbar.` });
+      void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
+  });
+
   const remove = useMutation({
     mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: DeletedAccountResponse }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}?slot=${encodeURIComponent(slot)}`,
@@ -685,6 +698,27 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
           const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
           const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
           const deleteArmed = deleteConfirmId === account.id;
+          if (account.hidden) {
+            return (
+              <div key={account.id} className="rounded-lg border border-border/40 bg-bg-elev/20 p-3 opacity-70">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-white truncate">{account.accountEmoji} {account.name}</p>
+                      <Badge variant="neutral">{account.accountPurpose === 'BANK_TREASURY' ? 'SERVERBANK' : account.kind}</Badge>
+                      <Badge variant="neutral">Ausgeblendet</Badge>
+                    </div>
+                    <p className="text-[11px] text-muted mt-1">
+                      Aus den virtuellen Konten entfernt. Fachlogik und Historie (z. B. Schwarzmarkt/Lotterie) laufen unveraendert weiter.
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" disabled={restore.isPending} onClick={() => restore.mutate(account.id)}>
+                    <RefreshCw className="h-3.5 w-3.5 mr-1" />Wiederherstellen
+                  </Button>
+                </div>
+              </div>
+            );
+          }
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
