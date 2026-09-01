@@ -190,6 +190,7 @@ async function conflictForHashes(
   return client.gameIdentityLink.findFirst({
     where: {
       guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
       identityHash: { in: hashes },
       status: 'VERIFIED',
       NOT: { userDiscordId },
@@ -210,7 +211,7 @@ async function playerNameHashesAcrossGuild(
   secret: string,
 ): Promise<string[]> {
   const sessions = await client.playerSession.findMany({
-    where: { guildId: scope.guildId, playerName },
+    where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, playerName },
     orderBy: [{ connectedAt: 'desc' }, { createdAt: 'desc' }],
     take: 5000,
   });
@@ -288,7 +289,13 @@ async function persistVerifiedLink(
       if (currentUserLink) return { ok: false, reason: 'USER_ALREADY_LINKED' } as const;
 
       const identityOwner = await tx.gameIdentityLink.findFirst({
-        where: { guildId: scope.guildId, identityHash: hash, status: 'VERIFIED', NOT: { userDiscordId } },
+        where: {
+          guildId: scope.guildId,
+          nitradoConnId: scope.nitradoConnId,
+          identityHash: hash,
+          status: 'VERIFIED',
+          NOT: { userDiscordId },
+        },
       });
       if (identityOwner) return { ok: false, reason: 'IDENTITY_TAKEN' } as const;
 
