@@ -1,37 +1,40 @@
-const vendorCatalogFindUniqueMock = jest.fn();
-const vendorCatalogUpdateManyMock = jest.fn();
-const marketProjectionFindFirstMock = jest.fn();
-const virtualAccountFindFirstMock = jest.fn();
-const listMarketListingsMock = jest.fn();
-const getConfigMock = jest.fn();
-
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     economyMarketVendorCatalogProjection: {
-      findUnique: (...args: unknown[]) => vendorCatalogFindUniqueMock(...args),
-      updateMany: (...args: unknown[]) => vendorCatalogUpdateManyMock(...args),
+      findUnique: jest.fn(),
+      updateMany: jest.fn(),
     },
     economyMarketDiscordProjection: {
-      findFirst: (...args: unknown[]) => marketProjectionFindFirstMock(...args),
+      findFirst: jest.fn(),
     },
     economyVirtualAccount: {
-      findFirst: (...args: unknown[]) => virtualAccountFindFirstMock(...args),
+      findFirst: jest.fn(),
     },
   },
 }));
 
 jest.mock('../../src/modules/economy/blackMarket', () => ({
   __esModule: true,
-  listMarketListings: (...args: unknown[]) => listMarketListingsMock(...args),
+  listMarketListings: jest.fn(),
 }));
 
 jest.mock('../../src/modules/economy/repository', () => ({
   __esModule: true,
-  getConfig: (...args: unknown[]) => getConfigMock(...args),
+  getConfig: jest.fn(),
 }));
 
+import prisma from '../../src/database/prisma';
+import { listMarketListings } from '../../src/modules/economy/blackMarket';
 import { handleMarketVendorCatalogPageButton } from '../../src/modules/economy/blackMarketDiscord';
+import { getConfig } from '../../src/modules/economy/repository';
+
+const vendorCatalogFindUniqueMock = prisma.economyMarketVendorCatalogProjection.findUnique as unknown as jest.Mock;
+const vendorCatalogUpdateManyMock = prisma.economyMarketVendorCatalogProjection.updateMany as unknown as jest.Mock;
+const marketProjectionFindFirstMock = prisma.economyMarketDiscordProjection.findFirst as unknown as jest.Mock;
+const virtualAccountFindFirstMock = prisma.economyVirtualAccount.findFirst as unknown as jest.Mock;
+const listMarketListingsMock = listMarketListings as unknown as jest.Mock;
+const getConfigMock = getConfig as unknown as jest.Mock;
 
 const GUILD = '123456789012345678';
 const CHANNEL = '223456789012345678';
