@@ -14,7 +14,10 @@
  *   Lockgewinn wird der kanonische Connection-Snapshot frisch gelesen. Damit
  *   kann ein alter Token/Service-Snapshot niemals Jobs fuer ein inzwischen
  *   anderes Remote-Ziel erzeugen.
- * - Lokale Eintraege bekommen einen ehrlichen SYNCED/LOCAL_ONLY-Status.
+ * - LOCAL_ONLY bedeutet weiterhin: V-Bot will den Namen remote hinzufuegen.
+ * - SYNCED + remote fehlend ist dagegen eine MANUELLE REMOTE-ABWEICHUNG. Dieser
+ *   Zustand wird bewusst nicht automatisch in LOCAL_ONLY umgeschrieben und
+ *   erzeugt keinen Re-Add. Ein Admin muss die Abweichung explizit aufloesen.
  * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
  *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
  * - Remote-only Eintraege sind Fremdwahrheit und werden vom Hintergrund-Cron
@@ -86,19 +89,28 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
 
   const desiredLocal = local.filter((entry) => entry.syncState !== 'PENDING_REMOVE');
   const localNames = desiredLocal.map((e) => e.gameId);
+  const localByName = new Map(desiredLocal.map(entry => [normGameId(entry.gameId), entry]));
   const pendingRemoveNorm = new Set(
     local.filter((entry) => entry.syncState === 'PENDING_REMOVE').map((entry) => normGameId(entry.gameId)),
   );
   const diff = diffWhitelist(localNames, remoteNames);
   const remoteOnly = diff.toRemove.filter((name) => !pendingRemoveNorm.has(normGameId(name)));
+  const intentionalAdds = diff.toAdd.filter(name => localByName.get(normGameId(name))?.syncState === 'LOCAL_ONLY');
+  const manualRemoteMissing = diff.toAdd.filter(name => localByName.get(normGameId(name))?.syncState === 'SYNCED');
   const now = new Date();
   let finalizedRemovals = 0;
   const pendingRemoveRemote = new Map<string, string>();
 
-  // Status ist eine Beobachtung des gerade gelesenen Remote-Zustands.
-  // PENDING_REMOVE ist dagegen eine lokale Absicht und darf niemals wieder zu
+  // PENDING_REMOVE ist eine lokale Absicht und darf niemals wieder zu
   // LOCAL_ONLY/SYNCED umgeschrieben werden. Sobald der Name remote wirklich
   // fehlt, ist die Entfernung bestaetigt und der lokale Spiegel darf weg.
+  //
+  // Fuer normale Eintraege gilt bewusst asymmetrisch:
+  // - remote vorhanden -> SYNCED (frisch bestaetigt)
+  // - LOCAL_ONLY + remote fehlend -> bleibt LOCAL_ONLY (noch ausstehender Add)
+  // - SYNCED + remote fehlend -> bleibt SYNCED (manuelle Remote-Abweichung)
+  // Damit kann ein manueller Nitrado-Remove nicht durch den Cron rueckgaengig
+  // gemacht werden, waehrend echte neue V-Bot-Adds weiterhin automatisch laufen.
   for (const entry of local) {
     const normalized = normGameId(entry.gameId);
     const isRemote = remoteNorm.has(normalized);
@@ -119,13 +131,12 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
       continue;
     }
 
-    await prisma.whitelistEntry.updateMany({
-      where: { id: entry.id, guildId: conn.guildId, nitradoConnId: conn.id },
-      data: {
-        syncState: isRemote ? 'SYNCED' : 'LOCAL_ONLY',
-        lastSyncedAt: isRemote ? now : null,
-      },
-    });
+    if (isRemote) {
+      await prisma.whitelistEntry.updateMany({
+        where: { id: entry.id, guildId: conn.guildId, nitradoConnId: conn.id },
+        data: { syncState: 'SYNCED', lastSyncedAt: now },
+      });
+    }
   }
 
   const existing = await prisma.nitradoJob.findMany({
@@ -145,7 +156,7 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
 
   const outbox = prisma as unknown as WhitelistOutboxClient;
   let enqueued = 0;
-  for (const gameId of diff.toAdd) {
+  for (const gameId of intentionalAdds) {
     const key = jobKey('WHITELIST_ADD', gameId);
     if (queued.has(key)) continue;
     if (await enqueueWhitelistAdd(outbox, { guildId: conn.guildId, nitradoConnId: conn.id }, gameId)) {
@@ -166,12 +177,19 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
     queued.add(key);
   }
 
-  if (enqueued > 0 || diff.synced.length > 0 || finalizedRemovals > 0 || remoteOnly.length > 0) {
+  if (
+    enqueued > 0
+    || diff.synced.length > 0
+    || finalizedRemovals > 0
+    || remoteOnly.length > 0
+    || manualRemoteMissing.length > 0
+  ) {
     logAudit('WHITELIST_RECONCILED', 'WHITELIST', {
       guildId: conn.guildId,
       nitradoConnId: conn.id,
       synced: diff.synced.length,
-      addQueued: diff.toAdd.length,
+      addQueued: intentionalAdds.length,
+      manualRemoteMissingObserved: manualRemoteMissing.length,
       removeQueued: pendingRemoveRemote.size,
       remoteOnlyObserved: remoteOnly.length,
       newlyEnqueued: enqueued,
@@ -181,7 +199,7 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
 }
 
 /**
- * Nitrado-1N: Der aeußere Scheduler-Snapshot dient nur zur Kandidatenfindung.
+ * Nitrado-1N: Der aeussere Scheduler-Snapshot dient nur zur Kandidatenfindung.
  * Bevor Token/Service oder Remote-Zustand benutzt werden, wird derselbe
  * Connection-Lock wie im Worker gewonnen und danach der kanonische Snapshot
  * fuer exakt id+guild erneut gelesen. Busy bedeutet bewusst skip bis zum
