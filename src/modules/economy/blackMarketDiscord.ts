@@ -26,6 +26,8 @@ type ProjectionRow = {
   catalogChannelId: string | null;
   directBuyEnabled: boolean;
   directBuyChannelId: string | null;
+  orderChannelId: string | null;
+  orderReadyChannelId: string | null;
   lastSyncedAt: Date | null;
   lastSyncError: string | null;
 };
@@ -46,6 +48,8 @@ export interface MarketDiscordProjectionView {
   catalogChannelId: string | null;
   directBuyEnabled: boolean;
   directBuyChannelId: string | null;
+  orderChannelId: string | null;
+  orderReadyChannelId: string | null;
   catalogMessageCount: number;
   directBuyMessageCount: number;
   lastSyncedAt: Date | null;
@@ -85,6 +89,8 @@ async function viewFor(row: ProjectionRow): Promise<MarketDiscordProjectionView>
     catalogChannelId: row.catalogChannelId,
     directBuyEnabled: row.directBuyEnabled,
     directBuyChannelId: row.directBuyChannelId,
+    orderChannelId: row.orderChannelId,
+    orderReadyChannelId: row.orderReadyChannelId,
     catalogMessageCount: messages.filter(message => message.kind === 'CATALOG').length,
     directBuyMessageCount: messages.filter(message => message.kind === 'DIRECT_BUY').length,
     lastSyncedAt: row.lastSyncedAt,
@@ -214,6 +220,69 @@ function directBuyComponents(listing: MarketListingView) {
       .setEmoji('🏦')
       .setStyle(ButtonStyle.Primary),
   )];
+}
+
+/**
+ * Katalog-weite Sammelbestellung (mehrere Angebote in einer Wallet-Buchung).
+ * Ein einzelner, stabiler Anker statt eines Buttons pro Seite/Angebot.
+ */
+function orderButtonEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setColor(0x22c55e)
+    .setTitle('🛒 Bestellung aufgeben')
+    .setDescription('Wähle mehrere Angebote **desselben Händlers** aus deiner Verkaufsliste und bezahle sie in einer Bestellung aus deinem Wallet.')
+    .setFooter({ text: 'V-Bot · Schwarzmarkt · Sammelbestellung' });
+}
+
+function orderButtonComponents() {
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId('marketorder:open:0').setLabel('Bestellen').setEmoji('🛒').setStyle(ButtonStyle.Success),
+  )];
+}
+
+async function upsertOrderButtonMessage(args: {
+  client: Client;
+  projection: ProjectionRow;
+  channel: TextChannel | null;
+  existing: ProjectionMessageRow[];
+}): Promise<void> {
+  const existingButton = args.existing.filter(row => row.kind === 'ORDER_BUTTON');
+  // Der Bestellungs-Button setzt Direktkauf UND vollstaendig konfigurierte
+  // Bestellungs-Kanaele voraus - ohne Wallet-Buchungspfad und ohne Kanal fuer
+  // das Bestell-/Bestellung-bereit-Embed gibt es keinen sicheren Ablauf.
+  const enabled = args.channel
+    && args.projection.directBuyEnabled
+    && Boolean(args.projection.orderChannelId)
+    && Boolean(args.projection.orderReadyChannelId);
+  if (!enabled) {
+    for (const row of existingButton) await removeProjectionMessage(args.client, row);
+    return;
+  }
+  const channel = args.channel as TextChannel;
+  const payload = { embeds: [orderButtonEmbed()], components: orderButtonComponents(), allowedMentions: { parse: [] as never[] } };
+  const row = existingButton[0] ?? null;
+  let message = row?.channelId === channel.id ? await fetchManagedMessage(channel, row.messageId) : null;
+  if (row && row.channelId !== channel.id) await deleteDiscordMessage(args.client, row);
+  if (message) await message.edit(payload);
+  else message = await channel.send(payload);
+
+  if (row) {
+    await prisma.economyMarketDiscordMessage.update({ where: { id: row.id }, data: { channelId: channel.id, messageId: message.id } });
+  } else {
+    await prisma.economyMarketDiscordMessage.create({
+      data: {
+        projectionId: args.projection.id,
+        guildId: args.projection.guildId,
+        nitradoConnId: args.projection.nitradoConnId,
+        kind: 'ORDER_BUTTON',
+        pageIndex: 0,
+        listingId: null,
+        channelId: channel.id,
+        messageId: message.id,
+      },
+    });
+  }
+  for (const stale of existingButton.slice(1)) await removeProjectionMessage(args.client, stale);
 }
 
 async function upsertCatalogMessages(args: {
@@ -352,6 +421,8 @@ async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnI
     await upsertCatalogMessages({ client, projection, channel: catalogChannel, listings, currencyName: config.currencyName, currencyEmoji: config.emoji, existing });
     const afterCatalog = await readMessageRows(projection.id);
     await upsertDirectBuyMessages({ client, projection, channel: directChannel, listings, currencyName: config.currencyName, currencyEmoji: config.emoji, existing: afterCatalog });
+    const afterDirectBuy = await readMessageRows(projection.id);
+    await upsertOrderButtonMessage({ client, projection, channel: catalogChannel, existing: afterDirectBuy });
 
     const updated = await prisma.economyMarketDiscordProjection.update({
       where: { id: projection.id },
@@ -386,10 +457,20 @@ export async function configureMarketDiscordProjection(client: Client, args: {
   catalogChannelId: string | null;
   directBuyEnabled: boolean;
   directBuyChannelId: string | null;
+  orderChannelId: string | null;
+  orderReadyChannelId: string | null;
 }): Promise<MarketDiscordProjectionView> {
   if (args.catalogChannelId) await requireProjectionChannel(client, args.guildId, args.catalogChannelId, 'Verkaufsliste-Kanal');
   if (args.directBuyEnabled && !args.directBuyChannelId) throw new Error('Bei aktiviertem Direktkauf muss ein Direktkauf-Kanal gewählt werden.');
   if (args.directBuyChannelId) await requireProjectionChannel(client, args.guildId, args.directBuyChannelId, 'Direktkauf-Kanal');
+  // Bestellungs-Workflow (Katalog-Sammelbestellung + "Bestellung bereit") ist
+  // bewusst an den Direktkauf gekoppelt: ohne Direktkauf gibt es keine
+  // Wallet-Buchung, die eine Bestellung ausloesen koennte.
+  if (args.directBuyEnabled && (!args.orderChannelId || !args.orderReadyChannelId)) {
+    throw new Error('Bei aktiviertem Direktkauf müssen Bestellungs- und Bestellung-bereit-Kanal gewählt werden.');
+  }
+  if (args.orderChannelId) await requireProjectionChannel(client, args.guildId, args.orderChannelId, 'Bestellungs-Kanal');
+  if (args.orderReadyChannelId) await requireProjectionChannel(client, args.guildId, args.orderReadyChannelId, 'Bestellung-bereit-Kanal');
 
   await prisma.economyMarketDiscordProjection.upsert({
     where: { guildId_nitradoConnId: { guildId: String(args.guildId), nitradoConnId: String(args.nitradoConnId) } },
@@ -399,11 +480,15 @@ export async function configureMarketDiscordProjection(client: Client, args: {
       catalogChannelId: args.catalogChannelId,
       directBuyEnabled: args.directBuyEnabled,
       directBuyChannelId: args.directBuyEnabled ? args.directBuyChannelId : null,
+      orderChannelId: args.directBuyEnabled ? args.orderChannelId : null,
+      orderReadyChannelId: args.directBuyEnabled ? args.orderReadyChannelId : null,
     },
     update: {
       catalogChannelId: args.catalogChannelId,
       directBuyEnabled: args.directBuyEnabled,
       directBuyChannelId: args.directBuyEnabled ? args.directBuyChannelId : null,
+      orderChannelId: args.directBuyEnabled ? args.orderChannelId : null,
+      orderReadyChannelId: args.directBuyEnabled ? args.orderReadyChannelId : null,
     },
   });
   const synced = await syncMarketDiscordProjection(client, args.guildId, args.nitradoConnId);

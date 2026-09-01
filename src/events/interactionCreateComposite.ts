@@ -12,6 +12,15 @@ import {
   handleVirtualManagerSelect,
 } from '../modules/economy/virtualAccountInteractions';
 import { handleMarketDirectBuyButton, handleMarketDirectBuyModal } from '../modules/economy/blackMarketInteractions';
+import {
+  handleMarketOrderButton,
+  handleMarketOrderCancelButton,
+  handleMarketOrderConfirmButton,
+  handleMarketOrderManagerButton,
+  handleMarketOrderManagerSelect,
+  handleMarketOrderPageButton,
+  handleMarketOrderSelect,
+} from '../modules/economy/blackMarketOrderInteractions';
 import { handleWhitelistApprovalButton } from '../modules/whitelist/whitelistApprovalButton';
 import { handleFlagActivityButton } from '../modules/gameplayFeeds/flagActivity';
 
@@ -20,7 +29,12 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
     return i.customId.startsWith('vacct:')
       || i.customId.startsWith('vacct_mgr:')
       || i.customId.startsWith('vacct_mgr_move:')
+      || i.customId.startsWith('vacct_mgr_order:')
       || i.customId.startsWith('marketbuy:')
+      || i.customId.startsWith('marketorder:open:')
+      || i.customId.startsWith('marketorder:page:')
+      || i.customId.startsWith('marketorder:confirm:')
+      || i.customId.startsWith('marketorder:cancel:')
       || i.customId.startsWith('wlreq:u:')
       || i.customId.startsWith('flagshort:v1:');
   }
@@ -29,7 +43,11 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
       || i.customId.startsWith('vacct_mgr_modal:')
       || i.customId.startsWith('marketbuy_modal:');
   }
-  if (i.isStringSelectMenu()) return i.customId.startsWith('vacct_mgr_sel:');
+  if (i.isStringSelectMenu()) {
+    return i.customId.startsWith('vacct_mgr_sel:')
+      || i.customId.startsWith('vacct_mgr_order_sel:')
+      || i.customId.startsWith('marketorder:select:');
+  }
   return false;
 }
 
@@ -57,12 +75,19 @@ const interactionCreateComposite: BotEvent = {
       if (i.customId.startsWith('flagshort:v1:')) return handleFlagActivityButton(i);
       if (i.customId.startsWith('wlreq:u:')) return handleWhitelistApprovalButton(i);
       if (i.customId.startsWith('marketbuy:')) return handleMarketDirectBuyButton(i);
+      if (i.customId.startsWith('marketorder:open:')) return handleMarketOrderButton(i);
+      if (i.customId.startsWith('marketorder:page:')) return handleMarketOrderPageButton(i);
+      if (i.customId.startsWith('marketorder:confirm:')) return handleMarketOrderConfirmButton(i);
+      if (i.customId.startsWith('marketorder:cancel:')) return handleMarketOrderCancelButton(i);
       if (i.customId.startsWith('vacct:deposit:')) return handleVirtualAccountDepositButton(i);
       if (i.customId.startsWith('vacct_mgr_move:')) return handleVirtualManagerMoveButton(i);
+      if (i.customId.startsWith('vacct_mgr_order:')) return handleMarketOrderManagerButton(i);
       if (i.customId.startsWith('vacct_mgr:')) return handleVirtualManagerButton(i);
     }
-    if (i.isStringSelectMenu() && i.customId.startsWith('vacct_mgr_sel:')) {
-      return handleVirtualManagerSelect(i);
+    if (i.isStringSelectMenu()) {
+      if (i.customId.startsWith('vacct_mgr_sel:')) return handleVirtualManagerSelect(i);
+      if (i.customId.startsWith('vacct_mgr_order_sel:')) return handleMarketOrderManagerSelect(i);
+      if (i.customId.startsWith('marketorder:select:')) return handleMarketOrderSelect(i);
     }
     if (i.isModalSubmit()) {
       if (i.customId.startsWith('marketbuy_modal:')) return handleMarketDirectBuyModal(i);

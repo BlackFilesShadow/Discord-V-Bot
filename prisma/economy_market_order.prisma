@@ -1,0 +1,49 @@
+// Mehrfach-Item-Bestellung: buendelt mehrere EconomyMarketPurchase-Zeilen
+// (eine je gewaehltem Angebot) zu einer Bestellung mit Kanal-Embed und
+// Abschluss-Workflow. Bestehende Einzelkauf-Zeilen bleiben orderId=null.
+enum EconomyMarketOrderStatus {
+  OPEN
+  CLOSED
+}
+
+model EconomyMarketOrder {
+  id                String                   @id @default(cuid())
+  guildId           String
+  nitradoConnId     String
+  vendorAccountId   String
+  vendorAccount     EconomyVirtualAccount    @relation("MarketVendorOrders", fields: [vendorAccountId, guildId, nitradoConnId], references: [id, guildId, nitradoConnId], onDelete: Restrict, map: "EconomyMarketOrder_vendor_scope_fkey")
+  userDiscordId     String
+  totalAmount       BigInt
+  status            EconomyMarketOrderStatus @default(OPEN)
+  orderChannelId    String?
+  orderMessageId    String?
+  createdAt         DateTime                 @default(now())
+  closedAt          DateTime?
+  closedByDiscordId String?
+  purchases         EconomyMarketPurchase[]
+  readyNotice       EconomyMarketOrderReadyNotice?
+
+  @@index([guildId, nitradoConnId, vendorAccountId, status], map: "EconomyMarketOrder_scope_status_idx")
+  @@index([guildId, nitradoConnId, userDiscordId, createdAt], map: "EconomyMarketOrder_scope_user_created_idx")
+}
+
+// Persistenter Zustellungs-/Loesch-Datensatz fuer die "Bestellung bereit"-
+// Mention, exakt nach dem Muster von ServerBanExpiryNotice: die 1-Minuten-
+// Loeschung ist damit auch ueber einen Bot-Neustart hinweg garantiert (kein
+// blosses setTimeout, das beim Neustart verloren ginge).
+model EconomyMarketOrderReadyNotice {
+  id            String             @id @default(cuid())
+  orderId       String             @unique
+  order         EconomyMarketOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "EconomyMarketOrderReadyNotice_order_fkey")
+  guildId       String
+  nitradoConnId String
+  channelId     String
+  userDiscordId String
+  messageId     String?
+  deleteAt      DateTime
+  deletedAt     DateTime?
+  createdAt     DateTime           @default(now())
+
+  @@index([deletedAt, deleteAt], map: "EconomyMarketOrderReadyNotice_pending_idx")
+  @@index([guildId, nitradoConnId], map: "EconomyMarketOrderReadyNotice_scope_idx")
+}

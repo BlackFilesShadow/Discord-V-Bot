@@ -92,6 +92,7 @@ describe('Stage 42 SQL / command injection surface runtime scan', () => {
             'earnedSql',
             'PURCHASE_SELECT',
             "PURCHASE_SELECT.replace('LEFT JOIN', 'JOIN')",
+            'ORDER_SELECT',
           ]);
           const bad = embeds.filter((e) => !allowed.has(e));
           if (bad.length) {
@@ -112,6 +113,12 @@ describe('Stage 42 SQL / command injection surface runtime scan', () => {
               const definition = text.match(/const\s+PURCHASE_SELECT\s*=\s*(`[^`]*`|'[^']*'|"[^"]*");/);
               if (!definition || /\$\{/.test(definition[1])) {
                 offenders.push(`${rel(file)} PURCHASE_SELECT must remain a static no-interpolation SQL fragment`);
+              }
+            }
+            if (embeds.includes('ORDER_SELECT')) {
+              const definition = text.match(/const\s+ORDER_SELECT\s*=\s*(`[^`]*`|'[^']*'|"[^"]*");/);
+              if (!definition || /\$\{/.test(definition[1])) {
+                offenders.push(`${rel(file)} ORDER_SELECT must remain a static no-interpolation SQL fragment`);
               }
             }
           }

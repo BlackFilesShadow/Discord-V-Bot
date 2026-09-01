@@ -5,6 +5,8 @@ model EconomyMarketDiscordProjection {
   catalogChannelId   String?
   directBuyEnabled   Boolean  @default(false)
   directBuyChannelId String?
+  orderChannelId      String?
+  orderReadyChannelId String?
   lastSyncedAt       DateTime?
   lastSyncError      String?  @db.VarChar(500)
   createdAt          DateTime @default(now())
