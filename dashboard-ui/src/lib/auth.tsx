@@ -39,14 +39,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Ein einzelner 401 eines Fach-Endpunkts darf den sichtbaren Login nicht
-    // blind verwerfen: Tests, kurzzeitige Route-Zustaende oder ein gezielt
-    // abgelehnter Request koennen ebenfalls 401 liefern. /api/me ist die
-    // kanonische Session-Probe. Erst wenn AUCH sie scheitert, gilt die Session
-    // wirklich als abgelaufen und Protected leitet auf /login um.
+    // blind verwerfen. /api/me ist die kanonische Session-Probe. Die laufende
+    // Seite bleibt waehrend dieser Hintergrundpruefung gemountet, damit ein
+    // legitimer fachlicher 401 seinen lokalen Fehlerzustand nicht verliert.
+    // Erst wenn AUCH /api/me scheitert, gilt die Session als abgelaufen und
+    // Protected leitet auf /login um.
     let pendingRevalidation: Promise<void> | null = null;
     const onAuthExpired = () => {
       if (pendingRevalidation) return;
-      setLoading(true);
       pendingRevalidation = api.get<{ user: SessionUser }>('/api/me')
         .then(data => {
           setUser(data.user);
@@ -57,7 +57,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSessionExpired(true);
         })
         .finally(() => {
-          setLoading(false);
           pendingRevalidation = null;
         });
     };
