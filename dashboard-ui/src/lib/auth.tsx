@@ -45,23 +45,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Erst wenn AUCH /api/me scheitert, gilt die Session als abgelaufen und
     // Protected leitet auf /login um.
     let pendingRevalidation: Promise<void> | null = null;
+    let expiryTimer: ReturnType<typeof setTimeout> | null = null;
     const onAuthExpired = () => {
       if (pendingRevalidation) return;
       pendingRevalidation = api.get<{ user: SessionUser }>('/api/me')
         .then(data => {
+          if (expiryTimer) clearTimeout(expiryTimer);
+          expiryTimer = null;
           setUser(data.user);
           setSessionExpired(false);
         })
         .catch(() => {
-          setUser(null);
-          setSessionExpired(true);
+          // Die Mutation, welche das 401 ausgelöst hat, muss ihren lokalen
+          // Fehlerzustand noch einmal rendern, bevor Protected zur Login-Seite
+          // weiterleitet.
+          expiryTimer = setTimeout(() => {
+            setUser(null);
+            setSessionExpired(true);
+            expiryTimer = null;
+          }, 0);
         })
         .finally(() => {
           pendingRevalidation = null;
         });
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+      if (expiryTimer) clearTimeout(expiryTimer);
+    };
   }, []);
 
   return <AuthCtx.Provider value={{ user, loading, sessionExpired, refresh }}>{children}</AuthCtx.Provider>;

@@ -22,6 +22,8 @@ describe('Dashboard drift + auth expiry gate', () => {
     expect(auth).toContain('if (pendingRevalidation) return');
     expect(auth).toContain('setUser(null)');
     expect(auth).toContain('setSessionExpired(true)');
+    expect(auth).toContain('expiryTimer = setTimeout');
+    expect(auth).toContain('if (expiryTimer) clearTimeout(expiryTimer)');
   });
 
   it('shows an explicit login notice only after the session probe confirms expiry', () => {
