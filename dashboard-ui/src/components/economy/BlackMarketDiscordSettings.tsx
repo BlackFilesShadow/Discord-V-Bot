@@ -86,7 +86,7 @@ export function BlackMarketDiscordSettings({
     ),
     onSuccess: result => {
       setTouched(false);
-      onMessage({ ok: true, text: 'Discord-Verkaufsliste und Direktkauf wurden gespeichert und sofort synchronisiert.' });
+      onMessage({ ok: true, text: 'Discord-Verkaufsliste, Bestellbutton und Direktkauf wurden gespeichert und sofort synchronisiert.' });
       qc.setQueryData(['economy-black-market-discord', guildId, slot], { projection: result.projection });
     },
     onError: (error: Error) => onMessage({ ok: false, text: `Discord-Integration fehlgeschlagen: ${error.message}` }),
@@ -98,7 +98,7 @@ export function BlackMarketDiscordSettings({
       {},
     ),
     onSuccess: result => {
-      onMessage({ ok: true, text: 'Discord-Verkaufsliste wurde sofort neu synchronisiert.' });
+      onMessage({ ok: true, text: 'Discord-Verkaufsliste und Bestellbutton wurden sofort neu synchronisiert.' });
       qc.setQueryData(['economy-black-market-discord', guildId, slot], { projection: result.projection });
     },
     onError: (error: Error) => onMessage({ ok: false, text: `Live-Sync fehlgeschlagen: ${error.message}` }),
@@ -130,13 +130,13 @@ export function BlackMarketDiscordSettings({
       </div>
 
       <p className="text-xs text-muted">
-        Die Verkaufsliste wird als Discord-Embed ausgegeben und nach bestätigten Änderungen sofort aktualisiert. Der Direktkauf ist separat schaltbar und erzeugt pro aktivem Angebot ein eigenes Kauf-Embed; dadurch gibt es keine 25-Angebote-Grenze durch Discord-Auswahlmenüs.
+        Die Verkaufsliste wird als Discord-Embed ausgegeben und nach bestätigten Änderungen sofort aktualisiert. Bei aktiviertem Direktkauf erscheint der Sammelbestellungs-Button im selben Verkaufsliste-Kanal direkt zusammen mit der Liste. Zusätzlich erzeugt V-Bot pro aktivem Angebot ein eigenes Direktkauf-Embed im gewählten Direktkauf-Kanal; dadurch gibt es keine 25-Angebote-Grenze durch Discord-Auswahlmenüs.
       </p>
 
       {canManage && (
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-xs">
-            <span className="text-muted block mb-1">Kanal für Verkaufsliste</span>
+            <span className="text-muted block mb-1">Kanal für Verkaufsliste + Bestellbutton</span>
             <Select value={catalogChannelId} onChange={event => { setTouched(true); setCatalogChannelId(event.target.value); }} disabled={channels.isLoading || save.isPending}>
               <option value="">— Verkaufsliste aus —</option>
               {textChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
