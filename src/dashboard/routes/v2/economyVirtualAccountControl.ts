@@ -16,7 +16,7 @@ import {
   ensureVirtualAccountFinance,
   listVirtualAccountManagers,
 } from '../../../modules/economy/virtualAccountFinance';
-import { deleteUnusedVirtualAccount, listHiddenVirtualAccountIds } from '../../../modules/economy/virtualAccountDeletion';
+import { deleteUnusedVirtualAccount, listHiddenVirtualAccountIds, restoreHiddenVirtualAccount } from '../../../modules/economy/virtualAccountDeletion';
 import { safePayoutVirtualAccountToUser } from '../../../modules/economy/virtualAccountMoneySafety';
 import {
   configureVirtualManagerPanelSafe,
@@ -113,7 +113,12 @@ async function readProjection(accountId: string, guildId: string, connId: string
   return rows[0] ?? null;
 }
 
-async function serializeAccount(guildId: Parameters<typeof ensureVirtualAccountFinance>[0], connId: Parameters<typeof ensureVirtualAccountFinance>[1], accountId: string) {
+async function serializeAccount(
+  guildId: Parameters<typeof ensureVirtualAccountFinance>[0],
+  connId: Parameters<typeof ensureVirtualAccountFinance>[1],
+  accountId: string,
+  hidden = false,
+) {
   const account = await getVirtualAccountById(guildId, connId, accountId);
   if (!account) return null;
   const [finance, metadata, managers, projection] = await Promise.all([
@@ -126,6 +131,7 @@ async function serializeAccount(guildId: Parameters<typeof ensureVirtualAccountF
     id: account.id,
     kind: account.kind,
     name: account.name,
+    hidden,
     walletBalance: account.balance.toString(),
     bankBalance: finance.bankBalance.toString(),
     totalBalance: (account.balance + finance.bankBalance).toString(),
@@ -171,10 +177,24 @@ economyVirtualAccountControlRouter.get('/control/accounts', requireGuildPermissi
     listVirtualAccounts(scope.guildId, connId, true),
     listHiddenVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
   ]);
+  // Versteckte (domain-eigene) Konten bleiben im Ergebnis, damit sie ueber
+  // /restore wieder sichtbar gemacht werden koennen, statt dauerhaft nur per
+  // direktem DB-Zugriff auffindbar zu sein.
   const serialized = (await Promise.all(
-    accounts.filter(account => !hiddenIds.has(account.id)).map(account => serializeAccount(scope.guildId, connId, account.id)),
+    accounts.map(account => serializeAccount(scope.guildId, connId, account.id, hiddenIds.has(account.id))),
   )).filter(Boolean);
   res.json({ accounts: serialized });
+});
+
+economyVirtualAccountControlRouter.post('/control/accounts/:accountId/restore', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  const accountId = String(req.params.accountId);
+  const account = await getVirtualAccountById(scope.guildId, connId, accountId);
+  if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
+  const restored = await restoreHiddenVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId });
+  if (!restored) { res.status(404).json({ error: 'Konto war nicht ausgeblendet.' }); return; }
+  logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_RESTORED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, nitradoConnId: connId } });
+  res.json({ account: await serializeAccount(scope.guildId, connId, accountId, false) });
 });
 
 economyVirtualAccountControlRouter.post('/control/accounts', requireGuildPermission('economy.manage'), async (req, res) => {

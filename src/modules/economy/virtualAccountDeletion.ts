@@ -51,6 +51,26 @@ export async function listHiddenVirtualAccountIds(args: {
   return new Set(rows.map(row => row.accountId));
 }
 
+/**
+ * Kehrt eine vorherige Control-Hidden-Loeschung um (nur Sichtbarkeit im
+ * generischen Konten-Dashboard; Kontodaten/-funktion waren nie betroffen).
+ * Strikt guild+connection-gescoppt, damit kein fremdes Konto sichtbar wird.
+ */
+export async function restoreHiddenVirtualAccount(args: {
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
+  accountId: string;
+}): Promise<boolean> {
+  await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
+  const deleted = await rawDb().$executeRawUnsafe(
+    'DELETE FROM "EconomyVirtualAccountControlHidden" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
+    args.accountId,
+    String(args.guildId),
+    String(args.nitradoConnId),
+  );
+  return deleted === 1;
+}
+
 async function writeControlHidden(raw: VirtualAccountRawDb, args: {
   accountId: string;
   guildId: GuildId;
