@@ -16,7 +16,6 @@
 import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
-  EmbedBuilder,
   MessageFlags,
 } from 'discord.js';
 import type { Command } from '../../types';
@@ -41,14 +40,12 @@ import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   targetLabel,
-  type CommandServerTarget,
 } from './serverTargetSelection';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 
 const MAX_BAN_MINUTES = 365 * 24 * 60;
 const MAX_REASON_LENGTH = 300;
 const IDENTIFIER_RE = /^[^\r\n\t]{1,128}$/;
-const LIST_PAGE_SIZE = 20;
 
 function safeLine(value: string | null | undefined, fallback = '—'): string {
   const cleaned = (value ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
@@ -59,11 +56,6 @@ function safeErrorMessage(error: unknown, sensitiveIdentifier?: string): string 
   const raw = error instanceof Error ? error.message : String(error);
   const redacted = sensitiveIdentifier ? raw.split(sensitiveIdentifier).join('[REDACTED]') : raw;
   return safeLine(redacted, 'Unbekannter Fehler');
-}
-
-function clientForTarget(target: CommandServerTarget): NitradoClient {
-  const token = decrypt(target.encryptedToken, config.security.encryptionKey);
-  return new NitradoClient(token);
 }
 
 async function statusReply(
@@ -77,17 +69,6 @@ async function statusReply(
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
-}
-
-async function replyEmbeds(interaction: ChatInputCommandInteraction, embeds: EmbedBuilder[]): Promise<void> {
-  for (let index = 0; index < embeds.length; index += 10) {
-    const chunk = embeds.slice(index, index + 10);
-    if (index === 0) {
-      await interaction.reply({ embeds: chunk, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    } else {
-      await interaction.followUp({ embeds: chunk, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    }
-  }
 }
 
 export const serverBanCommand: Command = {

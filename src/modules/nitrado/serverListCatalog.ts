@@ -116,6 +116,7 @@ export async function syncServerListCatalog(client: Client, guildId: string, con
 }
 
 async function syncConfiguredCatalogs(client: Client): Promise<void> {
+  // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Scheduler findet konfigurierte Kataloge; jeder folgende Read/Write bleibt exakt guild+connection-gescoppt.
   const rows = await prisma.serverSettings.findMany({
     where: { OR: [{ whitelistCatalogChannelId: { not: null } }, { banCatalogChannelId: { not: null } }] },
     select: { guildId: true, nitradoConnId: true },

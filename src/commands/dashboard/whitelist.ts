@@ -16,9 +16,6 @@ import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { config } from '../../config';
-import { decrypt } from '../../utils/security';
-import { NitradoClient } from '../../modules/nitrado/nitradoClient';
 import {
   enqueueWhitelistAdd,
   enqueueWhitelistRemove,
@@ -29,11 +26,9 @@ import {
   resolveSelectedOrAllServers,
   resolveSingleServer,
   targetLabel,
-  type CommandServerTarget,
 } from './serverTargetSelection';
 
 const NAME_RE = /^[^\r\n\t]{1,64}$/;
-const LIST_PAGE_SIZE = 25;
 function isValidName(s: string): boolean { return NAME_RE.test(s) && s.length >= 1; }
 
 type ReplyState = 'INFO' | 'SUCCESS' | 'ERROR';
@@ -59,21 +54,6 @@ async function reply(
 function safeLine(value: string | null | undefined, fallback = '—'): string {
   const cleaned = (value ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
   return cleaned || fallback;
-}
-
-function clientForTarget(target: CommandServerTarget): NitradoClient {
-  const token = decrypt(target.encryptedToken, config.security.encryptionKey);
-  return new NitradoClient(token);
-}
-
-async function replyEmbeds(i: ChatInputCommandInteraction, embeds: EmbedBuilder[]): Promise<void> {
-  const chunks: EmbedBuilder[][] = [];
-  for (let idx = 0; idx < embeds.length; idx += 10) chunks.push(embeds.slice(idx, idx + 10));
-  const first = chunks.shift() ?? [];
-  await i.reply({ embeds: first, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-  for (const chunk of chunks) {
-    await i.followUp({ embeds: chunk, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-  }
 }
 
 // ============================================================
