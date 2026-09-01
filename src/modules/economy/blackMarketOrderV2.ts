@@ -64,7 +64,7 @@ function normalizeLines(lines: MarketOrderLineInput[]): MarketOrderLineInput[] {
 
 async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId, key: string): Promise<MarketOrderView | null> {
   const rows = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
-    'SELECT o."id" FROM "EconomyMarketOrder" o JOIN "EconomyMarketPurchase" p ON p."orderId"=o."id" WHERE left(p."idempotencyKey", length($1) + 1) = $1 || \":\" AND o."guildId"=$2 AND o."nitradoConnId"=$3 LIMIT 1',
+    'SELECT o."id" FROM "EconomyMarketOrder" o JOIN "EconomyMarketPurchase" p ON p."orderId"=o."id" WHERE left(p."idempotencyKey", length($1) + 1) = $1 || \':\' AND o."guildId"=$2 AND o."nitradoConnId"=$3 LIMIT 1',
     key, String(guildId), String(nitradoConnId),
   );
   return rows[0] ? getMarketOrder(guildId, nitradoConnId, rows[0].id) : null;
