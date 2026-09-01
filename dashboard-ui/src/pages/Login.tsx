@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { LegalFooter } from '@/components/LegalFooter';
 
 export default function Login() {
-  const { user, loading } = useAuth();
+  const { user, loading, sessionExpired } = useAuth();
   const nav = useNavigate();
 
   useEffect(() => {
@@ -35,6 +35,15 @@ export default function Login() {
             <p className="text-muted text-sm sm:text-base mb-8 max-w-xs">
               Server&#8209;Verwaltung &middot; Nitrado&#8209;Steuerung &middot; Live&#8209;Monitoring
             </p>
+            {sessionExpired && (
+              <div
+                className="mb-5 w-full rounded-lg border border-warn/40 bg-warn/10 px-4 py-3 text-left text-sm text-warn"
+                role="alert"
+                data-testid="session-expired-notice"
+              >
+                Sitzung abgelaufen – bitte erneut anmelden.
+              </div>
+            )}
             <Button onClick={startOAuth} className="w-full" size="lg" disabled={loading}>
               {loading ? 'Pruefe Session…' : 'Mit Discord anmelden'}
             </Button>
