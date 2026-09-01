@@ -394,6 +394,18 @@ async function upsertVendorCatalogMessages(args: {
         orderMessage = null;
       }
 
+      // Bei Kanalwechsel oder deaktiviertem Bestellanker zuerst die bisher
+      // persistierten Nachrichten entfernen. Erst danach darf die DB auf neue
+      // IDs bzw. NULL zeigen. Schlägt die Löschung fehl, bleiben die alten IDs
+      // für den nächsten Sync retryfähig und neu erzeugte Nachrichten werden
+      // im catch wieder entfernt.
+      if (row && row.channelId !== args.channel.id) {
+        await deleteDiscordMessageRef(args.client, row.channelId, row.catalogMessageId);
+        if (row.orderButtonMessageId) await deleteDiscordMessageRef(args.client, row.channelId, row.orderButtonMessageId);
+      } else if (row && !ordersEnabled && row.orderButtonMessageId) {
+        await deleteDiscordMessageRef(args.client, row.channelId, row.orderButtonMessageId);
+      }
+
       if (row) {
         await prisma.economyMarketVendorCatalogProjection.update({
           where: { id: row.id },
@@ -425,13 +437,6 @@ async function upsertVendorCatalogMessages(args: {
       if (createdOrder && orderMessage) await orderMessage.delete().catch(() => undefined);
       if (createdCatalog && catalogMessage) await catalogMessage.delete().catch(() => undefined);
       throw error;
-    }
-
-    if (row && row.channelId !== args.channel.id) {
-      await deleteDiscordMessageRef(args.client, row.channelId, row.catalogMessageId);
-      if (row.orderButtonMessageId) await deleteDiscordMessageRef(args.client, row.channelId, row.orderButtonMessageId);
-    } else if (row && !ordersEnabled && row.orderButtonMessageId) {
-      await deleteDiscordMessageRef(args.client, row.channelId, row.orderButtonMessageId);
     }
   }
 
