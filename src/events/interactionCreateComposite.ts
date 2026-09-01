@@ -12,6 +12,7 @@ import {
   handleVirtualManagerSelect,
 } from '../modules/economy/virtualAccountInteractions';
 import { handleMarketDirectBuyButton, handleMarketDirectBuyModal } from '../modules/economy/blackMarketInteractions';
+import { handleMarketVendorCatalogPageButton } from '../modules/economy/blackMarketDiscord';
 import {
   handleLegacyMarketOrderConfirmButton,
   handleLegacyMarketOrderSelect,
@@ -36,6 +37,7 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
       || i.customId.startsWith('vacct_mgr_move:')
       || i.customId.startsWith('vacct_mgr_order:')
       || i.customId.startsWith('marketbuy:')
+      || i.customId.startsWith('marketcat:v1:')
       || i.customId.startsWith('marketorder:open:')
       || i.customId.startsWith('marketorder:page:')
       || i.customId.startsWith('marketorder:add:')
@@ -85,6 +87,7 @@ const interactionCreateComposite: BotEvent = {
     if (i.isButton()) {
       if (i.customId.startsWith('flagshort:v1:')) return handleFlagActivityButton(i);
       if (i.customId.startsWith('wlreq:u:')) return handleWhitelistApprovalButton(i);
+      if (i.customId.startsWith('marketcat:v1:')) return handleMarketVendorCatalogPageButton(i);
       if (i.customId.startsWith('marketbuy:')) return handleMarketDirectBuyButton(i);
       if (i.customId.startsWith('marketorder:open:')) return handleMarketOrderButton(i);
       if (i.customId.startsWith('marketorder:page:')) return handleMarketOrderPageButton(i);
