@@ -1,19 +1,21 @@
 model EconomyMarketDiscordProjection {
-  id                 String   @id @default(cuid())
-  guildId            String
-  nitradoConnId      String
-  catalogChannelId   String?
-  directBuyEnabled   Boolean  @default(false)
-  directBuyChannelId String?
+  id                  String   @id @default(cuid())
+  guildId             String
+  nitradoConnId       String
+  catalogChannelId    String?
+  directBuyEnabled    Boolean  @default(false)
+  directBuyChannelId  String?
   orderChannelId      String?
   orderReadyChannelId String?
-  lastSyncedAt       DateTime?
-  lastSyncError      String?  @db.VarChar(500)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  messages           EconomyMarketDiscordMessage[]
+  lastSyncedAt        DateTime?
+  lastSyncError       String?  @db.VarChar(500)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  messages            EconomyMarketDiscordMessage[]
+  vendorCatalogs      EconomyMarketVendorCatalogProjection[]
 
   @@unique([guildId, nitradoConnId])
+  @@unique([id, guildId, nitradoConnId], name: "idScope", map: "EconomyMarketDiscordProjection_id_scope_key")
   @@index([guildId, nitradoConnId])
 }
 
@@ -36,4 +38,23 @@ model EconomyMarketDiscordMessage {
   @@unique([projectionId, kind, listingId])
   @@index([guildId, nitradoConnId, kind])
   @@index([listingId])
+}
+
+model EconomyMarketVendorCatalogProjection {
+  id                   String   @id @default(cuid())
+  projectionId         String
+  guildId              String
+  nitradoConnId        String
+  vendorAccountId      String
+  channelId            String
+  catalogMessageId     String   @unique
+  orderButtonMessageId String?  @unique
+  currentPage          Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  projection EconomyMarketDiscordProjection @relation(fields: [projectionId, guildId, nitradoConnId], references: [id, guildId, nitradoConnId], onDelete: Cascade)
+
+  @@unique([projectionId, vendorAccountId])
+  @@index([guildId, nitradoConnId, vendorAccountId])
 }
