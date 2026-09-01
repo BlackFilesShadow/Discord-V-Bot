@@ -11,6 +11,31 @@ test('manager order custom ids read the actual connId segment instead of undefin
   expect(interactions).not.toContain("interaction.customId.split(':')[2];\n  try {\n    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');\n    const guildId");
 });
 
+test('vendor order anchor is strict, persisted and binds the cart before item selection', () => {
+  const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
+
+  expect(interactions).toContain("if (customId === 'marketorder:open:0') return null");
+  expect(interactions).toContain("parts.length !== 4");
+  expect(interactions).toContain("parts[2] !== 'v1'");
+  expect(interactions).toContain('EconomyMarketVendorCatalogProjection');
+  expect(interactions).toContain('c."orderButtonMessageId"=$4');
+  expect(interactions).toContain('p."catalogChannelId"=c."channelId"');
+  expect(interactions).toContain("v.\"kind\"='MARKET_VENDOR'");
+  expect(interactions).toContain("v.\"status\"='ACTIVE'");
+  expect(interactions).toContain('AND EXISTS (');
+  expect(interactions).toContain('interaction.message.author.id !== interaction.client.user.id');
+  expect(interactions).toContain('vendorAccountId: context.vendorAccountId');
+});
+
+test('vendor-bound cart never exposes listings from another vendor and rejects inactive vendors', () => {
+  const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
+
+  expect(interactions).toContain('allListings.filter(listing => listing.vendorAccountId === draft.vendorAccountId)');
+  expect(interactions).toContain("boundVendor.kind !== 'MARKET_VENDOR'");
+  expect(interactions).toContain("boundVendor.status !== 'ACTIVE'");
+  expect(interactions).toContain('draft.vendorAccountId !== listing.vendorAccountId');
+});
+
 test('cart supports quantities up to 20 and explicit wallet or bank payment', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
   const service = read('src/modules/economy/blackMarketOrderV2.ts');
@@ -39,13 +64,18 @@ test('pending and ready embeds expose the requested lifecycle and one-hour delet
   expect(service).toContain('60 * 60_000');
 });
 
-test('catalog groups by virtual account and renders article beside price and currency', () => {
+test('vendor catalog renders compact article, price and currency without N+1 vendor lookup', () => {
   const projection = read('src/modules/economy/blackMarketDiscord.ts');
-  expect(projection).toContain('vendorNames: Map<string, string>');
-  expect(projection).toContain("name: 'Artikel'");
-  expect(projection).toContain("name: 'Preis / Währung'");
-  expect(projection).toContain('inline: true');
-  expect(projection).toContain('getVirtualAccountById');
+  const loaderStart = projection.indexOf('async function loadActiveVendorCatalogs');
+  const loaderEnd = projection.indexOf('async function upsertVendorCatalogMessages');
+  const loader = projection.slice(loaderStart, loaderEnd);
+
+  expect(projection).toContain('vendorCatalogEmbed');
+  expect(projection).toContain('safeEmbedField(listing.name, 250)');
+  expect(projection).toContain('listing.price.toLocaleString');
+  expect(projection).toContain('safeEmbedField(args.currencyName, 120)');
+  expect(loader).toContain('economyVirtualAccount.findMany');
+  expect(loader).not.toContain('getVirtualAccountById');
   expect(projection).toContain('bis zu **20 Artikeln**');
   expect(projection).toContain('**Wallet oder Bank**');
 });
