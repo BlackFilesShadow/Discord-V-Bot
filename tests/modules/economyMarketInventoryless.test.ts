@@ -30,3 +30,11 @@ test('market production paths no longer depend on stock or configured per-purcha
   expect(panel).not.toContain('maxPerPurchase');
   expect(panel).not.toContain('Max. pro Kauf');
 });
+
+test('market vendor controls remain readable in the two-column dashboard layout', () => {
+  const panel = read('dashboard-ui/src/components/economy/BlackMarketPanel.tsx');
+
+  expect(panel).toContain('2xl:grid-cols-[minmax(0,1fr)_110px_110px_auto_auto]');
+  expect(panel).toContain('>Archivieren</Button>');
+  expect(panel).toContain('Guthaben, aktive Angebote und offene Bestellungen abgearbeitet sind');
+});
