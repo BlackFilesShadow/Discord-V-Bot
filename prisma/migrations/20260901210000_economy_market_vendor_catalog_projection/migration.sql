@@ -44,8 +44,9 @@ CREATE UNIQUE INDEX "EconomyMarketVendorCatalogProjection_projection_vendor_key"
   ON "EconomyMarketVendorCatalogProjection"("projectionId", "vendorAccountId");
 CREATE UNIQUE INDEX "EconomyMarketVendorCatalogProjection_catalog_message_key"
   ON "EconomyMarketVendorCatalogProjection"("catalogMessageId");
+-- PostgreSQL UNIQUE erlaubt mehrere NULL-Werte; der vollständige Index entspricht
+-- damit direkt Prisma @unique auf dem optionalen Bestellanker.
 CREATE UNIQUE INDEX "EconomyMarketVendorCatalogProjection_order_message_key"
-  ON "EconomyMarketVendorCatalogProjection"("orderButtonMessageId")
-  WHERE "orderButtonMessageId" IS NOT NULL;
+  ON "EconomyMarketVendorCatalogProjection"("orderButtonMessageId");
 CREATE INDEX "EconomyMarketVendorCatalogProjection_scope_vendor_idx"
   ON "EconomyMarketVendorCatalogProjection"("guildId", "nitradoConnId", "vendorAccountId");
