@@ -92,6 +92,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
   let cleanedSecrets = 0;
   let correctedRemoteFlags = 0;
   let missingRepairSecrets = 0;
+  let manualRemoteMissing = 0;
 
   for (const ban of local) {
     const locallyActive = isBanActive(ban, now);
@@ -129,20 +130,20 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
         continue;
       }
 
-      // Lokaler aktiver Soll-Ban fehlt remote. appliedRemotely darf dann nicht
-      // weiter als Wahrheit stehen bleiben.
+      // Wurde dieser aktive Ban zuvor bereits remote bestaetigt und fehlt jetzt
+      // ploetzlich, ist das keine automatische Reparaturfreigabe mehr. Das ist
+      // eine manuelle/extern verursachte Remote-Abweichung. `appliedRemotely`
+      // bleibt als letzte bestaetigte Provenienz TRUE und der Cron schreibt den
+      // Ban NICHT zurueck. Ein Admin entscheidet explizit zwischen Nitrado-Zustand
+      // uebernehmen und V-Bot-Zustand wiederherstellen.
       if (ban.appliedRemotely) {
-        const updated = await prisma.serverBanEntry.updateMany({
-          where: {
-            id: ban.id,
-            guildId: conn.guildId,
-            nitradoConnId: conn.id,
-          },
-          data: { appliedRemotely: false },
-        });
-        correctedRemoteFlags += updated.count;
+        manualRemoteMissing++;
+        continue;
       }
 
+      // appliedRemotely=false ist dagegen der normale ausstehende Soll-Zustand
+      // fuer einen frisch angelegten Ban oder einen bewusst zur Reparatur
+      // freigegebenen Eintrag. Nur diese Faelle duerfen automatisch ADDen.
       if (!storedIdentityEnc) {
         missingRepairSecrets++;
         logAudit('SERVER_BAN_RECONCILE_IDENTITY_MISSING', 'NITRADO', {
@@ -238,6 +239,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     || cleanedSecrets > 0
     || correctedRemoteFlags > 0
     || missingRepairSecrets > 0
+    || manualRemoteMissing > 0
   ) {
     logAudit('SERVER_BAN_RECONCILED', 'NITRADO', {
       guildId: conn.guildId,
@@ -248,6 +250,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       cleanedSecrets,
       correctedRemoteFlags,
       missingRepairSecrets,
+      manualRemoteMissingObserved: manualRemoteMissing,
       remoteRows: remoteRows.length,
       localRows: local.length,
     });
