@@ -17,7 +17,11 @@ import { logger, logAudit } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { enqueueServerBanRemove, type BanOutboxClient } from './banOutbox';
 
-const POLL_INTERVAL_MS = 5_000;
+// Niedriger gehalten als die meisten anderen Cron-Intervalle: dieser Tick ist
+// die einzige Quelle fuer die Ablauf-Erkennung UND die Notice-Zustellung eines
+// temporaeren Bans, ihre Latenz ist direkt nutzerspuerbar (Produktions-Messung
+// zeigte 51s End-zu-End bei 5s Intervall).
+const POLL_INTERVAL_MS = 2_000;
 const NOTICE_LEASE_MS = 60_000;
 const MAX_NOTICE_ATTEMPTS = 8;
 const NOTICE_BATCH = 25;
