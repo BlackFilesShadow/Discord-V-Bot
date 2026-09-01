@@ -53,6 +53,7 @@ const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/Vi
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
 const CURRENT_BLACK_MARKET_DISCORD_SETTINGS = 'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx';
+const CURRENT_NITRADO_DRIFT_BANNER = 'dashboard-ui/src/components/NitradoDriftBanner.tsx';
 const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_SERVER_SLOT = 'dashboard-ui/src/pages/ServerSlot.tsx';
@@ -62,6 +63,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_VIRTUAL_ACCOUNT_PANEL,
   CURRENT_BLACK_MARKET_PANEL,
   CURRENT_BLACK_MARKET_DISCORD_SETTINGS,
+  CURRENT_NITRADO_DRIFT_BANNER,
   CURRENT_KILLFEED_PANEL,
   CURRENT_GOODBYE_PANEL,
   CURRENT_SERVER_SLOT,
@@ -235,6 +237,16 @@ describe('stage 24 dashboard button matrix architecture', () => {
     ));
     expect(directEconomyActions.length).toBeGreaterThan(0);
     expect(directEconomyActions.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
+  });
+
+  test('reviewed drift controls stay explicit, named and guarded while historical evidence remains immutable', () => {
+    const rows = currentButtons().filter(button => button.file === CURRENT_NITRADO_DRIFT_BANNER);
+    expect(rows.length).toBe(5);
+    expect(rows.every(button => button.label !== '<dynamic-or-icon-only>')).toBe(true);
+    expect(rows.every(button => button.hasDisabledGuard)).toBe(true);
+    const source = read(CURRENT_NITRADO_DRIFT_BANNER);
+    expect(source).toContain('Nitrado-Zustand uebernehmen');
+    expect(source).toContain('V-Bot-Zustand wiederherstellen');
   });
 
   test('Page 1 stays unchanged while Page 2 contains only the requested separated surfaces plus Killfeed', () => {

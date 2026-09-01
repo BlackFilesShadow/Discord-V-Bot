@@ -28,4 +28,15 @@ test('market order channels are required whenever direct-buy is enabled', () => 
   expect(projection).toContain("'Bestellungs-Kanal'");
   expect(projection).toContain("'Bestellung-bereit-Kanal'");
   expect(projection).toContain("kind: 'ORDER_BUTTON'");
+  expect(projection).toContain('channel: catalogChannel');
+  expect(projection).toContain("setCustomId('marketorder:open:0')");
+});
+
+test('database constraints allow the catalog-wide order button written by runtime', () => {
+  const migration = read('prisma/migrations/20260901134500_economy_market_order_button_projection_constraint/migration.sql');
+
+  expect(migration).toContain("CHECK (\"kind\" IN ('CATALOG', 'DIRECT_BUY', 'ORDER_BUTTON'))");
+  expect(migration).toContain("\"kind\" = 'ORDER_BUTTON'");
+  expect(migration).toContain('\"pageIndex\" = 0');
+  expect(migration).toContain('\"listingId\" IS NULL');
 });

@@ -75,7 +75,7 @@ beforeEach(() => {
 });
 
 describe('Nitrado-1W server-ban DB <-> Nitrado reconciliation', () => {
-  it('repairs an active bot ban that was removed remotely and corrects stale appliedRemotely', async () => {
+  it('pauses a previously confirmed active ban when it disappears remotely instead of silently restoring it', async () => {
     const row = ban('ban-1', 'PlayerOne');
     db.serverBanEntry.findMany.mockResolvedValue([row]);
     db.serverBanRemoteIdentity.findMany.mockResolvedValue([{
@@ -85,15 +85,35 @@ describe('Nitrado-1W server-ban DB <-> Nitrado reconciliation', () => {
 
     await runBanReconciliationOnce(NOW);
 
-    expect(db.serverBanEntry.updateMany).toHaveBeenCalledWith({
-      where: { id: 'ban-1', guildId: 'guild-1', nitradoConnId: 'conn-1' },
-      data: { appliedRemotely: false },
-    });
+    expect(db.serverBanEntry.updateMany).not.toHaveBeenCalled();
+    expect(mockEnqueueAdd).not.toHaveBeenCalled();
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      'SERVER_BAN_RECONCILED',
+      'NITRADO',
+      expect.objectContaining({
+        guildId: 'guild-1',
+        nitradoConnId: 'conn-1',
+        manualRemoteMissingObserved: 1,
+        repairedAdds: 0,
+      }),
+    );
+  });
+
+  it('still repairs an explicitly pending active ban whose remote state has never been confirmed', async () => {
+    const row = ban('ban-pending', 'PendingPlayer', { appliedRemotely: false });
+    db.serverBanEntry.findMany.mockResolvedValue([row]);
+    db.serverBanRemoteIdentity.findMany.mockResolvedValue([{
+      banId: row.id,
+      identifierEnc: encrypt('PendingPlayer', KEY),
+    }]);
+
+    await runBanReconciliationOnce(NOW);
+
     expect(mockEnqueueAdd).toHaveBeenCalledWith(
       db,
       { guildId: 'guild-1', nitradoConnId: 'conn-1' },
-      'ban-1',
-      'PlayerOne',
+      'ban-pending',
+      'PendingPlayer',
       KEY,
       { recentDeadCooldownMs: 60 * 60 * 1000, now: NOW },
     );
@@ -159,8 +179,8 @@ describe('Nitrado-1W server-ban DB <-> Nitrado reconciliation', () => {
     expect(mockEnqueueRemove).not.toHaveBeenCalled();
   });
 
-  it('fails closed when an active missing remote ban has no valid reconciliation secret', async () => {
-    const row = ban('ban-5', 'SecretPlayer');
+  it('fails closed when a pending active remote ban has no valid reconciliation secret', async () => {
+    const row = ban('ban-5', 'SecretPlayer', { appliedRemotely: false });
     db.serverBanEntry.findMany.mockResolvedValue([row]);
     db.serverBanRemoteIdentity.findMany.mockResolvedValue([{ banId: row.id, identifierEnc: 'corrupt' }]);
 
@@ -187,7 +207,7 @@ describe('Nitrado-1W server-ban DB <-> Nitrado reconciliation', () => {
     expect(db.serverBanRemoteIdentity.upsert).not.toHaveBeenCalled();
   });
 
-  it('isolates two gameservers by exact guild+connection scope after separate locks', async () => {
+  it('isolates two pending gameserver repairs by exact guild+connection scope after separate locks', async () => {
     const conn2 = {
       id: 'conn-2', guildId: 'guild-1', encryptedToken: encrypt('token-87654321', KEY), nitradoServerId: '202',
     };
@@ -197,8 +217,8 @@ describe('Nitrado-1W server-ban DB <-> Nitrado reconciliation', () => {
     ]);
     db.nitradoConnection.findFirst.mockImplementation(async ({ where }: any) => where.id === 'conn-1' ? CONN : conn2);
     db.serverBanEntry.findMany.mockImplementation(async ({ where }: any) => {
-      if (where.nitradoConnId === 'conn-1') return [ban('ban-a', 'Alpha')];
-      if (where.nitradoConnId === 'conn-2') return [ban('ban-b', 'Beta')];
+      if (where.nitradoConnId === 'conn-1') return [ban('ban-a', 'Alpha', { appliedRemotely: false })];
+      if (where.nitradoConnId === 'conn-2') return [ban('ban-b', 'Beta', { appliedRemotely: false })];
       return [];
     });
     db.serverBanRemoteIdentity.findMany.mockImplementation(async ({ where }: any) => {
