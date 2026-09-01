@@ -133,7 +133,7 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
     rawErrors
       .map(visibleError)
       .filter((error): error is ReturnType<typeof describeApiError> => error !== null)
-      .map(error => [`${error.status}:${error.code ?? ''}:${error.desc}`, error]),
+      .map(error => [`${error.status}:${error.code ?? ''}:${error.desc}`, error] as const),
   ).values());
   const hasDrift = total > 0;
 
