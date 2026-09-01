@@ -38,10 +38,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => { void refresh(); }, []);
 
   useEffect(() => {
+    // Ein einzelner 401 eines Fach-Endpunkts darf den sichtbaren Login nicht
+    // blind verwerfen: Tests, kurzzeitige Route-Zustaende oder ein gezielt
+    // abgelehnter Request koennen ebenfalls 401 liefern. /api/me ist die
+    // kanonische Session-Probe. Erst wenn AUCH sie scheitert, gilt die Session
+    // wirklich als abgelaufen und Protected leitet auf /login um.
+    let pendingRevalidation: Promise<void> | null = null;
     const onAuthExpired = () => {
-      setUser(null);
-      setLoading(false);
-      setSessionExpired(true);
+      if (pendingRevalidation) return;
+      setLoading(true);
+      pendingRevalidation = api.get<{ user: SessionUser }>('/api/me')
+        .then(data => {
+          setUser(data.user);
+          setSessionExpired(false);
+        })
+        .catch(() => {
+          setUser(null);
+          setSessionExpired(true);
+        })
+        .finally(() => {
+          setLoading(false);
+          pendingRevalidation = null;
+        });
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
