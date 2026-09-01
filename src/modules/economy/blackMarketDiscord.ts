@@ -5,20 +5,22 @@ import {
   ChannelType,
   Client,
   EmbedBuilder,
+  MessageFlags,
   PermissionFlagsBits,
   TextChannel,
+  type ButtonInteraction,
   type Message,
 } from 'discord.js';
+import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
-import type { GuildId, NitradoConnId } from '../../types/scope';
+import { asGuildId, asNitradoConnId, type GuildId, type NitradoConnId } from '../../types/scope';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
 import { getConfig } from './repository';
 import { listMarketListings, type MarketListingView } from './blackMarket';
-import { getVirtualAccountById } from './virtualAccounts';
 import { marketDirectBuyVersion } from './marketDirectBuyContract';
 
 const CATALOG_ITEMS_PER_MESSAGE = 5;
-const syncInFlight = new Map<string, Promise<MarketDiscordProjectionView | null>>();
+const syncInFlight = new Map<string, Promise<unknown>>();
 
 type ProjectionRow = {
   id: string;
@@ -45,6 +47,24 @@ type ProjectionMessageRow = {
   messageId: string;
 };
 
+type VendorCatalogProjectionRow = {
+  id: string;
+  projectionId: string;
+  guildId: string;
+  nitradoConnId: string;
+  vendorAccountId: string;
+  channelId: string;
+  catalogMessageId: string;
+  orderButtonMessageId: string | null;
+  currentPage: number;
+};
+
+interface ActiveVendorCatalog {
+  vendorAccountId: string;
+  vendorName: string;
+  listings: MarketListingView[];
+}
+
 export interface MarketDiscordProjectionView {
   catalogChannelId: string | null;
   directBuyEnabled: boolean;
@@ -57,7 +77,7 @@ export interface MarketDiscordProjectionView {
   lastSyncError: string | null;
 }
 
-function scopeKey(guildId: GuildId, connId: NitradoConnId): string {
+function scopeKey(guildId: GuildId | string, connId: NitradoConnId | string): string {
   return `${String(guildId)}:${String(connId)}`;
 }
 
@@ -66,6 +86,10 @@ function chunk<T>(rows: T[], size: number): T[][] {
   const pages: T[][] = [];
   for (let i = 0; i < rows.length; i += size) pages.push(rows.slice(i, i + size));
   return pages;
+}
+
+function newCatalogProjectionId(): string {
+  return randomUUID().replace(/-/g, '');
 }
 
 async function readProjection(guildId: GuildId, connId: NitradoConnId): Promise<ProjectionRow | null> {
@@ -81,18 +105,29 @@ async function readMessageRows(projectionId: string): Promise<ProjectionMessageR
   });
 }
 
-async function viewFor(row: ProjectionRow): Promise<MarketDiscordProjectionView> {
-  const messages = await prisma.economyMarketDiscordMessage.findMany({
-    where: { projectionId: row.id },
-    select: { kind: true },
+async function readVendorCatalogRows(projectionId: string): Promise<VendorCatalogProjectionRow[]> {
+  return prisma.economyMarketVendorCatalogProjection.findMany({
+    where: { projectionId },
+    orderBy: [{ vendorAccountId: 'asc' }],
   });
+}
+
+async function viewFor(row: ProjectionRow): Promise<MarketDiscordProjectionView> {
+  const [messages, vendorCatalogCount] = await Promise.all([
+    prisma.economyMarketDiscordMessage.findMany({
+      where: { projectionId: row.id },
+      select: { kind: true },
+    }),
+    prisma.economyMarketVendorCatalogProjection.count({ where: { projectionId: row.id } }),
+  ]);
+  const legacyCatalogCount = messages.filter(message => message.kind === 'CATALOG').length;
   return {
     catalogChannelId: row.catalogChannelId,
     directBuyEnabled: row.directBuyEnabled,
     directBuyChannelId: row.directBuyChannelId,
     orderChannelId: row.orderChannelId,
     orderReadyChannelId: row.orderReadyChannelId,
-    catalogMessageCount: messages.filter(message => message.kind === 'CATALOG').length,
+    catalogMessageCount: vendorCatalogCount > 0 ? vendorCatalogCount : legacyCatalogCount,
     directBuyMessageCount: messages.filter(message => message.kind === 'DIRECT_BUY').length,
     lastSyncedAt: row.lastSyncedAt,
     lastSyncError: row.lastSyncError,
@@ -138,17 +173,17 @@ async function fetchManagedMessage(channel: TextChannel, messageId: string): Pro
   }
 }
 
-async function deleteDiscordMessage(client: Client, row: ProjectionMessageRow): Promise<void> {
+async function deleteDiscordMessageRef(client: Client, channelId: string, messageId: string): Promise<void> {
   let channel;
   try {
-    channel = await client.channels.fetch(row.channelId);
+    channel = await client.channels.fetch(channelId);
   } catch (error) {
     if (isUnknownDiscordResource(error, 10003)) return;
     throw error;
   }
   if (!channel) return;
-  if (channel.type !== ChannelType.GuildText) throw new Error(`Verwalteter Schwarzmarkt-Kanal ${row.channelId} ist kein Textkanal mehr.`);
-  const message = await fetchManagedMessage(channel as TextChannel, row.messageId);
+  if (channel.type !== ChannelType.GuildText) throw new Error(`Verwalteter Schwarzmarkt-Kanal ${channelId} ist kein Textkanal mehr.`);
+  const message = await fetchManagedMessage(channel as TextChannel, messageId);
   if (!message) return;
   try {
     await message.delete();
@@ -157,55 +192,69 @@ async function deleteDiscordMessage(client: Client, row: ProjectionMessageRow): 
   }
 }
 
+async function deleteDiscordMessage(client: Client, row: ProjectionMessageRow): Promise<void> {
+  await deleteDiscordMessageRef(client, row.channelId, row.messageId);
+}
+
 async function removeProjectionMessage(client: Client, row: ProjectionMessageRow): Promise<void> {
   await deleteDiscordMessage(client, row);
   await prisma.economyMarketDiscordMessage.deleteMany({ where: { id: row.id, projectionId: row.projectionId } });
 }
 
-function catalogEmbed(args: {
+async function removeVendorCatalogProjection(client: Client, row: VendorCatalogProjectionRow): Promise<void> {
+  await deleteDiscordMessageRef(client, row.channelId, row.catalogMessageId);
+  if (row.orderButtonMessageId) await deleteDiscordMessageRef(client, row.channelId, row.orderButtonMessageId);
+  await prisma.economyMarketVendorCatalogProjection.deleteMany({
+    where: {
+      id: row.id,
+      projectionId: row.projectionId,
+      guildId: row.guildId,
+      nitradoConnId: row.nitradoConnId,
+      vendorAccountId: row.vendorAccountId,
+    },
+  });
+}
+
+function vendorCatalogEmbed(args: {
+  vendorName: string;
   listings: MarketListingView[];
   pageIndex: number;
   totalPages: number;
   currencyName: string;
   currencyEmoji: string;
-  vendorNames: Map<string, string>;
 }): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0x8b5cf6)
-    .setTitle('🛒 Verkaufsliste')
-    .setDescription(`Aktive Angebote · Preise in **${safeEmbedDescription(args.currencyName)} ${args.currencyEmoji}**`)
+    .setTitle(`🛒 ${safeEmbedField(args.vendorName, 220)}`)
+    .setDescription(`Aktive Angebote dieses Händlers · Preise in **${safeEmbedDescription(args.currencyName)} ${args.currencyEmoji}**`)
     .setFooter({ text: `V-Bot · Schwarzmarkt · Live-Sync · Seite ${args.pageIndex + 1}/${args.totalPages}` })
     .setTimestamp();
 
-  if (args.listings.length === 0) return embed.setDescription('Aktuell sind keine aktiven Angebote vorhanden.');
-
-  let lastVendorId: string | null = null;
   for (const listing of args.listings) {
-    if (lastVendorId !== listing.vendorAccountId) {
-      const vendor = args.vendorNames.get(listing.vendorAccountId) ?? 'Virtuelles Konto';
-      embed.addFields({
-        name: `🏪 ${safeEmbedField(vendor, 240)}`,
-        value: '\u200b',
-        inline: false,
-      });
-      lastVendorId = listing.vendorAccountId;
-    }
-    const description = listing.description ? `\n${safeEmbedField(listing.description, 400)}` : '';
-    embed.addFields(
-      {
-        name: 'Artikel',
-        value: `**${safeEmbedField(listing.name, 250)}**${description}`,
-        inline: true,
-      },
-      {
-        name: 'Preis / Währung',
-        value: `**${listing.price.toLocaleString('de-DE')} ${args.currencyEmoji}**\n${safeEmbedField(args.currencyName, 120)}`,
-        inline: true,
-      },
-      { name: '\u200b', value: '\u200b', inline: true },
-    );
+    const description = listing.description ? `\n${safeEmbedField(listing.description, 500)}` : '';
+    embed.addFields({
+      name: safeEmbedField(listing.name, 250),
+      value: `**${listing.price.toLocaleString('de-DE')} ${args.currencyEmoji}** · ${safeEmbedField(args.currencyName, 120)}${description}`,
+      inline: false,
+    });
   }
   return embed;
+}
+
+function vendorCatalogComponents(catalogProjectionId: string, pageIndex: number, totalPages: number) {
+  if (totalPages <= 1) return [];
+  return [new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`marketcat:v1:page:${catalogProjectionId}:${Math.max(0, pageIndex - 1)}`)
+      .setLabel('◀ Zurück')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(pageIndex <= 0),
+    new ButtonBuilder()
+      .setCustomId(`marketcat:v1:page:${catalogProjectionId}:${Math.min(totalPages - 1, pageIndex + 1)}`)
+      .setLabel('Weiter ▶')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(pageIndex >= totalPages - 1),
+  )];
 }
 
 function directBuyEmbed(listing: MarketListingView, currencyName: string, currencyEmoji: string): EmbedBuilder {
@@ -230,118 +279,167 @@ function directBuyComponents(listing: MarketListingView) {
   )];
 }
 
-function orderButtonEmbed(): EmbedBuilder {
+function orderButtonEmbed(vendorName: string): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0x22c55e)
     .setTitle('🛒 Bestellung aufgeben')
-    .setDescription('Stelle einen Warenkorb mit bis zu **20 Artikeln** aus demselben virtuellen Händlerkonto zusammen und bezahle automatisch aus **Wallet oder Bank**.')
+    .setDescription(`Stelle einen Warenkorb mit bis zu **20 Artikeln** von **${safeEmbedDescription(vendorName)}** zusammen und bezahle automatisch aus **Wallet oder Bank**.`)
     .setFooter({ text: 'V-Bot · Schwarzmarkt · Sammelbestellung' });
 }
 
-function orderButtonComponents() {
+function orderButtonComponents(catalogProjectionId: string) {
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId('marketorder:open:0').setLabel('Bestellen').setEmoji('🛒').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`marketorder:open:v1:${catalogProjectionId}`).setLabel('Bestellen').setEmoji('🛒').setStyle(ButtonStyle.Success),
   )];
 }
 
-async function upsertOrderButtonMessage(args: {
-  client: Client;
-  projection: ProjectionRow;
-  channel: TextChannel | null;
-  existing: ProjectionMessageRow[];
-}): Promise<void> {
-  const existingButton = args.existing.filter(row => row.kind === 'ORDER_BUTTON');
-  const enabled = args.channel
-    && args.projection.directBuyEnabled
-    && Boolean(args.projection.orderChannelId)
-    && Boolean(args.projection.orderReadyChannelId);
-  if (!enabled) {
-    for (const row of existingButton) await removeProjectionMessage(args.client, row);
-    return;
+async function loadActiveVendorCatalogs(
+  guildId: GuildId,
+  connId: NitradoConnId,
+  listings: MarketListingView[],
+): Promise<ActiveVendorCatalog[]> {
+  const vendorIds = [...new Set(listings.map(listing => listing.vendorAccountId))];
+  if (vendorIds.length === 0) return [];
+  const vendors = await prisma.economyVirtualAccount.findMany({
+    where: {
+      id: { in: vendorIds },
+      guildId: String(guildId),
+      nitradoConnId: String(connId),
+      kind: 'MARKET_VENDOR',
+      status: 'ACTIVE',
+    },
+    select: { id: true, name: true },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }],
+  });
+  const vendorNames = new Map(vendors.map(vendor => [vendor.id, vendor.name]));
+  const grouped = new Map<string, MarketListingView[]>();
+  for (const listing of listings) {
+    if (!vendorNames.has(listing.vendorAccountId)) continue;
+    const rows = grouped.get(listing.vendorAccountId) ?? [];
+    rows.push(listing);
+    grouped.set(listing.vendorAccountId, rows);
   }
-  const channel = args.channel as TextChannel;
-  const payload = { embeds: [orderButtonEmbed()], components: orderButtonComponents(), allowedMentions: { parse: [] as never[] } };
-  const row = existingButton[0] ?? null;
-  let message = row?.channelId === channel.id ? await fetchManagedMessage(channel, row.messageId) : null;
-  if (row && row.channelId !== channel.id) await deleteDiscordMessage(args.client, row);
-  if (message) await message.edit(payload);
-  else message = await channel.send(payload);
-
-  if (row) {
-    await prisma.economyMarketDiscordMessage.update({ where: { id: row.id }, data: { channelId: channel.id, messageId: message.id } });
-  } else {
-    await prisma.economyMarketDiscordMessage.create({
-      data: {
-        projectionId: args.projection.id,
-        guildId: args.projection.guildId,
-        nitradoConnId: args.projection.nitradoConnId,
-        kind: 'ORDER_BUTTON',
-        pageIndex: 0,
-        listingId: null,
-        channelId: channel.id,
-        messageId: message.id,
-      },
-    });
-  }
-  for (const stale of existingButton.slice(1)) await removeProjectionMessage(args.client, stale);
+  return vendors.flatMap(vendor => {
+    const vendorListings = grouped.get(vendor.id) ?? [];
+    return vendorListings.length > 0
+      ? [{ vendorAccountId: vendor.id, vendorName: vendor.name, listings: vendorListings }]
+      : [];
+  });
 }
 
-async function upsertCatalogMessages(args: {
+async function upsertVendorCatalogMessages(args: {
   client: Client;
   projection: ProjectionRow;
   channel: TextChannel | null;
-  listings: MarketListingView[];
+  catalogs: ActiveVendorCatalog[];
   currencyName: string;
   currencyEmoji: string;
-  vendorNames: Map<string, string>;
-  existing: ProjectionMessageRow[];
 }): Promise<void> {
-  const existingCatalog = args.existing.filter(row => row.kind === 'CATALOG');
+  const existing = await readVendorCatalogRows(args.projection.id);
   if (!args.channel) {
-    for (const row of existingCatalog) await removeProjectionMessage(args.client, row);
+    for (const row of existing) await removeVendorCatalogProjection(args.client, row);
     return;
   }
 
-  const pages = chunk(args.listings, CATALOG_ITEMS_PER_MESSAGE);
+  const ordersEnabled = args.projection.directBuyEnabled
+    && Boolean(args.projection.orderChannelId)
+    && Boolean(args.projection.orderReadyChannelId);
   const keep = new Set<string>();
-  for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-    const payload = {
-      embeds: [catalogEmbed({
-        listings: pages[pageIndex],
-        pageIndex,
+
+  for (const catalog of args.catalogs) {
+    const row = existing.find(candidate => candidate.vendorAccountId === catalog.vendorAccountId) ?? null;
+    const catalogProjectionId = row?.id ?? newCatalogProjectionId();
+    const pages = chunk(catalog.listings, CATALOG_ITEMS_PER_MESSAGE);
+    const currentPage = Math.max(0, Math.min(pages.length - 1, row?.currentPage ?? 0));
+    const catalogPayload = {
+      embeds: [vendorCatalogEmbed({
+        vendorName: catalog.vendorName,
+        listings: pages[currentPage],
+        pageIndex: currentPage,
         totalPages: pages.length,
         currencyName: args.currencyName,
         currencyEmoji: args.currencyEmoji,
-        vendorNames: args.vendorNames,
       })],
+      components: vendorCatalogComponents(catalogProjectionId, currentPage, pages.length),
       allowedMentions: { parse: [] as never[] },
     };
-    const row = existingCatalog.find(candidate => candidate.pageIndex === pageIndex) ?? null;
-    let message = row?.channelId === args.channel.id ? await fetchManagedMessage(args.channel, row.messageId) : null;
-    if (row && row.channelId !== args.channel.id) await deleteDiscordMessage(args.client, row);
-    if (message) await message.edit(payload);
-    else message = await args.channel.send(payload);
+    const orderPayload = {
+      embeds: [orderButtonEmbed(catalog.vendorName)],
+      components: orderButtonComponents(catalogProjectionId),
+      allowedMentions: { parse: [] as never[] },
+    };
 
-    if (row) {
-      await prisma.economyMarketDiscordMessage.update({ where: { id: row.id }, data: { channelId: args.channel.id, messageId: message.id } });
-      keep.add(row.id);
-    } else {
-      const created = await prisma.economyMarketDiscordMessage.create({
-        data: {
-          projectionId: args.projection.id,
-          guildId: args.projection.guildId,
-          nitradoConnId: args.projection.nitradoConnId,
-          kind: 'CATALOG',
-          pageIndex,
-          listingId: null,
-          channelId: args.channel.id,
-          messageId: message.id,
-        },
-      });
-      keep.add(created.id);
+    const sameChannel = row?.channelId === args.channel.id;
+    let catalogMessage = sameChannel && row ? await fetchManagedMessage(args.channel, row.catalogMessageId) : null;
+    let orderMessage = sameChannel && row?.orderButtonMessageId
+      ? await fetchManagedMessage(args.channel, row.orderButtonMessageId)
+      : null;
+    let createdCatalog = false;
+    let createdOrder = false;
+
+    try {
+      if (catalogMessage) await catalogMessage.edit(catalogPayload);
+      else {
+        catalogMessage = await args.channel.send(catalogPayload);
+        createdCatalog = true;
+      }
+
+      if (ordersEnabled) {
+        if (orderMessage) await orderMessage.edit(orderPayload);
+        else {
+          orderMessage = await args.channel.send(orderPayload);
+          createdOrder = true;
+        }
+      } else {
+        orderMessage = null;
+      }
+
+      if (row) {
+        await prisma.economyMarketVendorCatalogProjection.update({
+          where: { id: row.id },
+          data: {
+            channelId: args.channel.id,
+            catalogMessageId: catalogMessage.id,
+            orderButtonMessageId: orderMessage?.id ?? null,
+            currentPage,
+          },
+        });
+        keep.add(row.id);
+      } else {
+        const created = await prisma.economyMarketVendorCatalogProjection.create({
+          data: {
+            id: catalogProjectionId,
+            projectionId: args.projection.id,
+            guildId: args.projection.guildId,
+            nitradoConnId: args.projection.nitradoConnId,
+            vendorAccountId: catalog.vendorAccountId,
+            channelId: args.channel.id,
+            catalogMessageId: catalogMessage.id,
+            orderButtonMessageId: orderMessage?.id ?? null,
+            currentPage,
+          },
+        });
+        keep.add(created.id);
+      }
+    } catch (error) {
+      if (!row) {
+        if (createdOrder && orderMessage) await orderMessage.delete().catch(() => undefined);
+        if (createdCatalog && catalogMessage) await catalogMessage.delete().catch(() => undefined);
+      }
+      throw error;
+    }
+
+    if (row && row.channelId !== args.channel.id) {
+      await deleteDiscordMessageRef(args.client, row.channelId, row.catalogMessageId);
+      if (row.orderButtonMessageId) await deleteDiscordMessageRef(args.client, row.channelId, row.orderButtonMessageId);
+    } else if (row && !ordersEnabled && row.orderButtonMessageId) {
+      await deleteDiscordMessageRef(args.client, row.channelId, row.orderButtonMessageId);
     }
   }
-  for (const row of existingCatalog) if (!keep.has(row.id)) await removeProjectionMessage(args.client, row);
+
+  for (const row of existing) {
+    if (!keep.has(row.id)) await removeVendorCatalogProjection(args.client, row);
+  }
 }
 
 async function upsertDirectBuyMessages(args: {
@@ -394,13 +492,11 @@ async function upsertDirectBuyMessages(args: {
   for (const row of existingDirect) if (!keep.has(row.id)) await removeProjectionMessage(args.client, row);
 }
 
-async function vendorNameMap(guildId: GuildId, connId: NitradoConnId, listings: MarketListingView[]): Promise<Map<string, string>> {
-  const ids = [...new Set(listings.map(listing => listing.vendorAccountId))];
-  const rows = await Promise.all(ids.map(async id => {
-    const account = await getVirtualAccountById(guildId, connId, id);
-    return [id, account?.name ?? 'Virtuelles Konto'] as const;
-  }));
-  return new Map(rows);
+async function removeLegacyCatalogMessages(client: Client, projectionId: string): Promise<void> {
+  const rows = await readMessageRows(projectionId);
+  for (const row of rows) {
+    if (row.kind === 'CATALOG' || row.kind === 'ORDER_BUTTON') await removeProjectionMessage(client, row);
+  }
 }
 
 async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnId): Promise<MarketDiscordProjectionView | null> {
@@ -413,7 +509,7 @@ async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnI
       getConfig(guildId, connId),
       readMessageRows(projection.id),
     ]);
-    const vendorNames = await vendorNameMap(guildId, connId, listings);
+    const catalogs = await loadActiveVendorCatalogs(guildId, connId, listings);
     const catalogChannel = projection.catalogChannelId
       ? await requireProjectionChannel(client, guildId, projection.catalogChannelId, 'Verkaufsliste-Kanal')
       : null;
@@ -422,20 +518,27 @@ async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnI
       : null;
     if (projection.directBuyEnabled && !projection.directBuyChannelId) throw new Error('Direktkauf ist aktiv, aber kein Direktkauf-Kanal ist konfiguriert.');
 
-    await upsertCatalogMessages({
+    await upsertVendorCatalogMessages({
       client,
       projection,
       channel: catalogChannel,
+      catalogs,
+      currencyName: config.currencyName,
+      currencyEmoji: config.emoji,
+    });
+    await upsertDirectBuyMessages({
+      client,
+      projection,
+      channel: directChannel,
       listings,
       currencyName: config.currencyName,
       currencyEmoji: config.emoji,
-      vendorNames,
       existing,
     });
-    const afterCatalog = await readMessageRows(projection.id);
-    await upsertDirectBuyMessages({ client, projection, channel: directChannel, listings, currencyName: config.currencyName, currencyEmoji: config.emoji, existing: afterCatalog });
-    const afterDirectBuy = await readMessageRows(projection.id);
-    await upsertOrderButtonMessage({ client, projection, channel: catalogChannel, existing: afterDirectBuy });
+
+    // Legacy erst entfernen, nachdem alle neuen Vendor-Kataloge/Anker und der
+    // unveränderte Direct-Buy-Pfad erfolgreich synchronisiert wurden.
+    await removeLegacyCatalogMessages(client, projection.id);
 
     const updated = await prisma.economyMarketDiscordProjection.update({
       where: { id: projection.id },
@@ -462,6 +565,118 @@ export function syncMarketDiscordProjection(client: Client, guildId: GuildId, co
     if (syncInFlight.get(key) === run) syncInFlight.delete(key);
   }).catch(() => undefined);
   return run;
+}
+
+function parseCatalogPageCustomId(customId: string): { catalogProjectionId: string; page: number } {
+  const parts = customId.split(':');
+  if (parts.length !== 5 || parts[0] !== 'marketcat' || parts[1] !== 'v1' || parts[2] !== 'page') {
+    throw new Error('Ungültige Katalog-Navigation. Bitte die aktuelle Verkaufsliste verwenden.');
+  }
+  const catalogProjectionId = parts[3];
+  const pageRaw = parts[4];
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(catalogProjectionId)) {
+    throw new Error('Ungültige Katalog-Navigation. Bitte die aktuelle Verkaufsliste verwenden.');
+  }
+  if (!/^(0|[1-9][0-9]{0,3})$/.test(pageRaw)) {
+    throw new Error('Ungültige Katalogseite.');
+  }
+  const page = Number(pageRaw);
+  if (!Number.isSafeInteger(page) || page < 0) throw new Error('Ungültige Katalogseite.');
+  return { catalogProjectionId, page };
+}
+
+async function replyCatalogError(interaction: ButtonInteraction, message: string): Promise<void> {
+  const payload = {
+    content: message,
+    flags: MessageFlags.Ephemeral,
+    allowedMentions: { parse: [] as never[] },
+  } as const;
+  if (interaction.deferred || interaction.replied) await interaction.followUp(payload).catch(() => undefined);
+  else await interaction.reply(payload).catch(() => undefined);
+}
+
+export async function handleMarketVendorCatalogPageButton(interaction: ButtonInteraction): Promise<void> {
+  try {
+    const parsed = parseCatalogPageCustomId(interaction.customId);
+    if (!interaction.guildId || !interaction.channelId) throw new Error('Katalog-Navigation ist nur auf einem Discord-Server möglich.');
+    if (!interaction.client.user || interaction.message.author.id !== interaction.client.user.id) {
+      throw new Error('Diese Katalog-Nachricht wird nicht vom aktuellen V-Bot verwaltet.');
+    }
+
+    await interaction.deferUpdate();
+    const initial = await prisma.economyMarketVendorCatalogProjection.findUnique({ where: { id: parsed.catalogProjectionId } });
+    if (!initial) throw new Error('Dieser Händlerkatalog ist veraltet. Bitte die aktuelle Verkaufsliste verwenden.');
+    if (initial.guildId !== interaction.guildId || initial.channelId !== interaction.channelId || initial.catalogMessageId !== interaction.message.id) {
+      throw new Error('Dieser Händlerkatalog gehört nicht zu diesem Server, Kanal oder dieser Nachricht.');
+    }
+
+    const key = scopeKey(initial.guildId, initial.nitradoConnId);
+    const previous = syncInFlight.get(key) ?? Promise.resolve(null);
+    const run = previous.catch(() => null).then(async () => {
+      const row = await prisma.economyMarketVendorCatalogProjection.findUnique({ where: { id: parsed.catalogProjectionId } });
+      if (!row || row.guildId !== interaction.guildId || row.channelId !== interaction.channelId || row.catalogMessageId !== interaction.message.id) {
+        throw new Error('Dieser Händlerkatalog ist nicht mehr aktuell.');
+      }
+      const [projection, vendor, listings, config] = await Promise.all([
+        prisma.economyMarketDiscordProjection.findFirst({
+          where: { id: row.projectionId, guildId: row.guildId, nitradoConnId: row.nitradoConnId },
+        }),
+        prisma.economyVirtualAccount.findFirst({
+          where: {
+            id: row.vendorAccountId,
+            guildId: row.guildId,
+            nitradoConnId: row.nitradoConnId,
+            kind: 'MARKET_VENDOR',
+            status: 'ACTIVE',
+          },
+          select: { id: true, name: true },
+        }),
+        listMarketListings(asGuildId(row.guildId), asNitradoConnId(row.nitradoConnId), false),
+        getConfig(asGuildId(row.guildId), asNitradoConnId(row.nitradoConnId)),
+      ]);
+      if (!projection || projection.catalogChannelId !== row.channelId) {
+        throw new Error('Dieser Händlerkatalog ist nicht mehr mit der aktiven Marktprojektion verknüpft.');
+      }
+      if (!vendor) throw new Error('Dieser Händler ist nicht mehr aktiv.');
+      const vendorListings = listings.filter(listing => listing.vendorAccountId === row.vendorAccountId);
+      if (vendorListings.length === 0) throw new Error('Dieser Händler hat aktuell keine aktiven Angebote.');
+      const pages = chunk(vendorListings, CATALOG_ITEMS_PER_MESSAGE);
+      if (parsed.page >= pages.length) throw new Error('Diese Katalogseite existiert nicht.');
+
+      await interaction.message.edit({
+        embeds: [vendorCatalogEmbed({
+          vendorName: vendor.name,
+          listings: pages[parsed.page],
+          pageIndex: parsed.page,
+          totalPages: pages.length,
+          currencyName: config.currencyName,
+          currencyEmoji: config.emoji,
+        })],
+        components: vendorCatalogComponents(row.id, parsed.page, pages.length),
+        allowedMentions: { parse: [] },
+      });
+      const updated = await prisma.economyMarketVendorCatalogProjection.updateMany({
+        where: {
+          id: row.id,
+          projectionId: row.projectionId,
+          guildId: row.guildId,
+          nitradoConnId: row.nitradoConnId,
+          vendorAccountId: row.vendorAccountId,
+          channelId: row.channelId,
+          catalogMessageId: row.catalogMessageId,
+        },
+        data: { currentPage: parsed.page },
+      });
+      if (updated.count !== 1) throw new Error('Katalogseite konnte nicht sicher gespeichert werden.');
+    });
+    syncInFlight.set(key, run);
+    void run.finally(() => {
+      if (syncInFlight.get(key) === run) syncInFlight.delete(key);
+    }).catch(() => undefined);
+    await run;
+  } catch (error) {
+    await replyCatalogError(interaction, (error as Error).message);
+  }
 }
 
 export async function configureMarketDiscordProjection(client: Client, args: {
