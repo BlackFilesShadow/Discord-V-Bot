@@ -46,8 +46,8 @@ const CATEGORIES: readonly CategoryDefinition[] = [
     emoji: '🎮',
     description: 'Whitelist, Gameserver-Bans und delegierte Server-Berechtigungen.',
     names: new Set([
-      'whitelist-antrag', 'whitelist-add', 'whitelist-remove', 'whitelist',
-      'server-ban', 'server-unban', 'server-ban-list',
+      'whitelist-antrag', 'whitelist-add', 'whitelist-remove',
+      'server-ban', 'server-unban',
       'perm-add', 'perm-remove', 'perms',
     ]),
   },

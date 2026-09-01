@@ -16,7 +16,6 @@
 import {
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
-  EmbedBuilder,
   MessageFlags,
 } from 'discord.js';
 import type { Command } from '../../types';
@@ -41,14 +40,12 @@ import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   targetLabel,
-  type CommandServerTarget,
 } from './serverTargetSelection';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 
 const MAX_BAN_MINUTES = 365 * 24 * 60;
 const MAX_REASON_LENGTH = 300;
 const IDENTIFIER_RE = /^[^\r\n\t]{1,128}$/;
-const LIST_PAGE_SIZE = 20;
 
 function safeLine(value: string | null | undefined, fallback = '—'): string {
   const cleaned = (value ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
@@ -59,11 +56,6 @@ function safeErrorMessage(error: unknown, sensitiveIdentifier?: string): string 
   const raw = error instanceof Error ? error.message : String(error);
   const redacted = sensitiveIdentifier ? raw.split(sensitiveIdentifier).join('[REDACTED]') : raw;
   return safeLine(redacted, 'Unbekannter Fehler');
-}
-
-function clientForTarget(target: CommandServerTarget): NitradoClient {
-  const token = decrypt(target.encryptedToken, config.security.encryptionKey);
-  return new NitradoClient(token);
 }
 
 async function statusReply(
@@ -77,17 +69,6 @@ async function statusReply(
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
-}
-
-async function replyEmbeds(interaction: ChatInputCommandInteraction, embeds: EmbedBuilder[]): Promise<void> {
-  for (let index = 0; index < embeds.length; index += 10) {
-    const chunk = embeds.slice(index, index + 10);
-    if (index === 0) {
-      await interaction.reply({ embeds: chunk, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    } else {
-      await interaction.followUp({ embeds: chunk, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-    }
-  }
 }
 
 export const serverBanCommand: Command = {
@@ -392,69 +373,5 @@ export const serverUnbanCommand: Command = {
       'Server-Unban verarbeitet',
       `Ziel: **${scopeText}**\n\n${results.join('\n')}`,
     );
-  }),
-};
-
-export const serverBanListCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('server-ban-list')
-    .setDescription('Zeigt die Nitrado-Banlist pro Server-Alias getrennt an.')
-    .addStringOption(option =>
-      option.setName('slot').setDescription('Server-Alias auswaehlen; leer = ALLE verknuepften Server').setRequired(false).setAutocomplete(true),
-    ) as SlashCommandBuilder,
-  autocomplete: autocompleteServerAlias,
-
-  execute: withGuildScope({ requirePerm: 'bans.view', guildOnly: true }, async (interaction, scope) => {
-    const targets = await resolveSelectedOrAllServers(interaction, scope.guildId);
-    if (!targets) return;
-
-    const embeds: EmbedBuilder[] = [];
-    for (const target of targets) {
-      try {
-        const rows = await clientForTarget(target).getBanlist(target.nitradoServerId);
-        if (rows.length === 0) {
-          embeds.push(new EmbedBuilder()
-            .setColor(0x5865F2)
-            .setTitle(`Banlist • ${targetLabel(target)}`)
-            .setDescription('_Banlist leer_')
-            .setFooter({ text: 'Quelle: Nitrado Gameserver Banlist' })
-            .setTimestamp());
-          continue;
-        }
-
-        for (let offset = 0; offset < rows.length; offset += LIST_PAGE_SIZE) {
-          const page = rows.slice(offset, offset + LIST_PAGE_SIZE);
-          const pageNo = Math.floor(offset / LIST_PAGE_SIZE) + 1;
-          const pages = Math.ceil(rows.length / LIST_PAGE_SIZE);
-          const lines = page.map((row, index) => {
-            const added = row.added_at ? ` • seit ${safeLine(row.added_at)}` : '';
-            return `${offset + index + 1}. \`${safeLine(row.identifier)}\`${added}`;
-          });
-          embeds.push(new EmbedBuilder()
-            .setColor(0x5865F2)
-            .setTitle(`Banlist • ${targetLabel(target)}${pages > 1 ? ` • ${pageNo}/${pages}` : ''}`)
-            .setDescription(lines.join('\n').slice(0, 4096))
-            .setFooter({ text: `${rows.length} Eintraege • Quelle: Nitrado` })
-            .setTimestamp());
-        }
-      } catch (error) {
-        const internalMessage = safeErrorMessage(error);
-        logAudit('SERVER_BAN_LIST_READ_FAILED', 'MODERATION', {
-          guildId: scope.guildId,
-          slotId: target.id,
-          slot: target.slot,
-          alias: target.alias,
-          actor: scope.actorDiscordId,
-          error: internalMessage,
-        });
-        embeds.push(new EmbedBuilder()
-          .setColor(0xED4245)
-          .setTitle(`Banlist • ${targetLabel(target)}`)
-          .setDescription('❌ Die Nitrado-Banlist konnte fuer diesen Server nicht sicher gelesen werden.')
-          .setTimestamp());
-      }
-    }
-
-    await replyEmbeds(interaction, embeds);
   }),
 };

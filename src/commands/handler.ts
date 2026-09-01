@@ -26,7 +26,6 @@ export const PUBLIC_COMMAND_RENAMES: Readonly<Record<string, string>> = Object.f
   whitelist: 'whitelist-antrag',
   'wl-add': 'whitelist-add',
   'wl-remove': 'whitelist-remove',
-  'wl-list': 'whitelist',
 });
 
 export function canonicalDiscordCommandName(name: string): string {

@@ -23,6 +23,7 @@ import {
 } from '../modules/economy/blackMarketOrderInteractions';
 import { handleWhitelistApprovalButton } from '../modules/whitelist/whitelistApprovalButton';
 import { handleFlagActivityButton } from '../modules/gameplayFeeds/flagActivity';
+import { handleServerListCatalogButton, handleServerListCatalogSearch } from '../modules/nitrado/serverListCatalog';
 
 function isCompositeOwnedComponent(i: Interaction): boolean {
   if (i.isButton()) {
@@ -35,13 +36,15 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
       || i.customId.startsWith('marketorder:page:')
       || i.customId.startsWith('marketorder:confirm:')
       || i.customId.startsWith('marketorder:cancel:')
+      || i.customId.startsWith('listcat:')
       || i.customId.startsWith('wlreq:u:')
       || i.customId.startsWith('flagshort:v1:');
   }
   if (i.isModalSubmit()) {
     return i.customId.startsWith('vacct:deposit_modal:')
       || i.customId.startsWith('vacct_mgr_modal:')
-      || i.customId.startsWith('marketbuy_modal:');
+      || i.customId.startsWith('marketbuy_modal:')
+      || i.customId.startsWith('listcat_search:');
   }
   if (i.isStringSelectMenu()) {
     return i.customId.startsWith('vacct_mgr_sel:')
@@ -79,6 +82,7 @@ const interactionCreateComposite: BotEvent = {
       if (i.customId.startsWith('marketorder:page:')) return handleMarketOrderPageButton(i);
       if (i.customId.startsWith('marketorder:confirm:')) return handleMarketOrderConfirmButton(i);
       if (i.customId.startsWith('marketorder:cancel:')) return handleMarketOrderCancelButton(i);
+      if (i.customId.startsWith('listcat:')) return handleServerListCatalogButton(i);
       if (i.customId.startsWith('vacct:deposit:')) return handleVirtualAccountDepositButton(i);
       if (i.customId.startsWith('vacct_mgr_move:')) return handleVirtualManagerMoveButton(i);
       if (i.customId.startsWith('vacct_mgr_order:')) return handleMarketOrderManagerButton(i);
@@ -93,6 +97,7 @@ const interactionCreateComposite: BotEvent = {
       if (i.customId.startsWith('marketbuy_modal:')) return handleMarketDirectBuyModal(i);
       if (i.customId.startsWith('vacct:deposit_modal:')) return handleVirtualAccountDepositModal(i);
       if (i.customId.startsWith('vacct_mgr_modal:')) return handleVirtualManagerModal(i);
+      if (i.customId.startsWith('listcat_search:')) return handleServerListCatalogSearch(i);
     }
   },
 };

@@ -325,6 +325,8 @@ interface WhitelistChannelsState {
   approveLogChannelId: string | null;
   denyLogChannelId: string | null;
   infoMessageId: string | null;
+  whitelistCatalogChannelId: string | null;
+  banCatalogChannelId: string | null;
 }
 
 function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
@@ -561,6 +563,7 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
     infoChannelId: null, requestChannelId: null,
     approveLogChannelId: null, denyLogChannelId: null,
     infoMessageId: null,
+    whitelistCatalogChannelId: null, banCatalogChannelId: null,
   });
   const [draftDirty, setDraftDirty] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -616,6 +619,8 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
         <ChannelPicker label="Whitelist-Annahme-Kanal (Approval mit Buttons)" help="Hier landen Anfragen als Embed mit Annehmen/Ablehnen-Buttons. Nur Mitglieder mit 'Server verwalten' koennen entscheiden." value={draft.requestChannelId} onChange={v => updateDraft({ requestChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
         <ChannelPicker label="Log-Kanal: ANGENOMMEN" help="Jede Annahme wird strikt nur in diesem Kanal protokolliert (mit Antragsteller, Spielername, Admin)." value={draft.approveLogChannelId} onChange={v => updateDraft({ approveLogChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
         <ChannelPicker label="Log-Kanal: ABGELEHNT" help="Jede Ablehnung wird strikt nur in diesem Kanal protokolliert." value={draft.denyLogChannelId} onChange={v => updateDraft({ denyLogChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
+        <ChannelPicker label="Whitelist-Katalog (festes Live-Embed)" help="Öffentliche Liste aller aktuell bei Nitrado freigeschalteten Namen. Aktualisiert sich automatisch alle 3 Minuten; Pfeile und Suche sind im Embed verfügbar." value={draft.whitelistCatalogChannelId} onChange={v => updateDraft({ whitelistCatalogChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
+        <ChannelPicker label="Bann-Katalog (festes Live-Embed)" help="Öffentliche Liste aller aktuell bei Nitrado gebannten Namen. Aktualisiert sich automatisch alle 3 Minuten; Pfeile und Suche sind im Embed verfügbar." value={draft.banCatalogChannelId} onChange={v => updateDraft({ banCatalogChannelId: v })} options={opts} forbidden={channelControlsDisabled} />
 
         <div className="flex flex-wrap gap-2">
           <Button
@@ -625,6 +630,8 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
               requestChannelId: draft.requestChannelId,
               approveLogChannelId: draft.approveLogChannelId,
               denyLogChannelId: draft.denyLogChannelId,
+              whitelistCatalogChannelId: draft.whitelistCatalogChannelId,
+              banCatalogChannelId: draft.banCatalogChannelId,
             }); }}
           >
             {save.isPending ? 'Speichere…' : 'Speichern'}

@@ -91,10 +91,8 @@ export const PUBLIC_COMMAND_CATALOG: PublicCommandDoc[] = [
   { name: '/whitelist-antrag', short: 'Stellt eine Whitelist-Anfrage.', details: 'Bei mehreren Servern muss der Ziel-Alias eindeutig ausgewaehlt werden.' },
   { name: '/whitelist-add', short: 'Fuegt einen Spielernamen zur Whitelist hinzu.', details: 'Optional Alias, sonst alle aktiven verknuepften Gameserver.', requires: 'whitelist.manage bzw. Owner' },
   { name: '/whitelist-remove', short: 'Entfernt einen Spielernamen von der Whitelist.', details: 'Lokale Finalisierung erst nach bestaetigter Nitrado-Entfernung; PENDING_REMOVE verhindert Re-Add.', requires: 'whitelist.manage bzw. Owner' },
-  { name: '/whitelist', short: 'Liest die echte Nitrado-Whitelist.', details: 'Remote-Liste getrennt pro Server.', requires: 'whitelist.manage bzw. Owner' },
   { name: '/server-ban', short: 'Bannt einen Gameserver-Identifier.', details: 'Whitelist/Ban-Reihenfolge und Teilfehler bleiben pro Server getrennt.', requires: 'bans.manage bzw. Owner' },
   { name: '/server-unban', short: 'Entfernt einen Gameserver-Ban.', details: 'Liest vor der lokalen Bewertung den echten Nitrado-Zustand.', requires: 'bans.manage bzw. Owner' },
-  { name: '/server-ban-list', short: 'Zeigt Nitrado-Server-Bans.', details: 'Pro verknuepftem Gameserver.', requires: 'bans.manage bzw. Owner' },
 
   // Delegierte Guild-Permissions
   { name: '/perm-add', short: 'Vergibt einen delegierbaren Server-Scope.', details: 'Lost-Update-sicher.', requires: 'Discord-Server-Owner' },

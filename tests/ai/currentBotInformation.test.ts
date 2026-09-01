@@ -18,7 +18,6 @@ const CANONICAL_COMMAND_RENAMES: Readonly<Record<string, string>> = {
   whitelist: 'whitelist-antrag',
   'wl-add': 'whitelist-add',
   'wl-remove': 'whitelist-remove',
-  'wl-list': 'whitelist',
 };
 
 describe('current bot information surfaces', () => {
@@ -53,7 +52,7 @@ describe('current bot information surfaces', () => {
   it('kennt aktuelle Discord-Funktionsgruppen', () => {
     for (const cmd of [
       '/help', '/feedback', '/erinnerung setzen', '/fraktionen', '/balance',
-      '/slot', '/whitelist', '/server-ban', '/perm-add', '/upload', '/mypackages list',
+      '/slot', '/whitelist-antrag', '/server-ban', '/perm-add', '/upload', '/mypackages list',
     ]) {
       expect(aiCatalog).toContain(`name: '${cmd}'`);
     }
@@ -71,7 +70,7 @@ describe('current bot information surfaces', () => {
     expect(handler).toContain("whitelist: 'whitelist-antrag'");
     expect(handler).toContain("'wl-add': 'whitelist-add'");
     expect(handler).toContain("'wl-remove': 'whitelist-remove'");
-    expect(handler).toContain("'wl-list': 'whitelist'");
+    expect(handler).not.toContain("'wl-list': 'whitelist'");
     expect(missing).toEqual([]);
   });
 

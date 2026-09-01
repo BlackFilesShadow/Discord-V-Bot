@@ -16,9 +16,6 @@ import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { config } from '../../config';
-import { decrypt } from '../../utils/security';
-import { NitradoClient } from '../../modules/nitrado/nitradoClient';
 import {
   enqueueWhitelistAdd,
   enqueueWhitelistRemove,
@@ -29,11 +26,9 @@ import {
   resolveSelectedOrAllServers,
   resolveSingleServer,
   targetLabel,
-  type CommandServerTarget,
 } from './serverTargetSelection';
 
 const NAME_RE = /^[^\r\n\t]{1,64}$/;
-const LIST_PAGE_SIZE = 25;
 function isValidName(s: string): boolean { return NAME_RE.test(s) && s.length >= 1; }
 
 type ReplyState = 'INFO' | 'SUCCESS' | 'ERROR';
@@ -59,21 +54,6 @@ async function reply(
 function safeLine(value: string | null | undefined, fallback = '—'): string {
   const cleaned = (value ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
   return cleaned || fallback;
-}
-
-function clientForTarget(target: CommandServerTarget): NitradoClient {
-  const token = decrypt(target.encryptedToken, config.security.encryptionKey);
-  return new NitradoClient(token);
-}
-
-async function replyEmbeds(i: ChatInputCommandInteraction, embeds: EmbedBuilder[]): Promise<void> {
-  const chunks: EmbedBuilder[][] = [];
-  for (let idx = 0; idx < embeds.length; idx += 10) chunks.push(embeds.slice(idx, idx + 10));
-  const first = chunks.shift() ?? [];
-  await i.reply({ embeds: first, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-  for (const chunk of chunks) {
-    await i.followUp({ embeds: chunk, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
-  }
 }
 
 // ============================================================
@@ -321,57 +301,5 @@ export const wlRemoveCommand: Command = {
       failures === 0 ? 'SUCCESS' : failures === targets.length ? 'ERROR' : 'INFO',
       'Whitelist-Remove verarbeitet',
     );
-  }),
-};
-
-// ============================================================
-// /wl-list — echte Nitrado-Whitelist, pro Alias immer getrennt
-// ============================================================
-export const wlListCommand: Command = {
-  data: new SlashCommandBuilder()
-    .setName('wl-list')
-    .setDescription('Zeigt die echte Nitrado-Whitelist pro Server-Alias getrennt an.')
-    .addStringOption(o => o.setName('slot').setDescription('Server-Alias; leer = ALLE verknuepften Server').setRequired(false).setAutocomplete(true)) as SlashCommandBuilder,
-
-  autocomplete: autocompleteServerAlias,
-
-  execute: withGuildScope({ requirePerm: 'whitelist.view', guildOnly: true }, async (i, scope) => {
-    const targets = await resolveSelectedOrAllServers(i, scope.guildId);
-    if (!targets) return;
-
-    const embeds: EmbedBuilder[] = [];
-    for (const target of targets) {
-      try {
-        const rows = await clientForTarget(target).getWhitelist(target.nitradoServerId);
-        if (rows.length === 0) {
-          embeds.push(new EmbedBuilder()
-            .setTitle(`Whitelist • ${targetLabel(target)}`)
-            .setDescription('_Whitelist leer_')
-            .setFooter({ text: 'Quelle: Nitrado general.whitelist' })
-            .setTimestamp());
-          continue;
-        }
-
-        for (let offset = 0; offset < rows.length; offset += LIST_PAGE_SIZE) {
-          const page = rows.slice(offset, offset + LIST_PAGE_SIZE);
-          const pageNo = Math.floor(offset / LIST_PAGE_SIZE) + 1;
-          const pages = Math.ceil(rows.length / LIST_PAGE_SIZE);
-          const lines = page.map((row, index) => `${offset + index + 1}. \`${safeLine(row.identifier)}\``);
-          embeds.push(new EmbedBuilder()
-            .setTitle(`Whitelist • ${targetLabel(target)}${pages > 1 ? ` • ${pageNo}/${pages}` : ''}`)
-            .setDescription(lines.join('\n'))
-            .setFooter({ text: `${rows.length} Spielernamen • Quelle: Nitrado` })
-            .setTimestamp());
-        }
-      } catch (error) {
-        embeds.push(new EmbedBuilder()
-          .setColor(0xED4245)
-          .setTitle(`Whitelist • ${targetLabel(target)}`)
-          .setDescription(`❌ Nitrado-Liste konnte nicht gelesen werden: ${safeLine(error instanceof Error ? error.message : String(error))}`)
-          .setTimestamp());
-      }
-    }
-
-    await replyEmbeds(i, embeds);
   }),
 };

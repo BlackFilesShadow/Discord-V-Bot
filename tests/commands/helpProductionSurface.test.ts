@@ -21,10 +21,11 @@ describe('production public command surfaces', () => {
     expect(help).toContain("'whitelist-antrag'");
     expect(help).toContain("'whitelist-add'");
     expect(help).toContain("'whitelist-remove'");
-    expect(help).toContain("'whitelist'");
+    expect(help).not.toContain("'whitelist'");
     expect(help).not.toContain("'wl-add'");
     expect(help).not.toContain("'wl-remove'");
     expect(help).not.toContain("'wl-list'");
+    expect(help).not.toContain("'server-ban-list'");
   });
 
   it('macht DEV und /ai in der sichtbaren Hilfe explizit unsichtbar', () => {
@@ -53,5 +54,6 @@ describe('production public command surfaces', () => {
     expect(publicAiCatalog).toContain("name: '/whitelist-antrag'");
     expect(publicAiCatalog).toContain("name: '/whitelist-add'");
     expect(publicAiCatalog).toContain("name: '/whitelist-remove'");
+    expect(publicAiCatalog).not.toContain("name: '/server-ban-list'");
   });
 });

@@ -7,6 +7,7 @@ import { Router } from 'express';
 import type { Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
+import { tryGetDashboardClient } from '../../clientRegistry';
 import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logAuditDb, logger } from '../../../utils/logger';
@@ -25,6 +26,7 @@ import {
   enqueueWhitelistRemove,
   type WhitelistOutboxClient,
 } from '../../../modules/whitelist/whitelistOutbox';
+import { syncServerListCatalog } from '../../../modules/nitrado/serverListCatalog';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
@@ -389,6 +391,8 @@ whitelistRouter.get('/channels', requireGuildPermission('whitelist.manage'), asy
     approveLogChannelId: settings?.whitelistApproveLogChannelId ?? null,
     denyLogChannelId: settings?.whitelistDenyLogChannelId ?? null,
     infoMessageId: settings?.whitelistInfoMessageId ?? null,
+    whitelistCatalogChannelId: settings?.whitelistCatalogChannelId ?? null,
+    banCatalogChannelId: settings?.banCatalogChannelId ?? null,
   });
 });
 
@@ -414,6 +418,8 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
     const r = validateId(body.requestChannelId);       if (r !== undefined) upd.whitelistRequestChannelId = r;
     const a = validateId(body.approveLogChannelId);    if (a !== undefined) upd.whitelistApproveLogChannelId = a;
     const d = validateId(body.denyLogChannelId);       if (d !== undefined) upd.whitelistDenyLogChannelId = d;
+    const w = validateId(body.whitelistCatalogChannelId); if (w !== undefined) upd.whitelistCatalogChannelId = w;
+    const b = validateId(body.banCatalogChannelId);       if (b !== undefined) upd.banCatalogChannelId = b;
   } catch (e) {
     res.status(400).json({ error: (e as Error).message }); return;
   }
@@ -449,6 +455,17 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
     }
   }
 
+  const client = tryGetDashboardClient();
+  if (client) {
+    for (const kind of ['whitelist', 'ban'] as const) {
+      try {
+        await syncServerListCatalog(client, scope.guildId, connId, kind);
+      } catch (error) {
+        logger.warn(`${kind}-Katalog konnte nach Konfigurationsspeicherung nicht synchronisiert werden: ${(error as Error).message}`);
+      }
+    }
+  }
+
   logAuditDb('WHITELIST_CHANNELS_SET', 'WHITELIST', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
     details: { nitradoConnId: connId, upd, infoResult },
@@ -461,6 +478,8 @@ whitelistRouter.put('/channels', requireGuildPermission('whitelist.manage'), asy
     approveLogChannelId: after.whitelistApproveLogChannelId,
     denyLogChannelId: after.whitelistDenyLogChannelId,
     infoMessageId: after.whitelistInfoMessageId,
+    whitelistCatalogChannelId: after.whitelistCatalogChannelId,
+    banCatalogChannelId: after.banCatalogChannelId,
     infoResult,
   });
 });
