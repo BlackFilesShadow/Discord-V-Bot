@@ -11,9 +11,9 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variants = {
   primary: 'btn-premium-primary',
-  secondary: 'bg-bg-elev hover:bg-bg-hover text-white border border-border hover:border-white/15',
-  outline: 'bg-transparent hover:bg-bg-elev/60 text-white border border-border hover:border-accent/60',
-  ghost: 'bg-transparent hover:bg-white/[0.04] text-white',
+  secondary: 'btn-premium-secondary',
+  outline: 'btn-premium-outline',
+  ghost: 'btn-premium-ghost',
   danger: 'btn-premium-danger',
 };
 
@@ -39,7 +39,7 @@ export function Button({
       type={type}
       disabled={disabled || loading}
       className={twMerge(
-        'inline-flex min-h-11 md:min-h-0 items-center justify-center gap-2 rounded-md font-medium transition-all duration-150',
+        'inline-flex min-h-11 md:min-h-0 items-center justify-center gap-2 rounded-md font-medium',
         'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none',
         'focus-ring',
         variants[variant],

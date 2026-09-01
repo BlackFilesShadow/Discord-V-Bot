@@ -19,13 +19,11 @@ export function Switch({ checked, onChange, label, disabled, ariaLabel }: Switch
         aria-disabled={disabled || undefined}
         disabled={disabled}
         onClick={() => !disabled && onChange(!checked)}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-          checked ? 'bg-accent' : 'bg-border'
-        }`}
+        className="switch-premium focus-ring relative inline-flex h-6 w-11 items-center rounded-full disabled:cursor-not-allowed"
       >
         <span
           aria-hidden="true"
-          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+          className={`switch-premium-thumb inline-block h-4 w-4 transform rounded-full bg-white ${
             checked ? 'translate-x-6' : 'translate-x-1'
           }`}
         />
