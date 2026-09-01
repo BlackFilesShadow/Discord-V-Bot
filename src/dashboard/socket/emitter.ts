@@ -27,7 +27,15 @@ export type GuildEvent =
       payload: {
         guildId: string;
         entryId?: string;
-        action: 'added' | 'removed' | 'requested' | 'decided' | 'remove_pending' | 'synced';
+        action: 'added' | 'removed' | 'requested' | 'decided' | 'remove_pending' | 'synced' | 'drift_resolved';
+      };
+    }
+  | {
+      type: 'nitrado.drift.resolved';
+      payload: {
+        guildId: string;
+        nitradoConnId: string;
+        kind: 'WHITELIST' | 'BAN';
       };
     }
   | { type: 'nitrado.job.updated'; payload: { guildId: string; jobId: string; status: string } }
