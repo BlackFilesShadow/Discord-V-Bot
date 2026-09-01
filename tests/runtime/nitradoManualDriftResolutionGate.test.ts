@@ -59,11 +59,11 @@ describe('manual Nitrado drift resolution gate', () => {
 
     expect(shell).toContain("/^\\/servers\\/([^/]+)\\/server\\/([1-5])");
     expect(shell).toContain('<NitradoDriftBanner');
+    expect(banner).toContain("from '@/components/ui/Button'");
     expect(banner).toContain('Manuelle Nitrado-Abweichung erkannt');
     expect(banner).toContain('Nitrado-Zustand uebernehmen');
     expect(banner).toContain('V-Bot-Zustand wiederherstellen');
     expect(banner).toContain("decision: 'ACCEPT_NITRADO'");
     expect(banner).toContain("decision: 'RESTORE_VBOT'");
-    expect(banner).toContain('btn-premium');
   });
 });
