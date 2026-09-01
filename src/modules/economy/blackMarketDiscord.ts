@@ -422,10 +422,8 @@ async function upsertVendorCatalogMessages(args: {
         keep.add(created.id);
       }
     } catch (error) {
-      if (!row) {
-        if (createdOrder && orderMessage) await orderMessage.delete().catch(() => undefined);
-        if (createdCatalog && catalogMessage) await catalogMessage.delete().catch(() => undefined);
-      }
+      if (createdOrder && orderMessage) await orderMessage.delete().catch(() => undefined);
+      if (createdCatalog && catalogMessage) await catalogMessage.delete().catch(() => undefined);
       throw error;
     }
 
