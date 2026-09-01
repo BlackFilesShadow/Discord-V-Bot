@@ -40,9 +40,10 @@ const root = process.cwd();
 const read = (relative: string): string => fs.readFileSync(path.resolve(root, relative), 'utf8');
 const inventory = JSON.parse(read('docs/dashboard-surface-inventory.json')) as Inventory;
 
-// Stage 23 remains immutable historical evidence. Legal pages and the two
-// requested Page-2 Economy presentation tabs were added intentionally later and
-// are tracked as explicit post-stage additions instead of rewriting that record.
+// Stage 23 remains immutable historical evidence. Legal pages, the two
+// requested Page-2 Economy presentation tabs and the explicit Nitrado-drift
+// resolver were added intentionally later and are reviewed separately instead
+// of rewriting the historical inventory/inventoriedMainSha.
 const POST_STAGE_PUBLIC_PAGES = [
   'dashboard-ui/src/pages/legal/LegalLayout.tsx',
   'dashboard-ui/src/pages/legal/Privacy.tsx',
@@ -53,6 +54,8 @@ const POST_STAGE_PUBLIC_ROUTES = [
   '<Route path="/legal/terms" element={<Terms />} />',
 ] as const;
 const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino'] as const;
+const POST_STAGE_V2_MOUNTS = ['/guilds/:guildId/nitrado-drift'] as const;
+const POST_STAGE_V2_APIS = ['/api/v2/guilds/:guildId/nitrado-drift'] as const;
 
 function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
@@ -159,30 +162,44 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     }
   });
 
-  test('fails closed when an Express dashboard mount is added without inventory coverage', () => {
+  test('fails closed when an Express dashboard mount is added without inventory or explicit post-stage coverage', () => {
     const server = read('src/dashboard/server.ts');
     const actualServerMounts = sortedUnique([...server.matchAll(/app\.(?:use|get|post)\(\s*'([^']+)'/g)].map(match => match[1]));
     expect(sortedUnique(inventory.serverMounts)).toEqual(actualServerMounts);
 
     const v2 = read('src/dashboard/routes/v2.ts');
     const actualV2Mounts = sortedUnique([...v2.matchAll(/v2Router\.use\(\s*'([^']+)'/g)].map(match => match[1]));
-    expect(sortedUnique(inventory.v2Mounts)).toEqual(actualV2Mounts);
+    expect(sortedUnique([...inventory.v2Mounts, ...POST_STAGE_V2_MOUNTS])).toEqual(actualV2Mounts);
 
-    const declaredApis = inventory.surfaces.flatMap(surface => surface.api);
+    const declaredApis = [...inventory.surfaces.flatMap(surface => surface.api), ...POST_STAGE_V2_APIS];
     const classifiedNonUi = new Set(inventory.nonUiHttpSurfaces.map(surface => surface.path));
     const uncoveredServerMounts = inventory.serverMounts.filter(mount => (
       !declaredApis.some(api => api === mount || api.startsWith(`${mount}/`)) && !classifiedNonUi.has(mount)
     ));
     expect(uncoveredServerMounts).toEqual([]);
 
-    const uncoveredV2Mounts = inventory.v2Mounts.filter(mount => {
+    const uncoveredV2Mounts = actualV2Mounts.filter(mount => {
       const absolute = `/api/v2${mount}`;
       return !declaredApis.some(api => api === absolute || api.startsWith(`${absolute}/`) || api.startsWith(`${absolute}?`));
     });
     expect(uncoveredV2Mounts).toEqual([]);
   });
 
-  test('maps every API v2 prefix used by the UI to an inventoried surface', () => {
+  test('reviews the post-stage Nitrado drift API and global slot UI explicitly', () => {
+    const route = read('src/dashboard/routes/v2/nitradoDrift.ts');
+    const shell = read('dashboard-ui/src/components/Shell.tsx');
+    const banner = read('dashboard-ui/src/components/NitradoDriftBanner.tsx');
+
+    expect(route).toContain("nitradoDriftRouter.get('/whitelist'");
+    expect(route).toContain("nitradoDriftRouter.post('/whitelist/resolve'");
+    expect(route).toContain("nitradoDriftRouter.get('/bans'");
+    expect(route).toContain("nitradoDriftRouter.post('/bans/resolve'");
+    expect(shell).toContain('<NitradoDriftBanner');
+    expect(banner).toContain('Nitrado-Zustand uebernehmen');
+    expect(banner).toContain('V-Bot-Zustand wiederherstellen');
+  });
+
+  test('maps every API v2 prefix used by the UI to an inventoried or explicit post-stage surface', () => {
     const uiFiles = fs.readdirSync(path.resolve(root, 'dashboard-ui/src'), { recursive: true })
       .map(value => path.resolve(root, 'dashboard-ui/src', String(value)))
       .filter(value => /\.tsx?$/.test(value));
@@ -192,8 +209,7 @@ describe('stage 23 dashboard surface inventory architecture', () => {
         usedPrefixes.add(match[1].replace(/\/$/, ''));
       }
     }
-    const declared = inventory.surfaces
-      .flatMap(surface => surface.api)
+    const declared = [...inventory.surfaces.flatMap(surface => surface.api), ...POST_STAGE_V2_APIS]
       .filter(value => value.startsWith('/api/v2/'))
       .map(value => value.replace(/\/$/, ''));
     const missing = [...usedPrefixes].filter(prefix => !declared.some(value => value.startsWith(prefix) || prefix.startsWith(value)));
