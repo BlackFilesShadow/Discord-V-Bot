@@ -14,6 +14,7 @@ import type { GuildId, NitradoConnId } from '../../types/scope';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
 import { getConfig } from './repository';
 import { listMarketListings, type MarketListingView } from './blackMarket';
+import { getVirtualAccountById } from './virtualAccounts';
 import { marketDirectBuyVersion } from './marketDirectBuyContract';
 
 const CATALOG_ITEMS_PER_MESSAGE = 5;
@@ -146,9 +147,7 @@ async function deleteDiscordMessage(client: Client, row: ProjectionMessageRow): 
     throw error;
   }
   if (!channel) return;
-  if (channel.type !== ChannelType.GuildText) {
-    throw new Error(`Verwalteter Schwarzmarkt-Kanal ${row.channelId} ist kein Textkanal mehr.`);
-  }
+  if (channel.type !== ChannelType.GuildText) throw new Error(`Verwalteter Schwarzmarkt-Kanal ${row.channelId} ist kein Textkanal mehr.`);
   const message = await fetchManagedMessage(channel as TextChannel, row.messageId);
   if (!message) return;
   try {
@@ -169,25 +168,42 @@ function catalogEmbed(args: {
   totalPages: number;
   currencyName: string;
   currencyEmoji: string;
+  vendorNames: Map<string, string>;
 }): EmbedBuilder {
   const embed = new EmbedBuilder()
     .setColor(0x8b5cf6)
     .setTitle('🛒 Verkaufsliste')
+    .setDescription(`Aktive Angebote · Preise in **${safeEmbedDescription(args.currencyName)} ${args.currencyEmoji}**`)
     .setFooter({ text: `V-Bot · Schwarzmarkt · Live-Sync · Seite ${args.pageIndex + 1}/${args.totalPages}` })
     .setTimestamp();
 
-  if (args.listings.length === 0) {
-    return embed.setDescription('Aktuell sind keine aktiven Angebote vorhanden.');
-  }
+  if (args.listings.length === 0) return embed.setDescription('Aktuell sind keine aktiven Angebote vorhanden.');
 
-  embed.setDescription(`Aktive Angebote · Preise in **${safeEmbedDescription(args.currencyName)} ${args.currencyEmoji}**`);
+  let lastVendorId: string | null = null;
   for (const listing of args.listings) {
-    const description = listing.description ? `\n${safeEmbedField(listing.description, 500)}` : '';
-    embed.addFields({
-      name: safeEmbedField(listing.name, 250),
-      value: `Preis: **${listing.price.toLocaleString('de-DE')} ${args.currencyEmoji}**${description}`,
-      inline: false,
-    });
+    if (lastVendorId !== listing.vendorAccountId) {
+      const vendor = args.vendorNames.get(listing.vendorAccountId) ?? 'Virtuelles Konto';
+      embed.addFields({
+        name: `🏪 ${safeEmbedField(vendor, 240)}`,
+        value: '\u200b',
+        inline: false,
+      });
+      lastVendorId = listing.vendorAccountId;
+    }
+    const description = listing.description ? `\n${safeEmbedField(listing.description, 400)}` : '';
+    embed.addFields(
+      {
+        name: 'Artikel',
+        value: `**${safeEmbedField(listing.name, 250)}**${description}`,
+        inline: true,
+      },
+      {
+        name: 'Preis / Währung',
+        value: `**${listing.price.toLocaleString('de-DE')} ${args.currencyEmoji}**\n${safeEmbedField(args.currencyName, 120)}`,
+        inline: true,
+      },
+      { name: '\u200b', value: '\u200b', inline: true },
+    );
   }
   return embed;
 }
@@ -209,28 +225,16 @@ function directBuyEmbed(listing: MarketListingView, currencyName: string, curren
 function directBuyComponents(listing: MarketListingView) {
   const version = marketDirectBuyVersion(listing);
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`marketbuy:w:${listing.id}:${version}`)
-      .setLabel('Aus Wallet kaufen')
-      .setEmoji('🛒')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`marketbuy:b:${listing.id}:${version}`)
-      .setLabel('Aus Bank kaufen')
-      .setEmoji('🏦')
-      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`marketbuy:w:${listing.id}:${version}`).setLabel('Aus Wallet kaufen').setEmoji('🛒').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`marketbuy:b:${listing.id}:${version}`).setLabel('Aus Bank kaufen').setEmoji('🏦').setStyle(ButtonStyle.Primary),
   )];
 }
 
-/**
- * Katalog-weite Sammelbestellung (mehrere Angebote in einer Wallet-Buchung).
- * Ein einzelner, stabiler Anker statt eines Buttons pro Seite/Angebot.
- */
 function orderButtonEmbed(): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0x22c55e)
     .setTitle('🛒 Bestellung aufgeben')
-    .setDescription('Wähle mehrere Angebote **desselben Händlers** aus deiner Verkaufsliste und bezahle sie in einer Bestellung aus deinem Wallet.')
+    .setDescription('Stelle einen Warenkorb mit bis zu **20 Artikeln** aus demselben virtuellen Händlerkonto zusammen und bezahle automatisch aus **Wallet oder Bank**.')
     .setFooter({ text: 'V-Bot · Schwarzmarkt · Sammelbestellung' });
 }
 
@@ -247,9 +251,6 @@ async function upsertOrderButtonMessage(args: {
   existing: ProjectionMessageRow[];
 }): Promise<void> {
   const existingButton = args.existing.filter(row => row.kind === 'ORDER_BUTTON');
-  // Der Bestellungs-Button setzt Direktkauf UND vollstaendig konfigurierte
-  // Bestellungs-Kanaele voraus - ohne Wallet-Buchungspfad und ohne Kanal fuer
-  // das Bestell-/Bestellung-bereit-Embed gibt es keinen sicheren Ablauf.
   const enabled = args.channel
     && args.projection.directBuyEnabled
     && Boolean(args.projection.orderChannelId)
@@ -292,6 +293,7 @@ async function upsertCatalogMessages(args: {
   listings: MarketListingView[];
   currencyName: string;
   currencyEmoji: string;
+  vendorNames: Map<string, string>;
   existing: ProjectionMessageRow[];
 }): Promise<void> {
   const existingCatalog = args.existing.filter(row => row.kind === 'CATALOG');
@@ -303,21 +305,25 @@ async function upsertCatalogMessages(args: {
   const pages = chunk(args.listings, CATALOG_ITEMS_PER_MESSAGE);
   const keep = new Set<string>();
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-    const payload = { embeds: [catalogEmbed({ listings: pages[pageIndex], pageIndex, totalPages: pages.length, currencyName: args.currencyName, currencyEmoji: args.currencyEmoji })], allowedMentions: { parse: [] as never[] } };
+    const payload = {
+      embeds: [catalogEmbed({
+        listings: pages[pageIndex],
+        pageIndex,
+        totalPages: pages.length,
+        currencyName: args.currencyName,
+        currencyEmoji: args.currencyEmoji,
+        vendorNames: args.vendorNames,
+      })],
+      allowedMentions: { parse: [] as never[] },
+    };
     const row = existingCatalog.find(candidate => candidate.pageIndex === pageIndex) ?? null;
-    let message = row?.channelId === args.channel.id
-      ? await fetchManagedMessage(args.channel, row.messageId)
-      : null;
-
+    let message = row?.channelId === args.channel.id ? await fetchManagedMessage(args.channel, row.messageId) : null;
     if (row && row.channelId !== args.channel.id) await deleteDiscordMessage(args.client, row);
     if (message) await message.edit(payload);
     else message = await args.channel.send(payload);
 
     if (row) {
-      await prisma.economyMarketDiscordMessage.update({
-        where: { id: row.id },
-        data: { channelId: args.channel.id, messageId: message.id },
-      });
+      await prisma.economyMarketDiscordMessage.update({ where: { id: row.id }, data: { channelId: args.channel.id, messageId: message.id } });
       keep.add(row.id);
     } else {
       const created = await prisma.economyMarketDiscordMessage.create({
@@ -335,10 +341,7 @@ async function upsertCatalogMessages(args: {
       keep.add(created.id);
     }
   }
-
-  for (const row of existingCatalog) {
-    if (!keep.has(row.id)) await removeProjectionMessage(args.client, row);
-  }
+  for (const row of existingCatalog) if (!keep.has(row.id)) await removeProjectionMessage(args.client, row);
 }
 
 async function upsertDirectBuyMessages(args: {
@@ -364,19 +367,13 @@ async function upsertDirectBuyMessages(args: {
       allowedMentions: { parse: [] as never[] },
     };
     const row = existingDirect.find(candidate => candidate.listingId === listing.id) ?? null;
-    let message = row?.channelId === args.channel.id
-      ? await fetchManagedMessage(args.channel, row.messageId)
-      : null;
-
+    let message = row?.channelId === args.channel.id ? await fetchManagedMessage(args.channel, row.messageId) : null;
     if (row && row.channelId !== args.channel.id) await deleteDiscordMessage(args.client, row);
     if (message) await message.edit(payload);
     else message = await args.channel.send(payload);
 
     if (row) {
-      await prisma.economyMarketDiscordMessage.update({
-        where: { id: row.id },
-        data: { channelId: args.channel.id, messageId: message.id },
-      });
+      await prisma.economyMarketDiscordMessage.update({ where: { id: row.id }, data: { channelId: args.channel.id, messageId: message.id } });
       keep.add(row.id);
     } else {
       const created = await prisma.economyMarketDiscordMessage.create({
@@ -394,10 +391,16 @@ async function upsertDirectBuyMessages(args: {
       keep.add(created.id);
     }
   }
+  for (const row of existingDirect) if (!keep.has(row.id)) await removeProjectionMessage(args.client, row);
+}
 
-  for (const row of existingDirect) {
-    if (!keep.has(row.id)) await removeProjectionMessage(args.client, row);
-  }
+async function vendorNameMap(guildId: GuildId, connId: NitradoConnId, listings: MarketListingView[]): Promise<Map<string, string>> {
+  const ids = [...new Set(listings.map(listing => listing.vendorAccountId))];
+  const rows = await Promise.all(ids.map(async id => {
+    const account = await getVirtualAccountById(guildId, connId, id);
+    return [id, account?.name ?? 'Virtuelles Konto'] as const;
+  }));
+  return new Map(rows);
 }
 
 async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnId): Promise<MarketDiscordProjectionView | null> {
@@ -410,6 +413,7 @@ async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnI
       getConfig(guildId, connId),
       readMessageRows(projection.id),
     ]);
+    const vendorNames = await vendorNameMap(guildId, connId, listings);
     const catalogChannel = projection.catalogChannelId
       ? await requireProjectionChannel(client, guildId, projection.catalogChannelId, 'Verkaufsliste-Kanal')
       : null;
@@ -418,7 +422,16 @@ async function syncUnsafe(client: Client, guildId: GuildId, connId: NitradoConnI
       : null;
     if (projection.directBuyEnabled && !projection.directBuyChannelId) throw new Error('Direktkauf ist aktiv, aber kein Direktkauf-Kanal ist konfiguriert.');
 
-    await upsertCatalogMessages({ client, projection, channel: catalogChannel, listings, currencyName: config.currencyName, currencyEmoji: config.emoji, existing });
+    await upsertCatalogMessages({
+      client,
+      projection,
+      channel: catalogChannel,
+      listings,
+      currencyName: config.currencyName,
+      currencyEmoji: config.emoji,
+      vendorNames,
+      existing,
+    });
     const afterCatalog = await readMessageRows(projection.id);
     await upsertDirectBuyMessages({ client, projection, channel: directChannel, listings, currencyName: config.currencyName, currencyEmoji: config.emoji, existing: afterCatalog });
     const afterDirectBuy = await readMessageRows(projection.id);
@@ -463,9 +476,6 @@ export async function configureMarketDiscordProjection(client: Client, args: {
   if (args.catalogChannelId) await requireProjectionChannel(client, args.guildId, args.catalogChannelId, 'Verkaufsliste-Kanal');
   if (args.directBuyEnabled && !args.directBuyChannelId) throw new Error('Bei aktiviertem Direktkauf muss ein Direktkauf-Kanal gewählt werden.');
   if (args.directBuyChannelId) await requireProjectionChannel(client, args.guildId, args.directBuyChannelId, 'Direktkauf-Kanal');
-  // Bestellungs-Workflow (Katalog-Sammelbestellung + "Bestellung bereit") ist
-  // bewusst an den Direktkauf gekoppelt: ohne Direktkauf gibt es keine
-  // Wallet-Buchung, die eine Bestellung ausloesen koennte.
   if (args.directBuyEnabled && (!args.orderChannelId || !args.orderReadyChannelId)) {
     throw new Error('Bei aktiviertem Direktkauf müssen Bestellungs- und Bestellung-bereit-Kanal gewählt werden.');
   }
