@@ -3,6 +3,9 @@
 /** Stage 29: transport vs HTTP taxonomy for fail-closed UI rendering. */
 export type ApiErrorKind = 'http' | 'offline' | 'timeout' | 'network' | 'abort';
 
+/** Globales Browser-Signal fuer eine waehrend der Nutzung abgelaufene API-Session. */
+export const AUTH_EXPIRED_EVENT = 'vbot:auth-expired';
+
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
 
@@ -107,6 +110,20 @@ export function describeApiError(err: unknown): {
   }
   const message = err instanceof Error ? err.message : 'Unbekannter Fehler';
   return { title: 'Fehler', desc: message, status: 0, code: null, kind: 'unknown', retryable: false };
+}
+
+function notifyAuthExpired(path: string, err: ApiError): void {
+  if (typeof window === 'undefined') return;
+  const pathname = path.split('?', 1)[0];
+  // /api/me ist der normale initiale Login-Probe-Request und darf auf einer
+  // absichtlich unauthentifizierten Login-Seite keinen Session-Ablauf vortaeuschen.
+  if (pathname === '/api/me') return;
+  window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, {
+    detail: {
+      message: 'Sitzung abgelaufen – bitte erneut anmelden.',
+      code: err.code,
+    },
+  }));
 }
 
 export function createIdempotencyKey(): string {
@@ -269,16 +286,27 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
   // Nur ein bestaetigter 2xx-Decode gibt den Pending-Key frei. Bei Netzfehler,
   // 409 oder unbekanntem Serverergebnis bleibt derselbe Key fuer den Retry erhalten.
-  const result = await decode<T>(await fetchWithTimeout(scopedPath, { method, headers, body: payload, credentials: 'include' }));
-  if (lease) releaseMutationIdempotencyKey(lease);
-  return result;
+  try {
+    const result = await decode<T>(await fetchWithTimeout(scopedPath, { method, headers, body: payload, credentials: 'include' }));
+    if (lease) releaseMutationIdempotencyKey(lease);
+    return result;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) notifyAuthExpired(scopedPath, err);
+    throw err;
+  }
 }
 
 async function formRequest<T>(method: 'POST' | 'PUT' | 'PATCH', path: string, fd: FormData): Promise<T> {
   // FormData/Uploads haben keinen stabilen serialisierten Payload-Fingerprint und
   // bleiben deshalb bewusst bei einem frischen Key pro Aufruf.
   const headers: Record<string, string> = { Accept: 'application/json', 'X-Idempotency-Key': createIdempotencyKey() };
-  return decode<T>(await fetchWithTimeout(withServerSlotScope(path), { method, headers, body: fd, credentials: 'include' }));
+  const scopedPath = withServerSlotScope(path);
+  try {
+    return await decode<T>(await fetchWithTimeout(scopedPath, { method, headers, body: fd, credentials: 'include' }));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) notifyAuthExpired(scopedPath, err);
+    throw err;
+  }
 }
 
 async function uploadRequest<T>(path: string, file: File, fieldName = 'file'): Promise<T> {
