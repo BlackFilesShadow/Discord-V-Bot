@@ -1,12 +1,7 @@
-const queryRawMock = jest.fn();
-const listMarketListingsMock = jest.fn();
-const getConfigMock = jest.fn();
-const getVirtualAccountByIdMock = jest.fn();
-
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
-    $queryRawUnsafe: (...args: unknown[]) => queryRawMock(...args),
+    $queryRawUnsafe: jest.fn(),
     economyMarketListing: { findFirst: jest.fn(), findMany: jest.fn() },
     economyMarketDiscordProjection: { findUnique: jest.fn() },
   },
@@ -14,17 +9,17 @@ jest.mock('../../src/database/prisma', () => ({
 
 jest.mock('../../src/modules/economy/blackMarket', () => ({
   __esModule: true,
-  listMarketListings: (...args: unknown[]) => listMarketListingsMock(...args),
+  listMarketListings: jest.fn(),
 }));
 
 jest.mock('../../src/modules/economy/repository', () => ({
   __esModule: true,
-  getConfig: (...args: unknown[]) => getConfigMock(...args),
+  getConfig: jest.fn(),
 }));
 
 jest.mock('../../src/modules/economy/virtualAccounts', () => ({
   __esModule: true,
-  getVirtualAccountById: (...args: unknown[]) => getVirtualAccountByIdMock(...args),
+  getVirtualAccountById: jest.fn(),
 }));
 
 jest.mock('../../src/modules/economy/blackMarketOrder', () => ({
@@ -46,7 +41,16 @@ jest.mock('../../src/modules/economy/virtualAccountFinance', () => ({
   listManagedVirtualAccounts: jest.fn(),
 }));
 
+import prisma from '../../src/database/prisma';
+import { listMarketListings } from '../../src/modules/economy/blackMarket';
 import { handleMarketOrderButton } from '../../src/modules/economy/blackMarketOrderInteractionsV2';
+import { getConfig } from '../../src/modules/economy/repository';
+import { getVirtualAccountById } from '../../src/modules/economy/virtualAccounts';
+
+const queryRawMock = prisma.$queryRawUnsafe as unknown as jest.Mock;
+const listMarketListingsMock = listMarketListings as unknown as jest.Mock;
+const getConfigMock = getConfig as unknown as jest.Mock;
+const getVirtualAccountByIdMock = getVirtualAccountById as unknown as jest.Mock;
 
 const GUILD = '123456789012345678';
 const CHANNEL = '223456789012345678';
