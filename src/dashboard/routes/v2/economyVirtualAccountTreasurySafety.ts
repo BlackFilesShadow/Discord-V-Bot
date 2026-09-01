@@ -65,6 +65,7 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
     createdAt: account.createdAt,
     description: metadata?.description ?? null,
     channelId: metadata?.channelId ?? null,
+    archiveChannelId: metadata?.archiveChannelId ?? null,
     currencyName: finance.currencyName,
     currencyEmoji: finance.currencyEmoji,
     accountEmoji: finance.accountEmoji,
@@ -115,6 +116,20 @@ async function validateNormalTextChannel(guildId: string, raw: unknown): Promise
   return channel.id;
 }
 
+async function validateAccountChannels(
+  guildId: string,
+  body: Record<string, unknown>,
+): Promise<{ channelId: string | null; archiveChannelId: string | null }> {
+  const [channelId, archiveChannelId] = await Promise.all([
+    validateNormalTextChannel(guildId, body.channelId),
+    validateNormalTextChannel(guildId, body.archiveChannelId),
+  ]);
+  if (!channelId && archiveChannelId) throw new Error('Ein Archiv-Kanal ist nur zusammen mit einem Hauptkanal zulaessig.');
+  if (channelId && !archiveChannelId) throw new Error('Fuer eine Discord-Integration ist ein separater Archiv-Kanal erforderlich.');
+  if (channelId && archiveChannelId && channelId === archiveChannelId) throw new Error('Hauptkanal und Archiv-Kanal muessen getrennte Kanaele sein.');
+  return { channelId, archiveChannelId };
+}
+
 async function validateManagers(guildId: string, raw: unknown): Promise<UserDiscordId[]> {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > 25) throw new Error('managers muss eine Liste mit maximal 25 Discord-IDs sein.');
@@ -158,7 +173,7 @@ economyVirtualAccountTreasurySafetyRouter.post('/control/accounts', requireGuild
   const body = (req.body ?? {}) as Record<string, unknown>;
   if (typeof body.name !== 'string') { res.status(400).json({ error: 'name fehlt.' }); return; }
   try {
-    const channelId = await validateNormalTextChannel(String(scope.guildId), body.channelId);
+    const { channelId, archiveChannelId } = await validateAccountChannels(String(scope.guildId), body);
     const managers = await validateManagers(String(scope.guildId), body.managers);
     const created = await createConfiguredCustomVirtualAccount({
       guildId: scope.guildId,
@@ -166,6 +181,7 @@ economyVirtualAccountTreasurySafetyRouter.post('/control/accounts', requireGuild
       name: body.name,
       description: body.description,
       channelId,
+      archiveChannelId,
       expiresAt: parseExpiry(body.expiresAt),
       currencyName: body.currencyName,
       currencyEmoji: body.currencyEmoji,
@@ -193,7 +209,7 @@ economyVirtualAccountTreasurySafetyRouter.put('/control/accounts/:accountId', re
   const body = (req.body ?? {}) as Record<string, unknown>;
   const accountId = String(req.params.accountId);
   try {
-    const channelId = await validateNormalTextChannel(String(scope.guildId), body.channelId);
+    const { channelId, archiveChannelId } = await validateAccountChannels(String(scope.guildId), body);
     const managers = await validateManagers(String(scope.guildId), body.managers);
     await updateConfiguredVirtualAccount({
       guildId: scope.guildId,
@@ -201,6 +217,7 @@ economyVirtualAccountTreasurySafetyRouter.put('/control/accounts/:accountId', re
       accountId,
       description: body.description,
       channelId,
+      archiveChannelId,
       currencyName: body.currencyName,
       currencyEmoji: body.currencyEmoji,
       accountEmoji: body.accountEmoji,
