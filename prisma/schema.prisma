@@ -1835,6 +1835,7 @@ model EconomyVirtualAccount {
   lotteryRounds         LotteryRound[]
   marketListings        EconomyMarketListing[] @relation("MarketVendorListings")
   marketPurchases       EconomyMarketPurchase[] @relation("MarketVendorPurchases")
+  marketOrders          EconomyMarketOrder[] @relation("MarketVendorOrders")
 
   @@unique([guildId, nitradoConnId, nameKey], name: "guildServerNameKey", map: "EconomyVirtualAccount_guild_conn_name_key")
   @@unique([id, guildId, nitradoConnId], name: "idScope", map: "EconomyVirtualAccount_id_scope_key")
@@ -1980,10 +1981,14 @@ model EconomyMarketPurchase {
   quantity         Int
   unitPrice        BigInt
   amount           BigInt
+  orderId          String?
+  order            EconomyMarketOrder?   @relation(fields: [orderId], references: [id], onDelete: SetNull, map: "EconomyMarketPurchase_order_fkey")
   createdAt        DateTime              @default(now())
 
   @@index([guildId, nitradoConnId, userDiscordId, createdAt], map: "EconomyMarketPurchase_scope_user_created_idx")
   @@index([listingId, createdAt], map: "EconomyMarketPurchase_listing_created_idx")
+  @@index([orderId], map: "EconomyMarketPurchase_order_idx")
+  @@unique([id, guildId, nitradoConnId], name: "idScope", map: "EconomyMarketPurchase_id_scope_key")
 }
 
 enum EconomyTxType {

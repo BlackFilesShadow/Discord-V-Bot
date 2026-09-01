@@ -153,6 +153,7 @@ function managerPanelButtons(connId: NitradoConnId) {
     new ButtonBuilder().setCustomId(`vacct_mgr:payout:${connId}`).setLabel('Auszahlung').setEmoji('💸').setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId(`vacct_mgr:remove:${connId}`).setLabel('Remove').setEmoji('➖').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(`vacct_mgr:balance:${connId}`).setLabel('Pay / Balance').setEmoji('💳').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`vacct_mgr_order:${connId}`).setLabel('Bestellung abschließen').setEmoji('📦').setStyle(ButtonStyle.Success),
   )];
 }
 

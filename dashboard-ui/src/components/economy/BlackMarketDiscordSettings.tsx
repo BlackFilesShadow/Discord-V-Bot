@@ -17,6 +17,8 @@ interface MarketProjection {
   catalogChannelId: string | null;
   directBuyEnabled: boolean;
   directBuyChannelId: string | null;
+  orderChannelId: string | null;
+  orderReadyChannelId: string | null;
   catalogMessageCount: number;
   directBuyMessageCount: number;
   lastSyncedAt: string | null;
@@ -39,6 +41,8 @@ export function BlackMarketDiscordSettings({
   const [catalogChannelId, setCatalogChannelId] = useState('');
   const [directBuyEnabled, setDirectBuyEnabled] = useState(false);
   const [directBuyChannelId, setDirectBuyChannelId] = useState('');
+  const [orderChannelId, setOrderChannelId] = useState('');
+  const [orderReadyChannelId, setOrderReadyChannelId] = useState('');
   const [touched, setTouched] = useState(false);
 
   const channels = useQuery({
@@ -60,6 +64,8 @@ export function BlackMarketDiscordSettings({
     setCatalogChannelId(row?.catalogChannelId ?? '');
     setDirectBuyEnabled(row?.directBuyEnabled ?? false);
     setDirectBuyChannelId(row?.directBuyChannelId ?? '');
+    setOrderChannelId(row?.orderChannelId ?? '');
+    setOrderReadyChannelId(row?.orderReadyChannelId ?? '');
   }, [projection.data, touched]);
 
   const textChannels = useMemo(
@@ -74,6 +80,8 @@ export function BlackMarketDiscordSettings({
         catalogChannelId: catalogChannelId || null,
         directBuyEnabled,
         directBuyChannelId: directBuyEnabled ? (directBuyChannelId || null) : null,
+        orderChannelId: directBuyEnabled ? (orderChannelId || null) : null,
+        orderReadyChannelId: directBuyEnabled ? (orderReadyChannelId || null) : null,
       },
     ),
     onSuccess: result => {
@@ -97,7 +105,7 @@ export function BlackMarketDiscordSettings({
   });
 
   const current = projection.data?.projection ?? null;
-  const invalid = directBuyEnabled && !directBuyChannelId;
+  const invalid = directBuyEnabled && (!directBuyChannelId || !orderChannelId || !orderReadyChannelId);
 
   return (
     <div className="mb-5 rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
@@ -142,6 +150,22 @@ export function BlackMarketDiscordSettings({
               {textChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
             </Select>
           </div>
+
+          <label className="text-xs">
+            <span className="text-muted block mb-1">Bestellungs-Kanal (Sammelbestellung)</span>
+            <Select value={orderChannelId} onChange={event => { setTouched(true); setOrderChannelId(event.target.value); }} disabled={!directBuyEnabled || channels.isLoading || save.isPending}>
+              <option value="">{directBuyEnabled ? '— Bestellungs-Kanal wählen —' : '— nur bei aktivem Direktkauf —'}</option>
+              {textChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
+            </Select>
+          </label>
+
+          <label className="text-xs">
+            <span className="text-muted block mb-1">Bestellung-bereit-Kanal (Kunden-Mention)</span>
+            <Select value={orderReadyChannelId} onChange={event => { setTouched(true); setOrderReadyChannelId(event.target.value); }} disabled={!directBuyEnabled || channels.isLoading || save.isPending}>
+              <option value="">{directBuyEnabled ? '— Bestellung-bereit-Kanal wählen —' : '— nur bei aktivem Direktkauf —'}</option>
+              {textChannels.map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}
+            </Select>
+          </label>
 
           <div className="md:col-span-2 flex flex-wrap items-center gap-2">
             <Button

@@ -268,6 +268,8 @@ economyBlackMarketRouter.put('/discord', requireGuildPermission('economy.manage'
   const catalogChannelId = typeof req.body?.catalogChannelId === 'string' && req.body.catalogChannelId.trim() ? req.body.catalogChannelId.trim() : null;
   const directBuyEnabled = req.body?.directBuyEnabled === true;
   const directBuyChannelId = typeof req.body?.directBuyChannelId === 'string' && req.body.directBuyChannelId.trim() ? req.body.directBuyChannelId.trim() : null;
+  const orderChannelId = typeof req.body?.orderChannelId === 'string' && req.body.orderChannelId.trim() ? req.body.orderChannelId.trim() : null;
+  const orderReadyChannelId = typeof req.body?.orderReadyChannelId === 'string' && req.body.orderReadyChannelId.trim() ? req.body.orderReadyChannelId.trim() : null;
   try {
     const projection = await configureMarketDiscordProjection(client, {
       guildId: scope.guildId,
@@ -275,11 +277,13 @@ economyBlackMarketRouter.put('/discord', requireGuildPermission('economy.manage'
       catalogChannelId,
       directBuyEnabled,
       directBuyChannelId,
+      orderChannelId,
+      orderReadyChannelId,
     });
     logAuditDb('MARKET_DISCORD_PROJECTION_CONFIGURED', 'ECONOMY', {
       actorUserId: req.auth!.userId,
       guildId: scope.guildId,
-      details: { nitradoConnId: connId, catalogChannelId, directBuyEnabled, directBuyChannelId },
+      details: { nitradoConnId: connId, catalogChannelId, directBuyEnabled, directBuyChannelId, orderChannelId, orderReadyChannelId },
     });
     res.json({ projection });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }

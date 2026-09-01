@@ -19,3 +19,13 @@ test('market catalog and direct-buy projections are paged and serialized', () =>
   expect(composite).toContain("customId.startsWith('marketbuy:')");
   expect(composite).toContain("customId.startsWith('marketbuy_modal:')");
 });
+
+test('market order channels are required whenever direct-buy is enabled', () => {
+  const projection = read('src/modules/economy/blackMarketDiscord.ts');
+  expect(projection).toContain('orderChannelId: string | null');
+  expect(projection).toContain('orderReadyChannelId: string | null');
+  expect(projection).toContain('args.directBuyEnabled && (!args.orderChannelId || !args.orderReadyChannelId)');
+  expect(projection).toContain("'Bestellungs-Kanal'");
+  expect(projection).toContain("'Bestellung-bereit-Kanal'");
+  expect(projection).toContain("kind: 'ORDER_BUTTON'");
+});

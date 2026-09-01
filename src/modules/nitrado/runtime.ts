@@ -13,6 +13,7 @@ import { startGameplayFeedRuntime, stopGameplayFeedRuntime } from '../gameplayFe
 import { startBankInterestCron, stopBankInterestCron } from '../economy/interestCron';
 import { startBanExpiryRuntime, stopBanExpiryRuntime } from '../bans/expiryRuntime';
 import { startBanReconciliationCron, stopBanReconciliationCron } from '../bans/banReconciliation';
+import { startMarketOrderReadyRuntime, stopMarketOrderReadyRuntime } from '../economy/marketOrderReadyRuntime';
 
 export interface NitradoRuntimeHandle {
   stopAndDrain(): Promise<void>;
@@ -22,6 +23,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startNitradoJobWorker();
   startBanExpiryRuntime();
   startBanReconciliationCron();
+  startMarketOrderReadyRuntime();
   startTokenValidationCron(client);
   startPermaOnlyCron();
   startWhitelistSyncCron();
@@ -53,6 +55,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
       stopTokenValidationCron();
       stopBanReconciliationCron();
       stopBanExpiryRuntime();
+      stopMarketOrderReadyRuntime();
       await drainAndStopJobWorker();
     },
   };
