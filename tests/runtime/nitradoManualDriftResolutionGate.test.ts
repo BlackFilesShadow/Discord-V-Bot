@@ -9,8 +9,8 @@ const read = (relative: string): string => normalizeSourceNewlines(
 describe('manual Nitrado drift resolution gate', () => {
   it('never turns a previously SYNCED whitelist removal into an automatic re-add', () => {
     const source = read('src/modules/whitelist/whitelistSyncCron.ts');
-    const intentional = source.indexOf("entry.syncState === 'LOCAL_ONLY'");
-    const manual = source.indexOf("entry.syncState === 'SYNCED'");
+    const intentional = source.indexOf("?.syncState === 'LOCAL_ONLY'");
+    const manual = source.indexOf("?.syncState === 'SYNCED'");
     const enqueueLoop = source.indexOf('for (const gameId of intentionalAdds)');
 
     expect(intentional).toBeGreaterThanOrEqual(0);
