@@ -57,14 +57,13 @@ function confirmationReason(label: string, decision: DriftDecision): string | nu
   return trimmed;
 }
 
-function ErrorNotice({ error }: { error: unknown }) {
+function visibleError(error: unknown): ReturnType<typeof describeApiError> | null {
+  if (!error) return null;
   const described = describeApiError(error);
-  if (described.status === 403 || described.status === 404) return null;
-  return (
-    <p className="text-xs text-danger" role="alert">
-      Drift-Pruefung fehlgeschlagen: {described.desc}
-    </p>
-  );
+  // 401 wird global vom AuthProvider verarbeitet; 403/404 sind erwartete
+  // Permission-/Surface-Zustaende und sollen ebenfalls keinen Drift vortaeuschen.
+  if (described.status === 401 || described.status === 403 || described.status === 404) return null;
+  return described;
 }
 
 export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: string }) {
@@ -123,13 +122,22 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
   const whitelistItems = whitelist.data?.items ?? [];
   const banItems = bans.data?.items ?? [];
   const total = whitelistItems.length + banItems.length;
-  const hasVisibleError = [whitelist.error, bans.error].some(error => {
-    if (!error) return false;
-    const status = describeApiError(error).status;
-    return status !== 403 && status !== 404;
-  });
+  const rawErrors = [whitelist.error, bans.error].filter(Boolean);
+  const hasAuthError = rawErrors.some(error => describeApiError(error).status === 401);
 
-  if (total === 0 && !hasVisibleError) return null;
+  // Eine fehlgeschlagene Authentifizierung ist KEIN Drift. Der zentrale API-
+  // Client signalisiert den Session-Ablauf und Protected leitet zum Login um.
+  if (hasAuthError) return null;
+
+  const uniqueErrors = Array.from(new Map(
+    rawErrors
+      .map(visibleError)
+      .filter((error): error is ReturnType<typeof describeApiError> => error !== null)
+      .map(error => [`${error.status}:${error.code ?? ''}:${error.desc}`, error]),
+  ).values());
+  const hasDrift = total > 0;
+
+  if (!hasDrift && uniqueErrors.length === 0) return null;
 
   const runDecision = (target: ResolveTargetInput, label: string) => {
     const reason = confirmationReason(label, target.decision);
@@ -144,7 +152,7 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
   return (
     <section
       className="mb-6 overflow-hidden rounded-xl border border-warn/45 bg-warn/[0.06] shadow-[0_16px_50px_-28px_rgba(0,0,0,0.85)]"
-      aria-label="Manuelle Nitrado-Abweichungen"
+      aria-label={hasDrift ? 'Manuelle Nitrado-Abweichungen' : 'Nitrado-Driftpruefung fehlgeschlagen'}
       data-testid="nitrado-drift-banner"
     >
       <div className="flex flex-col gap-3 border-b border-warn/20 bg-warn/[0.05] px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
@@ -153,10 +161,13 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
             <AlertTriangle className="h-5 w-5" aria-hidden="true" />
           </span>
           <div>
-            <h2 className="text-sm font-semibold text-white">Manuelle Nitrado-Abweichung erkannt</h2>
+            <h2 className="text-sm font-semibold text-white">
+              {hasDrift ? 'Manuelle Nitrado-Abweichung erkannt' : 'Nitrado-Driftprüfung fehlgeschlagen'}
+            </h2>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted">
-              V-Bot hatte diesen Zustand zuletzt auf Nitrado bestaetigt, Nitrado meldet ihn jetzt als entfernt.
-              Die automatische Wiederherstellung ist pausiert, bis du dich bewusst fuer einen Zustand entscheidest.
+              {hasDrift
+                ? 'V-Bot hatte diesen Zustand zuletzt auf Nitrado bestaetigt, Nitrado meldet ihn jetzt als entfernt. Die automatische Wiederherstellung ist pausiert, bis du dich bewusst fuer einen Zustand entscheidest.'
+                : 'Die aktuelle Drift-Prüfung konnte nicht abgeschlossen werden. Es wurde keine Nitrado-Abweichung bestätigt.'}
             </p>
           </div>
         </div>
@@ -176,8 +187,11 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
       </div>
 
       <div className="space-y-3 p-4">
-        {whitelist.error && <ErrorNotice error={whitelist.error} />}
-        {bans.error && <ErrorNotice error={bans.error} />}
+        {uniqueErrors.map(error => (
+          <p key={`${error.status}:${error.code ?? ''}:${error.desc}`} className="text-xs text-danger" role="alert">
+            Drift-Pruefung fehlgeschlagen: {error.desc}
+          </p>
+        ))}
 
         {whitelistItems.map(item => (
           <article key={`wl-${item.gameId}`} className="rounded-lg border border-border bg-bg-card/70 p-3 sm:p-4">
