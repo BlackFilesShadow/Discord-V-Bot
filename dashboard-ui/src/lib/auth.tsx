@@ -16,6 +16,7 @@ interface AuthState {
 }
 
 const AuthCtx = createContext<AuthState>({ user: null, loading: true, sessionExpired: false, refresh: async () => {} });
+const EXPIRED_SESSION_REDIRECT_DELAY_MS = 250;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -63,7 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUser(null);
             setSessionExpired(true);
             expiryTimer = null;
-          }, 0);
+          }, EXPIRED_SESSION_REDIRECT_DELAY_MS);
         })
         .finally(() => {
           pendingRevalidation = null;

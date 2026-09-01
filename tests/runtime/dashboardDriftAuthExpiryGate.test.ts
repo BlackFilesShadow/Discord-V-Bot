@@ -23,6 +23,7 @@ describe('Dashboard drift + auth expiry gate', () => {
     expect(auth).toContain('setUser(null)');
     expect(auth).toContain('setSessionExpired(true)');
     expect(auth).toContain('expiryTimer = setTimeout');
+    expect(auth).toContain('EXPIRED_SESSION_REDIRECT_DELAY_MS = 250');
     expect(auth).toContain('if (expiryTimer) clearTimeout(expiryTimer)');
   });
 
