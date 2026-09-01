@@ -11,7 +11,7 @@ test('market vendor catalogs are fixed per vendor, paged and serialized', () => 
   const composite = read('src/events/interactionCreateComposite.ts');
 
   expect(projection).toContain('CATALOG_ITEMS_PER_MESSAGE = 5');
-  expect(projection).toContain('EconomyMarketVendorCatalogProjection');
+  expect(projection).toContain('economyMarketVendorCatalogProjection');
   expect(prismaModel).toContain('model EconomyMarketVendorCatalogProjection');
   expect(prismaModel).toContain('@@unique([projectionId, vendorAccountId]');
   expect(projection).toContain('marketcat:v1:page:${catalogProjectionId}');
