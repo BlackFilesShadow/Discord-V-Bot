@@ -11,19 +11,22 @@ describe('Dashboard drift + auth expiry gate', () => {
   const login = read('dashboard-ui/src/pages/Login.tsx');
   const drift = read('dashboard-ui/src/components/NitradoDriftBanner.tsx');
 
-  it('propagates non-/api/me 401 responses into the global auth state', () => {
+  it('propagates non-/api/me 401 responses and confirms expiry via the canonical session probe', () => {
     expect(api).toContain("export const AUTH_EXPIRED_EVENT = 'vbot:auth-expired'");
     expect(api).toContain("if (pathname === '/api/me') return");
     expect(api).toContain('if (err instanceof ApiError && err.status === 401) notifyAuthExpired(scopedPath, err)');
     expect(api).toContain('window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT');
 
     expect(auth).toContain('window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired)');
+    expect(auth).toContain("api.get<{ user: SessionUser }>('/api/me')");
+    expect(auth).toContain('if (pendingRevalidation) return');
     expect(auth).toContain('setUser(null)');
     expect(auth).toContain('setSessionExpired(true)');
   });
 
-  it('shows an explicit login notice after an in-app session expiry', () => {
+  it('shows an explicit login notice only after the session probe confirms expiry', () => {
     expect(auth).toContain('sessionExpired: boolean');
+    expect(auth).toContain('setSessionExpired(false)');
     expect(login).toContain('data-testid="session-expired-notice"');
     expect(login).toContain('Sitzung abgelaufen – bitte erneut anmelden.');
   });
