@@ -35,6 +35,9 @@ type DriftDecision = 'ACCEPT_NITRADO' | 'RESTORE_VBOT';
 type ResolveTarget =
   | { kind: 'WHITELIST'; gameId: string; decision: DriftDecision; reason: string }
   | { kind: 'BAN'; banId: string; decision: DriftDecision; reason: string };
+type ResolveTargetInput =
+  | { kind: 'WHITELIST'; gameId: string; decision: DriftDecision }
+  | { kind: 'BAN'; banId: string; decision: DriftDecision };
 
 function confirmationReason(label: string, decision: DriftDecision): string | null {
   if (decision === 'ACCEPT_NITRADO') {
@@ -128,7 +131,7 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
 
   if (total === 0 && !hasVisibleError) return null;
 
-  const runDecision = (target: Omit<ResolveTarget, 'reason'>, label: string) => {
+  const runDecision = (target: ResolveTargetInput, label: string) => {
     const reason = confirmationReason(label, target.decision);
     if (reason === null) return;
     if (reason.length < 3) {
