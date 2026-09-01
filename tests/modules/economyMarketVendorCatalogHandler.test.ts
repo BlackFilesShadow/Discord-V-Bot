@@ -76,8 +76,7 @@ function interaction(customId = `marketcat:v1:page:${CATALOG}:1`, overrides: Rec
   const edit = jest.fn().mockResolvedValue(undefined);
   const reply = jest.fn().mockResolvedValue(undefined);
   const followUp = jest.fn().mockResolvedValue(undefined);
-  const deferUpdate = jest.fn().mockResolvedValue(undefined);
-  const base = {
+  const state: Record<string, unknown> = {
     customId,
     guildId: GUILD,
     channelId: CHANNEL,
@@ -85,12 +84,16 @@ function interaction(customId = `marketcat:v1:page:${CATALOG}:1`, overrides: Rec
     client: { user: { id: BOT } },
     message: { id: MESSAGE, author: { id: BOT }, edit },
     replied: false,
-    deferred: true,
-    deferUpdate,
+    deferred: false,
     reply,
     followUp,
   };
-  return { value: { ...base, ...overrides } as never, edit, reply, followUp, deferUpdate };
+  const deferUpdate = jest.fn().mockImplementation(async () => {
+    state.deferred = true;
+  });
+  state.deferUpdate = deferUpdate;
+  Object.assign(state, overrides);
+  return { value: state as never, edit, reply, followUp, deferUpdate };
 }
 
 beforeEach(() => {
@@ -137,36 +140,37 @@ test('real catalog handler rejects a page that does not exist', async () => {
 });
 
 test('real catalog handler rejects copied catalog message scope before rendering', async () => {
-  const { value, edit, followUp } = interaction(undefined, {
-    message: { id: '723456789012345678', author: { id: BOT }, edit },
+  const foreignEdit = jest.fn();
+  const { value, followUp } = interaction(undefined, {
+    message: { id: '723456789012345678', author: { id: BOT }, edit: foreignEdit },
   });
 
   await handleMarketVendorCatalogPageButton(value);
 
-  expect(edit).not.toHaveBeenCalled();
+  expect(foreignEdit).not.toHaveBeenCalled();
   expect(marketProjectionFindFirstMock).not.toHaveBeenCalled();
   expect(followUp).toHaveBeenCalledTimes(1);
 });
 
 test('real catalog handler rejects malformed page IDs before database access', async () => {
-  const { value, deferUpdate, followUp } = interaction(`marketcat:v1:page:${CATALOG}:01`);
+  const { value, deferUpdate, reply } = interaction(`marketcat:v1:page:${CATALOG}:01`);
 
   await handleMarketVendorCatalogPageButton(value);
 
   expect(deferUpdate).not.toHaveBeenCalled();
   expect(vendorCatalogFindUniqueMock).not.toHaveBeenCalled();
-  expect(followUp).toHaveBeenCalledTimes(1);
+  expect(reply).toHaveBeenCalledTimes(1);
 });
 
 test('real catalog handler rejects messages not authored by the current V-Bot', async () => {
-  const edit = jest.fn();
-  const { value, deferUpdate, followUp } = interaction(undefined, {
-    message: { id: MESSAGE, author: { id: '823456789012345678' }, edit },
+  const foreignEdit = jest.fn();
+  const { value, deferUpdate, reply } = interaction(undefined, {
+    message: { id: MESSAGE, author: { id: '823456789012345678' }, edit: foreignEdit },
   });
 
   await handleMarketVendorCatalogPageButton(value);
 
   expect(deferUpdate).not.toHaveBeenCalled();
   expect(vendorCatalogFindUniqueMock).not.toHaveBeenCalled();
-  expect(followUp).toHaveBeenCalledTimes(1);
+  expect(reply).toHaveBeenCalledTimes(1);
 });
