@@ -47,14 +47,14 @@ model EconomyMarketVendorCatalogProjection {
   nitradoConnId        String
   vendorAccountId      String
   channelId            String
-  catalogMessageId     String   @unique
-  orderButtonMessageId String?  @unique
+  catalogMessageId     String   @unique(map: "EconomyMarketVendorCatalogProjection_catalog_message_key")
+  orderButtonMessageId String?  @unique(map: "EconomyMarketVendorCatalogProjection_order_message_key")
   currentPage          Int      @default(0)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
   projection EconomyMarketDiscordProjection @relation(fields: [projectionId, guildId, nitradoConnId], references: [id, guildId, nitradoConnId], onDelete: Cascade)
 
-  @@unique([projectionId, vendorAccountId])
-  @@index([guildId, nitradoConnId, vendorAccountId])
+  @@unique([projectionId, vendorAccountId], name: "projectionVendor", map: "EconomyMarketVendorCatalogProjection_projection_vendor_key")
+  @@index([guildId, nitradoConnId, vendorAccountId], map: "EconomyMarketVendorCatalogProjection_scope_vendor_idx")
 }
