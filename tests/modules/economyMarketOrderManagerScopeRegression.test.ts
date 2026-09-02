@@ -3,10 +3,49 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'src/modules/economy/blackMarketOrderInteractionsV2.ts'), 'utf8');
+const orderService = fs.readFileSync(path.join(root, 'src/modules/economy/blackMarketOrder.ts'), 'utf8');
+const runtime = fs.readFileSync(path.join(root, 'src/modules/economy/marketOrderReadyRuntime.ts'), 'utf8');
+const composite = fs.readFileSync(path.join(root, 'src/events/interactionCreateComposite.ts'), 'utf8');
+const migration = fs.readFileSync(path.join(root, 'prisma/migrations/20260902043000_economy_market_ready_outbox/migration.sql'), 'utf8');
 
 test('Bestellung abschließen reads connId from vacct_mgr_order:<connId>', () => {
-  expect(source).toContain("export async function handleMarketOrderManagerButton");
-  expect(source).toContain("const connId = interaction.customId.split(':')[1];");
-  expect(source).toContain(".setCustomId(`vacct_mgr_order_sel:${connId}`)");
-  expect(source).toContain("export async function handleMarketOrderManagerSelect");
+  expect(source).toContain('export async function handleMarketOrderManagerButton');
+  expect(source).toContain("const connId = interaction.customId.split(':')[1]");
+  expect(source).toContain('.setCustomId(`vacct_mgr_order_sel:${connId}:${page}`)');
+  expect(source).toContain('export async function handleMarketOrderManagerSelect');
+});
+
+test('manager pages over all open orders instead of silently slicing the first 25', () => {
+  expect(source).toContain('while (true)');
+  expect(source).toContain('listOpenMarketOrders(guildId, nitradoConnId, account.id, 100, offset)');
+  expect(source).toContain('open.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)');
+  expect(source).not.toContain('open.slice(0, 25)');
+  expect(source).toContain('vacct_mgr_order_page:');
+  expect(composite).toContain("i.customId.startsWith('vacct_mgr_order_page:')");
+  expect(composite).toContain('handleMarketOrderManagerPageButton');
+});
+
+test('closing an order atomically enqueues exactly one persistent ready intent', () => {
+  expect(orderService).toContain("VALUES ($1,$2,$3,$4,$5,'PENDING',0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)");
+  expect(orderService).toContain('ON CONFLICT ("orderId") DO NOTHING');
+  expect(orderService).toContain("if (lockedOrder.status === 'CLOSED') return false");
+  expect(source).not.toContain('postOrderReadyEmbed');
+  expect(source).toContain('persistent eingeplant');
+});
+
+test('ready delivery has retry state, lease and one-hour cleanup', () => {
+  expect(migration).toContain("('PENDING', 'SENDING', 'SENT')");
+  expect(migration).toContain('"attempts" INTEGER NOT NULL DEFAULT 0');
+  expect(migration).toContain('"nextAttemptAt" TIMESTAMP(3)');
+  expect(migration).toContain('"leaseUntil" TIMESTAMP(3)');
+  expect(runtime).toContain('FOR UPDATE SKIP LOCKED');
+  expect(runtime).toContain("status: 'PENDING'");
+  expect(runtime).toContain("status: 'SENT'");
+  expect(runtime).toContain('READY_TTL_MS = 60 * 60_000');
+});
+
+test('original pending order embed is edited to completed after close', () => {
+  expect(source).toContain('async function editOriginalOrderMessage');
+  expect(source).toContain(".setTitle('✅ Bestellung abgeschlossen')");
+  expect(source).toContain("value: '**Bestellung abgeschlossen**'");
 });
