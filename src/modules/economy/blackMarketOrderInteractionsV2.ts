@@ -20,7 +20,8 @@ import { getConfig } from './repository';
 import {
   attachMarketOrderMessage,
   closeMarketOrder,
-  listOpenMarketOrders,
+  getMarketOrder,
+  listManagedOpenMarketOrdersPage,
   type MarketOrderView,
 } from './blackMarketOrder';
 import {
@@ -350,19 +351,15 @@ export async function handleMarketOrderPayButton(interaction: ButtonInteraction)
   }
 }
 
-async function managedOpenOrders(guildId: ReturnType<typeof asGuildId>, nitradoConnId: ReturnType<typeof asNitradoConnId>, userId: string): Promise<MarketOrderView[]> {
-  const accounts = (await listManagedVirtualAccounts(guildId, nitradoConnId, asUserDiscordId(userId))).filter(account => account.kind === 'MARKET_VENDOR');
+async function managedVendorIds(
+  guildId: ReturnType<typeof asGuildId>,
+  nitradoConnId: ReturnType<typeof asNitradoConnId>,
+  userId: string,
+): Promise<string[]> {
+  const accounts = (await listManagedVirtualAccounts(guildId, nitradoConnId, asUserDiscordId(userId)))
+    .filter(account => account.kind === 'MARKET_VENDOR');
   if (accounts.length === 0) throw new Error('Dir ist kein Schwarzmarkt-Händlerkonto zugewiesen.');
-  const all: MarketOrderView[] = [];
-  for (const account of accounts) {
-    let offset = 0;
-    while (true) {
-      const page = await listOpenMarketOrders(guildId, nitradoConnId, account.id, 100, offset);
-      all.push(...page); offset += page.length;
-      if (page.length < 100) break;
-    }
-  }
-  return all.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+  return accounts.map(account => account.id);
 }
 
 type ManagerComponentKind = 'vacct_mgr_order' | 'vacct_mgr_order_page' | 'vacct_mgr_order_sel';
@@ -387,9 +384,12 @@ function parseMarketOrderManagerComponentId(customId: string, expectedKind: Mana
 async function managerPayload(interaction: ComponentInteraction, connId: string, requestedPage: number) {
   if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');
   const guildId = asGuildId(interaction.guildId); const nitradoConnId = asNitradoConnId(connId);
-  const open = await managedOpenOrders(guildId, nitradoConnId, interaction.user.id);
-  if (open.length === 0) throw new Error('Aktuell sind keine offenen Bestellungen vorhanden.');
-  const totalPages = Math.max(1, Math.ceil(open.length / PAGE_SIZE)); const page = Math.min(totalPages - 1, requestedPage); const pageOrders = open.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const vendorIds = await managedVendorIds(guildId, nitradoConnId, interaction.user.id);
+  const result = await listManagedOpenMarketOrdersPage(guildId, nitradoConnId, vendorIds, PAGE_SIZE, requestedPage * PAGE_SIZE);
+  if (result.total === 0) throw new Error('Aktuell sind keine offenen Bestellungen vorhanden.');
+  const totalPages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
+  const page = Math.floor(result.offset / PAGE_SIZE);
+  const pageOrders = result.orders;
   const guild = interaction.guild;
   const options = await Promise.all(pageOrders.map(async order => {
     const member = guild ? guild.members.cache.get(order.userDiscordId) ?? await guild.members.fetch(order.userDiscordId).catch(() => null) : null;
@@ -434,8 +434,12 @@ export async function handleMarketOrderManagerSelect(interaction: StringSelectMe
     const { connId } = parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_sel');
     const orderId = interaction.values[0];
     if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.'); if (!orderId) throw new Error('Keine Bestellung ausgewählt.');
-    const guildId = asGuildId(interaction.guildId); const nitradoConnId = asNitradoConnId(connId); const orderRows = await managedOpenOrders(guildId, nitradoConnId, interaction.user.id); const order = orderRows.find(row => row.id === orderId);
-    if (!order) throw new Error('Bestellung ist nicht mehr offen oder dir nicht zugewiesen.');
+    const guildId = asGuildId(interaction.guildId); const nitradoConnId = asNitradoConnId(connId);
+    const vendorIds = await managedVendorIds(guildId, nitradoConnId, interaction.user.id);
+    const order = await getMarketOrder(guildId, nitradoConnId, orderId);
+    if (!order || order.status !== 'OPEN' || !vendorIds.includes(order.vendorAccountId)) {
+      throw new Error('Bestellung ist nicht mehr offen oder dir nicht zugewiesen.');
+    }
     await interaction.deferUpdate();
     const result = await closeMarketOrder({ guildId, nitradoConnId, orderId, vendorAccountId: order.vendorAccountId, actorDiscordId: asUserDiscordId(interaction.user.id) });
     if (result.changed) await editOriginalOrderMessage(interaction.client, result.order).catch(error => logger.warn(`Bestell-Embed Abschluss-Update fehlgeschlagen (${orderId}): ${(error as Error).message}`));
