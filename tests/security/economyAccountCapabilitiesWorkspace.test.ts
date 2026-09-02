@@ -57,9 +57,9 @@ describe('Economy account capability workspace', () => {
 
   test('system registry is read-only, resilient and never hides incomplete responses as empty', () => {
     expect(systemUi).toContain('/control/system-accounts?slot=');
-    expect(systemUi).toContain('Array.isArray(query.data?.accounts)');
-    expect(systemUi).toContain('const hasValidAccounts =');
-    expect(systemUi).toContain('const accounts =');
+    expect(systemUi).toContain('const responseAccounts = query.data?.accounts');
+    expect(systemUi).toContain('const hasValidAccounts = Array.isArray(responseAccounts)');
+    expect(systemUi).toContain('Array.isArray(responseAccounts) ? responseAccounts : []');
     expect(systemUi).toContain('query.data && !hasValidAccounts');
     expect(systemUi).toContain('Systemkonto-Antwort ist unvollständig.');
     expect(systemUi).toContain('hasValidAccounts && accounts.length === 0');
