@@ -36,19 +36,36 @@ test('vendor-bound cart never exposes listings from another vendor and rejects i
   expect(interactions).toContain('draft.vendorAccountId !== listing.vendorAccountId');
 });
 
-test('cart supports quantities up to 20 and explicit wallet or bank payment', () => {
+test('cart supports 25 distinct positions, quantities up to 20 and explicit wallet or bank payment', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
   const service = read('src/modules/economy/blackMarketOrderV2.ts');
   const composite = read('src/events/interactionCreateComposite.ts');
 
   expect(service).toContain('MAX_MARKET_ORDER_UNITS = 20');
+  expect(service).toContain('MAX_MARKET_ORDER_LINES = 25');
   expect(service).toContain('sourcePocket: args.sourcePocket');
   expect(service).toContain('listing.price * BigInt(quantity)');
+  expect(service).toContain('.sort((a, b) => a.listingId.localeCompare(b.listingId))');
+  expect(service).toContain('payloadFingerprint(lines, args.sourcePocket)');
+  expect(service).toContain('const lockedTotal = rows.reduce');
+  expect(service).toContain('lockedTotal !== totalAmount');
   expect(interactions).toContain('marketorder:qty:${token}');
   expect(interactions).toContain('marketorder:pay:w:${token}');
   expect(interactions).toContain('marketorder:pay:b:${token}');
+  expect(interactions).toContain('Object.keys(draft.lines).length >= MAX_MARKET_ORDER_LINES');
+  expect(interactions).toContain('max. 25 Positionen');
   expect(composite).toContain("i.customId.startsWith('marketorder:pay:')");
   expect(composite).toContain("i.customId.startsWith('marketorder:qty:')");
+});
+
+test('strict order replay validates stored quantities, payment source and stored total', () => {
+  const service = read('src/modules/economy/blackMarketOrderV2.ts');
+
+  expect(service).toContain('purchase.sourcePocket === sourcePocket');
+  expect(service).toContain('purchase.amount === purchase.unitPrice * BigInt(purchase.quantity)');
+  expect(service).toContain('storedTotal !== replay.totalAmount');
+  expect(service).toContain('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+  expect(service).toContain("sourceRef: `market-order:${fingerprint}`");
 });
 
 test('pending and ready embeds expose the requested lifecycle and one-hour deletion', () => {
@@ -76,6 +93,5 @@ test('vendor catalog renders compact article, price and currency without N+1 ven
   expect(projection).toContain('safeEmbedField(args.currencyName, 120)');
   expect(loader).toContain('economyVirtualAccount.findMany');
   expect(loader).not.toContain('getVirtualAccountById');
-  expect(projection).toContain('bis zu **20 Artikeln**');
   expect(projection).toContain('**Wallet oder Bank**');
 });
