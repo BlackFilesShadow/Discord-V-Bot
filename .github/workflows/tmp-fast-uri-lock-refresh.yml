@@ -1,0 +1,65 @@
+name: Temporary fast-uri lock refresh
+
+on:
+  push:
+    branches:
+      - fix/server-list-catalog-interactions
+    paths:
+      - .github/workflows/tmp-fast-uri-lock-refresh.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-lock:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v5
+        with:
+          ref: fix/server-list-catalog-interactions
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Refresh only fast-uri in lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp package-lock.json /tmp/package-lock.before.json
+          npm update fast-uri --package-lock-only --ignore-scripts
+          node <<'NODE'
+          const fs = require('fs');
+          const before = JSON.parse(fs.readFileSync('/tmp/package-lock.before.json', 'utf8'));
+          const after = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const key = 'node_modules/fast-uri';
+          const beforeEntry = before.packages?.[key];
+          const afterEntry = after.packages?.[key];
+          if (!beforeEntry || !afterEntry) throw new Error('fast-uri lock entry missing');
+          if (afterEntry.version !== '3.1.6') throw new Error(`expected fast-uri 3.1.6, got ${afterEntry.version}`);
+          for (const field of ['version', 'resolved', 'integrity']) afterEntry[field] = beforeEntry[field];
+          if (JSON.stringify(after) !== JSON.stringify(before)) {
+            throw new Error('npm changed lockfile content outside fast-uri version/resolved/integrity');
+          }
+          NODE
+
+      - name: Commit deterministic lock refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --exit-code -- package.json
+          if git diff --quiet -- package-lock.json; then
+            echo 'No lockfile change produced.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'security: refresh fast-uri lock to 3.1.6'
+          git push origin HEAD:fix/server-list-catalog-interactions
