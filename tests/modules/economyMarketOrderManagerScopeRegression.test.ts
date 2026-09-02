@@ -19,10 +19,13 @@ test('Bestellung abschließen parses every manager custom id fail-closed', () =>
   expect(source).toContain('.setCustomId(`vacct_mgr_order_sel:${connId}:${page}`)');
 });
 
-test('manager pages over all open orders instead of silently slicing the first 25', () => {
-  expect(source).toContain('while (true)');
-  expect(source).toContain('listOpenMarketOrders(guildId, nitradoConnId, account.id, 100, offset)');
-  expect(source).toContain('open.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)');
+test('manager pages over all assigned vendor orders with a scoped SQL count and page query', () => {
+  expect(orderService).toContain('export async function listManagedOpenMarketOrdersPage');
+  expect(orderService).toContain('COUNT(*)::integer AS total');
+  expect(orderService).toContain('"vendorAccountId" = ANY($3::text[])');
+  expect(orderService).toContain('ORDER BY "createdAt" ASC, "id" ASC LIMIT $4 OFFSET $5');
+  expect(source).toContain('listManagedOpenMarketOrdersPage(guildId, nitradoConnId, vendorIds, PAGE_SIZE, requestedPage * PAGE_SIZE)');
+  expect(source).toContain('const pageOrders = result.orders');
   expect(source).not.toContain('open.slice(0, 25)');
   expect(source).toContain('vacct_mgr_order_page:');
   expect(composite).toContain("i.customId.startsWith('vacct_mgr_order_page:')");
