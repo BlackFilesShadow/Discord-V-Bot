@@ -218,7 +218,7 @@ export async function createMarketOrderV2(args: {
 
   const order = await existingOrderByKey(args.guildId, args.nitradoConnId, key);
   if (!order) throw new Error('Schwarzmarkt-Bestellung konnte nicht vollstaendig gelesen werden.');
-  assertReplayMatches({ order: undefined as never, replay: order, userDiscordId: args.userDiscordId, lines, sourcePocket: args.sourcePocket } as never);
+  assertReplayMatches({ replay: order, userDiscordId: args.userDiscordId, lines, sourcePocket: args.sourcePocket });
   logAudit('MARKET_ORDER_CREATED', 'ECONOMY', {
     guildId: args.guildId,
     nitradoConnId: args.nitradoConnId,
