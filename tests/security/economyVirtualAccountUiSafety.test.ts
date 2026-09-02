@@ -6,7 +6,7 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 describe('virtuelle Konten — Surface-Sicherheit', () => {
   const panel = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
-  const reexport = read('dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx');
+  const workspace = read('dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx');
   const command = read('src/commands/dashboard/virtualAccounts.ts');
   const route = read('src/dashboard/routes/v2/economyVirtualAccounts.ts');
   const control = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
@@ -17,8 +17,11 @@ describe('virtuelle Konten — Surface-Sicherheit', () => {
     expect(control).toContain("account.kind !== 'CUSTOM'");
   });
 
-  it('Dashboard bietet Wallet, Bank, Waehrung, Manager, Live-Sync und keine physische Loeschung', () => {
-    expect(reexport).toContain('VirtualAccountsControlPanel as VirtualAccountsPanel');
+  it('Dashboard bietet Wallet, Bank, Waehrung, Manager, Live-Sync und den gemeinsamen Konten-Workspace', () => {
+    expect(workspace).toContain('<VirtualAccountsControlPanel guildId={guildId} slot={slot} />');
+    expect(workspace).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} />');
+    expect(workspace).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
+    expect(workspace).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
     expect(panel).toContain('walletBalance');
     expect(panel).toContain('bankBalance');
     expect(panel).toContain('currencyName');
