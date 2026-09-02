@@ -31,6 +31,10 @@ import {
   getMarketDiscordProjection,
   syncMarketDiscordProjection,
 } from '../../../modules/economy/blackMarketDiscord';
+import {
+  validateMarketDiscordChannels,
+  type MarketDiscordChannelConfig,
+} from '../../../modules/economy/marketDiscordChannelValidation';
 import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
 
 export const economyBlackMarketRouter = Router({ mergeParams: true });
@@ -72,11 +76,25 @@ const vendorJson = (row: Awaited<ReturnType<typeof listMarketVendors>>[number]) 
   withdrawableBalance: row.withdrawableBalance.toString(),
 });
 
+function sameDiscordConfig(
+  projection: MarketDiscordChannelConfig | null,
+  config: MarketDiscordChannelConfig,
+): boolean {
+  return Boolean(projection)
+    && projection!.catalogChannelId === config.catalogChannelId
+    && projection!.directBuyEnabled === config.directBuyEnabled
+    && projection!.directBuyChannelId === config.directBuyChannelId
+    && projection!.orderChannelId === config.orderChannelId
+    && projection!.orderReadyChannelId === config.orderReadyChannelId;
+}
+
 async function immediateMarketSync(req: Req): Promise<string | null> {
   const { scope, connId } = scoped(req);
   const client = tryGetDashboardClient();
   if (!client) return 'Bot nicht bereit; Discord-Verkaufsliste konnte noch nicht synchronisiert werden.';
   try {
+    const projection = await getMarketDiscordProjection(scope.guildId, connId);
+    if (projection) await validateMarketDiscordChannels(client, scope.guildId, projection);
     await syncMarketDiscordProjection(client, scope.guildId, connId);
     return null;
   } catch (error) {
@@ -301,28 +319,52 @@ economyBlackMarketRouter.put('/discord', requireGuildPermission('economy.manage'
   const { scope, connId } = scoped(req);
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit; Discord-Integration kann nicht validiert werden.' }); return; }
-  const catalogChannelId = typeof req.body?.catalogChannelId === 'string' && req.body.catalogChannelId.trim() ? req.body.catalogChannelId.trim() : null;
-  const directBuyEnabled = req.body?.directBuyEnabled === true;
-  const directBuyChannelId = typeof req.body?.directBuyChannelId === 'string' && req.body.directBuyChannelId.trim() ? req.body.directBuyChannelId.trim() : null;
-  const orderChannelId = typeof req.body?.orderChannelId === 'string' && req.body.orderChannelId.trim() ? req.body.orderChannelId.trim() : null;
-  const orderReadyChannelId = typeof req.body?.orderReadyChannelId === 'string' && req.body.orderReadyChannelId.trim() ? req.body.orderReadyChannelId.trim() : null;
+  const config: MarketDiscordChannelConfig = {
+    catalogChannelId: typeof req.body?.catalogChannelId === 'string' && req.body.catalogChannelId.trim() ? req.body.catalogChannelId.trim() : null,
+    directBuyEnabled: req.body?.directBuyEnabled === true,
+    directBuyChannelId: typeof req.body?.directBuyChannelId === 'string' && req.body.directBuyChannelId.trim() ? req.body.directBuyChannelId.trim() : null,
+    orderChannelId: typeof req.body?.orderChannelId === 'string' && req.body.orderChannelId.trim() ? req.body.orderChannelId.trim() : null,
+    orderReadyChannelId: typeof req.body?.orderReadyChannelId === 'string' && req.body.orderReadyChannelId.trim() ? req.body.orderReadyChannelId.trim() : null,
+  };
+  if (!config.directBuyEnabled) {
+    config.directBuyChannelId = null;
+    config.orderChannelId = null;
+    config.orderReadyChannelId = null;
+  }
+
+  try {
+    await validateMarketDiscordChannels(client, scope.guildId, config);
+  } catch (error) {
+    res.status(400).json({ error: (error as Error).message });
+    return;
+  }
+
   try {
     const projection = await configureMarketDiscordProjection(client, {
       guildId: scope.guildId,
       nitradoConnId: connId,
-      catalogChannelId,
-      directBuyEnabled,
-      directBuyChannelId,
-      orderChannelId,
-      orderReadyChannelId,
+      ...config,
     });
     logAuditDb('MARKET_DISCORD_PROJECTION_CONFIGURED', 'ECONOMY', {
       actorUserId: req.auth!.userId,
       guildId: scope.guildId,
-      details: { nitradoConnId: connId, catalogChannelId, directBuyEnabled, directBuyChannelId, orderChannelId, orderReadyChannelId },
+      details: { nitradoConnId: connId, ...config, syncWarning: null },
     });
-    res.json({ projection });
-  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+    res.json({ projection, syncWarning: null });
+  } catch (error) {
+    const syncWarning = (error as Error).message;
+    const projection = await getMarketDiscordProjection(scope.guildId, connId);
+    if (!sameDiscordConfig(projection, config)) {
+      res.status(400).json({ error: syncWarning });
+      return;
+    }
+    logAuditDb('MARKET_DISCORD_PROJECTION_CONFIGURED', 'ECONOMY', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: { nitradoConnId: connId, ...config, syncWarning },
+    });
+    res.json({ projection, syncWarning });
+  }
 });
 
 economyBlackMarketRouter.post('/discord/sync', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -330,6 +372,8 @@ economyBlackMarketRouter.post('/discord/sync', requireGuildPermission('economy.m
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
   try {
+    const projection = await getMarketDiscordProjection(scope.guildId, connId);
+    if (projection) await validateMarketDiscordChannels(client, scope.guildId, projection);
     res.json({ projection: await syncMarketDiscordProjection(client, scope.guildId, connId) });
   } catch (error) { res.status(502).json({ error: (error as Error).message }); }
 });
