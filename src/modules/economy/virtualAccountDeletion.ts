@@ -21,7 +21,7 @@ function rawDb(client: unknown = prisma): VirtualAccountRawDb {
   return client as VirtualAccountRawDb;
 }
 
-export type VirtualAccountDeletionMode = 'HARD_DELETED' | 'CONTROL_HIDDEN';
+export type VirtualAccountDeletionMode = 'HARD_DELETED' | 'HISTORY_RETAINED';
 
 export interface DeletedVirtualAccount {
   id: string;
@@ -33,18 +33,18 @@ export interface DeletedVirtualAccount {
 }
 
 /**
- * Historical/domain-owned accounts remain physically present when deleting the
- * control-surface entry would otherwise destroy immutable accounting, lottery or
- * market state. They disappear from the generic virtual-account dashboard while
- * their owning domain can continue to work with the same scoped account row.
+ * Returns terminal deletion markers for CUSTOM accounts whose immutable ledger
+ * or historical foreign-key references require the physical account row to stay
+ * in PostgreSQL. These rows are not active accounts and must never be exposed as
+ * restorable control-surface entries.
  */
-export async function listHiddenVirtualAccountIds(args: {
+export async function listDeletedVirtualAccountIds(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
 }): Promise<Set<string>> {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const rows = await rawDb().$queryRawUnsafe<Array<{ accountId: string }>>(
-    'SELECT "accountId" FROM "EconomyVirtualAccountControlHidden" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+    'SELECT "accountId" FROM "EconomyVirtualAccountDeleted" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
     String(args.guildId),
     String(args.nitradoConnId),
   );
@@ -52,68 +52,46 @@ export async function listHiddenVirtualAccountIds(args: {
 }
 
 /**
- * Kehrt eine vorherige Control-Hidden-Loeschung um (nur Sichtbarkeit im
- * generischen Konten-Dashboard; Kontodaten/-funktion waren nie betroffen).
- * Strikt guild+connection-gescoppt, damit kein fremdes Konto sichtbar wird.
+ * Compatibility alias for older internal callers while the authoritative safety
+ * router uses the terminal-deletion name. It does not make deletion reversible.
  */
-export async function restoreHiddenVirtualAccount(args: {
+export const listHiddenVirtualAccountIds = listDeletedVirtualAccountIds;
+
+/**
+ * Legacy compatibility hook. User-visible deletion is terminal; callers of the
+ * retired restore endpoint receive no restoration and must treat the account as
+ * deleted from the active control surface.
+ */
+export async function restoreHiddenVirtualAccount(_args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   accountId: string;
 }): Promise<boolean> {
-  await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
-  const deleted = await rawDb().$executeRawUnsafe(
-    'DELETE FROM "EconomyVirtualAccountControlHidden" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
-    args.accountId,
-    String(args.guildId),
-    String(args.nitradoConnId),
-  );
-  return deleted === 1;
+  return false;
 }
 
-async function writeControlHidden(raw: VirtualAccountRawDb, args: {
+async function writeDeletedMarker(raw: VirtualAccountRawDb, args: {
   accountId: string;
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
 }): Promise<void> {
-  const hidden = await raw.$executeRawUnsafe(
-    'INSERT INTO "EconomyVirtualAccountControlHidden" ("accountId", "guildId", "nitradoConnId", "hiddenAt") VALUES ($1,$2,$3,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "hiddenAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountControlHidden"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountControlHidden"."nitradoConnId"=EXCLUDED."nitradoConnId"',
+  const marked = await raw.$executeRawUnsafe(
+    'INSERT INTO "EconomyVirtualAccountDeleted" ("accountId", "guildId", "nitradoConnId", "deletedAt") VALUES ($1,$2,$3,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "deletedAt"=CURRENT_TIMESTAMP WHERE "EconomyVirtualAccountDeleted"."guildId"=EXCLUDED."guildId" AND "EconomyVirtualAccountDeleted"."nitradoConnId"=EXCLUDED."nitradoConnId"',
     args.accountId,
     String(args.guildId),
     String(args.nitradoConnId),
   );
-  if (hidden !== 1) throw new Error('Konto konnte nicht sicher aus der Kontoverwaltung entfernt werden.');
+  if (marked !== 1) throw new Error('Konto konnte nicht sicher als gelöscht markiert werden.');
 }
 
-async function hideDomainOwnedAccount(raw: VirtualAccountRawDb, args: {
-  account: LockedAccountRow;
-  finance: LockedFinanceRow;
-  guildId: GuildId;
-  nitradoConnId: NitradoConnId;
-}): Promise<DeletedVirtualAccount> {
-  await writeControlHidden(raw, {
-    accountId: args.account.id,
-    guildId: args.guildId,
-    nitradoConnId: args.nitradoConnId,
-  });
-  return {
-    id: args.account.id,
-    name: args.account.name,
-    mode: 'CONTROL_HIDDEN',
-    walletRemoved: '0',
-    bankRemoved: '0',
-    domainPreserved: true,
-  };
-}
-
-async function retireCustomAccount(raw: VirtualAccountRawDb, args: {
+async function retainCustomHistory(raw: VirtualAccountRawDb, args: {
   account: LockedAccountRow;
   finance: LockedFinanceRow;
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   actorDiscordId?: UserDiscordId;
 }): Promise<DeletedVirtualAccount> {
-  const reason = 'Konto gelöscht; Restguthaben wurde kontrolliert auf 0 gesetzt.';
+  const reason = 'Konto dauerhaft gelöscht; Restguthaben wurde kontrolliert auf 0 gesetzt.';
 
   if (args.account.balance > 0n) {
     const inserted = await raw.$executeRawUnsafe(
@@ -121,7 +99,7 @@ async function retireCustomAccount(raw: VirtualAccountRawDb, args: {
       randomUUID(), `control-delete:${args.account.id}:wallet`, String(args.guildId), String(args.nitradoConnId), args.account.id,
       -args.account.balance, args.actorDiscordId ? String(args.actorDiscordId) : null, reason,
     );
-    if (inserted !== 1) throw new Error('Wallet-Loeschbuchung existiert bereits; bitte Konten neu laden.');
+    if (inserted !== 1) throw new Error('Wallet-Löschbuchung existiert bereits; bitte Konten neu laden.');
   }
   if (args.finance.bankBalance > 0n) {
     const inserted = await raw.$executeRawUnsafe(
@@ -129,22 +107,25 @@ async function retireCustomAccount(raw: VirtualAccountRawDb, args: {
       randomUUID(), `control-delete:${args.account.id}:bank`, String(args.guildId), String(args.nitradoConnId), args.account.id,
       -args.finance.bankBalance, args.actorDiscordId ? String(args.actorDiscordId) : null, reason,
     );
-    if (inserted !== 1) throw new Error('Bank-Loeschbuchung existiert bereits; bitte Konten neu laden.');
+    if (inserted !== 1) throw new Error('Bank-Löschbuchung existiert bereits; bitte Konten neu laden.');
   }
 
   const financeReset = await raw.$executeRawUnsafe(
     'UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0, "accountPurpose"=CASE WHEN "accountPurpose"=\'BANK_TREASURY\' THEN \'GENERAL\' ELSE "accountPurpose" END, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
     args.account.id, String(args.guildId), String(args.nitradoConnId),
   );
-  if (financeReset !== 1) throw new Error('Konto-Finanzprofil wurde parallel veraendert; Loeschung abgebrochen.');
+  if (financeReset !== 1) throw new Error('Konto-Finanzprofil wurde parallel verändert; Löschung abgebrochen.');
 
+  // ARCHIVED is an internal persistence state only. The terminal deletion marker
+  // below removes this row from every active control surface and there is no
+  // restore path after a user-visible delete.
   const walletReset = await raw.$executeRawUnsafe(
     'UPDATE "EconomyVirtualAccount" SET "balance"=0, "status"=\'ARCHIVED\'::"EconomyVirtualAccountStatus", "acceptUserTransfers"=false, "archivedAt"=COALESCE("archivedAt", CURRENT_TIMESTAMP), "archivedByDiscordId"=COALESCE("archivedByDiscordId", $4), "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"',
     args.account.id, String(args.guildId), String(args.nitradoConnId), args.actorDiscordId ? String(args.actorDiscordId) : null,
   );
-  if (walletReset !== 1) throw new Error('Virtuelles Konto wurde parallel veraendert; Loeschung abgebrochen.');
+  if (walletReset !== 1) throw new Error('Virtuelles Konto wurde parallel verändert; Löschung abgebrochen.');
 
-  await writeControlHidden(raw, {
+  await writeDeletedMarker(raw, {
     accountId: args.account.id,
     guildId: args.guildId,
     nitradoConnId: args.nitradoConnId,
@@ -152,7 +133,7 @@ async function retireCustomAccount(raw: VirtualAccountRawDb, args: {
   return {
     id: args.account.id,
     name: args.account.name,
-    mode: 'CONTROL_HIDDEN',
+    mode: 'HISTORY_RETAINED',
     walletRemoved: args.account.balance.toString(),
     bankRemoved: args.finance.bankBalance.toString(),
     domainPreserved: false,
@@ -160,18 +141,16 @@ async function retireCustomAccount(raw: VirtualAccountRawDb, args: {
 }
 
 /**
- * Dashboard removal is status- and balance-independent:
+ * Terminal user-visible deletion for CUSTOM accounts:
  *
- * - CUSTOM accounts (including the server-bank treasury) can be removed while
- *   ACTIVE, EXPIRED or ARCHIVED and with any Wallet/Bank balance.
- * - A fresh, empty CUSTOM account is physically deleted.
- * - CUSTOM accounts with money or immutable history are atomically zeroed,
- *   archived and hidden so their audit trail survives. A deleted server-bank is
- *   declassified to GENERAL so a new treasury can be created immediately.
- * - LOTTERY_POT and MARKET_VENDOR are domain-owned system accounts. Deleting
- *   them from the generic virtual-account dashboard hides only that control
- *   surface; balances/status/domain references remain untouched so active
- *   lotteries, purchases and refunds cannot be corrupted.
+ * - System accounts are rejected defensively and remain owned by Lotterie or
+ *   Schwarzmarkt.
+ * - A fresh empty CUSTOM account without immutable history is physically deleted.
+ * - A CUSTOM account with balances or immutable history is atomically zeroed,
+ *   made inert and marked deleted. Its row remains only so ledger/audit foreign
+ *   keys stay valid; it is never listed or restorable again.
+ * - A deleted server-bank is declassified to GENERAL so a new treasury can be
+ *   created immediately without reviving the deleted account.
  */
 export async function deleteUnusedVirtualAccount(args: {
   guildId: GuildId;
@@ -192,6 +171,9 @@ export async function deleteUnusedVirtualAccount(args: {
       );
       const account = accounts[0];
       if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
+      if (account.kind !== 'CUSTOM') {
+        throw new Error('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
+      }
 
       const finances = await raw.$queryRawUnsafe<LockedFinanceRow[]>(
         'SELECT "bankBalance", "accountPurpose" FROM "EconomyVirtualAccountFinance" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
@@ -200,17 +182,7 @@ export async function deleteUnusedVirtualAccount(args: {
         String(args.nitradoConnId),
       );
       const finance = finances[0];
-      if (!finance) throw new Error('Konto-Finanzprofil fehlt; Loeschung wird aus Sicherheitsgruenden abgebrochen.');
-
-      if (account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR') {
-        return hideDomainOwnedAccount(raw, {
-          account,
-          finance,
-          guildId: args.guildId,
-          nitradoConnId: args.nitradoConnId,
-        });
-      }
-      if (account.kind !== 'CUSTOM') throw new Error('Unbekannter virtueller Kontotyp; Loeschung sicherheitshalber abgebrochen.');
+      if (!finance) throw new Error('Konto-Finanzprofil fehlt; Löschung wird aus Sicherheitsgründen abgebrochen.');
 
       const entries = await raw.$queryRawUnsafe<Array<{ exists: boolean }>>(
         'SELECT EXISTS(SELECT 1 FROM "EconomyVirtualAccountEntry" WHERE "virtualAccountId"=$1 LIMIT 1) AS exists',
@@ -221,6 +193,7 @@ export async function deleteUnusedVirtualAccount(args: {
           EXISTS(SELECT 1 FROM "LotteryRound" WHERE "potAccountId"=$1 LIMIT 1)
           OR EXISTS(SELECT 1 FROM "EconomyMarketListing" WHERE "vendorAccountId"=$1 LIMIT 1)
           OR EXISTS(SELECT 1 FROM "EconomyMarketPurchase" WHERE "vendorAccountId"=$1 LIMIT 1)
+          OR EXISTS(SELECT 1 FROM "EconomyMarketOrder" WHERE "vendorAccountId"=$1 LIMIT 1)
         ) AS protected`,
         args.accountId,
       );
@@ -228,7 +201,7 @@ export async function deleteUnusedVirtualAccount(args: {
       const mustPreserveRow = hasMoney || Boolean(entries[0]?.exists) || Boolean(protectedRefs[0]?.protected);
 
       if (mustPreserveRow) {
-        return retireCustomAccount(raw, {
+        return retainCustomHistory(raw, {
           account,
           finance,
           guildId: args.guildId,
@@ -243,7 +216,7 @@ export async function deleteUnusedVirtualAccount(args: {
         String(args.guildId),
         String(args.nitradoConnId),
       );
-      if (deleted !== 1) throw new Error('Virtuelles Konto wurde parallel veraendert; Loeschung abgebrochen.');
+      if (deleted !== 1) throw new Error('Virtuelles Konto wurde parallel verändert; Löschung abgebrochen.');
       return {
         id: account.id,
         name: account.name,
@@ -256,7 +229,7 @@ export async function deleteUnusedVirtualAccount(args: {
   } catch (error) {
     const candidate = typeof error === 'object' && error !== null ? error as { code?: string; meta?: { code?: string } } : {};
     if (candidate.code === '23503' || candidate.meta?.code === '23503') {
-      throw new Error('Das Konto wird noch von geschuetzter Historie referenziert und kann nicht physisch geloescht werden. Die Historie bleibt erhalten; bitte erneut laden.');
+      throw new Error('Das Konto wurde während der Löschung neu von geschützter Historie referenziert. Es wurde nicht teilweise gelöscht; bitte Konten neu laden und erneut löschen.');
     }
     throw error;
   }
