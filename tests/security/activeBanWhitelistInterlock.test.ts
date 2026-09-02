@@ -58,7 +58,7 @@ describe('Whitelist approval active-ban interlock', () => {
 
   it('warns the approving admin and does not enqueue a whitelist add for an active exact-scope ban', async () => {
     mockBlockedByBan.mockResolvedValue(true);
-    const reply = jest.fn(async () => undefined);
+    const reply = jest.fn(async (_options: unknown) => undefined);
     const deferUpdate = jest.fn(async () => undefined);
     const interaction = {
       customId: 'wlreq:a:req-1',
@@ -79,8 +79,8 @@ describe('Whitelist approval active-ban interlock', () => {
       'BannedPlayer',
     );
     expect(reply).toHaveBeenCalledTimes(1);
-    expect((reply.mock.calls[0][0].embeds[0] as { data: { description: string } }).data.description)
-      .toContain('aktiven Bannliste');
+    const replyOptions = reply.mock.calls[0]?.[0] as { embeds: Array<{ data: { description: string } }> } | undefined;
+    expect(replyOptions?.embeds[0]?.data.description).toContain('aktiven Bannliste');
     expect(deferUpdate).not.toHaveBeenCalled();
     expect(mockTransaction).not.toHaveBeenCalled();
   });
