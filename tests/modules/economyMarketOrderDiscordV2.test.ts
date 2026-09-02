@@ -4,11 +4,15 @@ import path from 'node:path';
 const root = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('manager order custom ids read the actual connId segment instead of undefined', () => {
+test('manager order custom ids use one strict parser for button, page and select', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
-  expect(interactions).toContain("interaction.customId.split(':')[1]");
-  expect(interactions).toContain('vacct_mgr_order_sel:${connId}');
-  expect(interactions).not.toContain("interaction.customId.split(':')[2];\n  try {\n    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');\n    const guildId");
+  expect(interactions).toContain('function parseMarketOrderManagerComponentId');
+  expect(interactions).toContain("expectedKind === 'vacct_mgr_order' ? 2 : 3");
+  expect(interactions).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order')");
+  expect(interactions).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_page')");
+  expect(interactions).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_sel')");
+  expect(interactions).toContain('String(asNitradoConnId(parts[1]))');
+  expect(interactions).toContain("!/^(0|[1-9][0-9]*)$/.test(rawPage)");
 });
 
 test('vendor order anchor is strict, persisted and binds the cart before item selection', () => {
