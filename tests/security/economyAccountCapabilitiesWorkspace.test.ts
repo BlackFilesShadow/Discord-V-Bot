@@ -55,8 +55,12 @@ describe('Economy account capability workspace', () => {
     expect(wrapper).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
   });
 
-  test('system registry is read-only and derives ownership from server capabilities', () => {
+  test('system registry is read-only, resilient and derives ownership from server capabilities', () => {
     expect(systemUi).toContain('/control/system-accounts?slot=');
+    expect(systemUi).toContain('Array.isArray(query.data?.accounts)');
+    expect(systemUi).toContain('const accounts =');
+    expect(systemUi).toContain('accounts.length === 0');
+    expect(systemUi).toContain('accounts.map(account =>');
     expect(systemUi).toContain('account.capabilities.managedBy');
     expect(systemUi).toContain('account.capabilities.readOnlyReason');
     expect(systemUi).not.toContain('api.post(');
