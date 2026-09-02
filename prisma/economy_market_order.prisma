@@ -27,10 +27,10 @@ model EconomyMarketOrder {
   @@index([guildId, nitradoConnId, userDiscordId, createdAt], map: "EconomyMarketOrder_scope_user_created_idx")
 }
 
-// Persistenter Zustellungs-/Loesch-Datensatz fuer die "Bestellung bereit"-
-// Mention, exakt nach dem Muster von ServerBanExpiryNotice: die 1-Minuten-
-// Loeschung ist damit auch ueber einen Bot-Neustart hinweg garantiert (kein
-// blosses setTimeout, das beim Neustart verloren ginge).
+// Persistenter Ready-Outbox-/Loesch-Datensatz. Neue Eintraege werden beim
+// atomaren Schliessen der Bestellung als READY erzeugt, lease-gesichert an
+// Discord zugestellt und nach erfolgreichem Versand eine Stunde spaeter
+// restart-sicher geloescht. Historische bereits gesendete Notices bleiben SENT.
 model EconomyMarketOrderReadyNotice {
   id            String             @id @default(cuid())
   orderId       String             @unique
@@ -40,10 +40,17 @@ model EconomyMarketOrderReadyNotice {
   channelId     String
   userDiscordId String
   messageId     String?
-  deleteAt      DateTime
+  status        String             @default("SENT") @db.VarChar(16)
+  attempts      Int                @default(0)
+  nextAttemptAt DateTime           @default(now())
+  leaseUntil    DateTime?
+  lastError     String?            @db.Text
+  sentAt        DateTime?
+  deleteAt      DateTime?
   deletedAt     DateTime?
   createdAt     DateTime           @default(now())
 
+  @@index([status, nextAttemptAt], map: "EconomyMarketOrderReadyNotice_delivery_idx")
   @@index([deletedAt, deleteAt], map: "EconomyMarketOrderReadyNotice_pending_idx")
   @@index([guildId, nitradoConnId], map: "EconomyMarketOrderReadyNotice_scope_idx")
 }
