@@ -50,8 +50,9 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
   // Runtime responses can temporarily be incomplete during rolling deployments,
   // stale proxies or test fixtures. Never let an optional read-only registry take
   // down the whole account workspace; an invalid/missing list is rendered empty.
-  const hasValidAccounts = Array.isArray(query.data?.accounts);
-  const accounts = hasValidAccounts ? query.data.accounts : [];
+  const responseAccounts = query.data?.accounts;
+  const hasValidAccounts = Array.isArray(responseAccounts);
+  const accounts: SystemAccountRow[] = Array.isArray(responseAccounts) ? responseAccounts : [];
 
   return (
     <Card>
