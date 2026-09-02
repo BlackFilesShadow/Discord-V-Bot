@@ -21,6 +21,7 @@ import {
   handleMarketOrderCancelButton,
   handleMarketOrderItemSelect,
   handleMarketOrderManagerButton,
+  handleMarketOrderManagerPageButton,
   handleMarketOrderManagerSelect,
   handleMarketOrderPageButton,
   handleMarketOrderPayButton,
@@ -36,6 +37,7 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
       || i.customId.startsWith('vacct_mgr:')
       || i.customId.startsWith('vacct_mgr_move:')
       || i.customId.startsWith('vacct_mgr_order:')
+      || i.customId.startsWith('vacct_mgr_order_page:')
       || i.customId.startsWith('marketbuy:')
       || i.customId.startsWith('marketcat:v1:')
       || i.customId.startsWith('marketorder:open:')
@@ -72,18 +74,11 @@ const interactionCreateComposite: BotEvent = {
       await legacyInteractionCreate.execute(interaction);
       return;
     }
-
-    // Composite-eigene Komponenten bleiben unter demselben globalen Komponenten-
-    // Rate-Limit wie der Legacy-Dispatcher. Dadurch eroeffnet die vorgeschaltete
-    // Route keinen zweiten, unlimitierten Interaktionspfad.
     if (!checkComponentRateLimit(i.user.id)) {
       rateLimitedCounter.inc({ kind: 'component' });
-      if (i.isRepliable()) {
-        await i.reply({ content: 'Zu viele Aktionen. Bitte einen Moment warten.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
-      }
+      if (i.isRepliable()) await i.reply({ content: 'Zu viele Aktionen. Bitte einen Moment warten.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
       return;
     }
-
     if (i.isButton()) {
       if (i.customId.startsWith('flagshort:v1:')) return handleFlagActivityButton(i);
       if (i.customId.startsWith('wlreq:u:')) return handleWhitelistApprovalButton(i);
@@ -98,6 +93,7 @@ const interactionCreateComposite: BotEvent = {
       if (i.customId.startsWith('listcat:')) return handleServerListCatalogButton(i);
       if (i.customId.startsWith('vacct:deposit:')) return handleVirtualAccountDepositButton(i);
       if (i.customId.startsWith('vacct_mgr_move:')) return handleVirtualManagerMoveButton(i);
+      if (i.customId.startsWith('vacct_mgr_order_page:')) return handleMarketOrderManagerPageButton(i);
       if (i.customId.startsWith('vacct_mgr_order:')) return handleMarketOrderManagerButton(i);
       if (i.customId.startsWith('vacct_mgr:')) return handleVirtualManagerButton(i);
     }

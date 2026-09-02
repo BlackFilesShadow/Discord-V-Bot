@@ -252,6 +252,6 @@ describeDb('Schwarzmarkt-Bestellung V2 (Mengen + Wallet/Bank)', () => {
     });
 
     const notice = await prisma.economyMarketOrderReadyNotice.findUnique({ where: { orderId: result.order.id } });
-    expect(notice?.deleteAt.getTime()).toBe(now.getTime() + 60 * 60_000);
+    expect(notice?.deleteAt?.getTime()).toBe(now.getTime() + 60 * 60_000);
   });
 });

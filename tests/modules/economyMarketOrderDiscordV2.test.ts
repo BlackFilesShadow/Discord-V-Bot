@@ -4,11 +4,15 @@ import path from 'node:path';
 const root = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('manager order custom ids read the actual connId segment instead of undefined', () => {
+test('manager order custom ids use one strict parser for button, page and select', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
-  expect(interactions).toContain("interaction.customId.split(':')[1]");
-  expect(interactions).toContain('vacct_mgr_order_sel:${connId}');
-  expect(interactions).not.toContain("interaction.customId.split(':')[2];\n  try {\n    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');\n    const guildId");
+  expect(interactions).toContain('function parseMarketOrderManagerComponentId');
+  expect(interactions).toContain("expectedKind === 'vacct_mgr_order' ? 2 : 3");
+  expect(interactions).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order')");
+  expect(interactions).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_page')");
+  expect(interactions).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_sel')");
+  expect(interactions).toContain('String(asNitradoConnId(parts[1]))');
+  expect(interactions).toContain("!/^(0|[1-9][0-9]*)$/.test(rawPage)");
 });
 
 test('vendor order anchor is strict, persisted and binds the cart before item selection', () => {
@@ -75,17 +79,20 @@ test('strict order replay validates stored order and exact persisted transfer pa
   expect(service).toContain("sourceRef: `market-order:${fingerprint}`");
 });
 
-test('pending and ready embeds expose the requested lifecycle and one-hour deletion', () => {
+test('pending and ready embeds expose the requested lifecycle and one-minute deletion', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
-  const service = read('src/modules/economy/blackMarketOrderV2.ts');
+  const runtime = read('src/modules/economy/marketOrderReadyRuntime.ts');
 
   expect(interactions).toContain("setTitle('📦 Bestellung ausstehend')");
   expect(interactions).toContain("name: 'Username'");
   expect(interactions).toContain("name: 'Datum'");
   expect(interactions).toContain("name: 'Uhrzeit'");
-  expect(interactions).toContain("setTitle('✅ Bestellung fertig')");
-  expect(interactions).toContain('content: `<@${userDiscordId}>`');
-  expect(service).toContain('60 * 60_000');
+  expect(runtime).toContain("setTitle('✅ Bestellung bereit')");
+  expect(runtime).toContain('content: `<@${notice.userDiscordId}>`');
+  expect(runtime).toContain("{ name: 'Händler'");
+  expect(runtime).toContain("{ name: 'Bestellung'");
+  expect(runtime).toContain("{ name: 'Artikel'");
+  expect(runtime).toContain('READY_TTL_MS = 60_000');
 });
 
 test('vendor catalog renders compact article, price and currency without N+1 vendor lookup', () => {
