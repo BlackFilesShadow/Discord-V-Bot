@@ -342,7 +342,13 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         });
         await followUpEphemeral(
           btn,
-          responseEmbed('ERROR', 'Universal Whitelist fehlgeschlagen', 'Keiner der aktiven Gameserver konnte sicher eingereiht werden. Die Anfrage bleibt offen und kann erneut bearbeitet werden.'),
+          responseEmbed(
+            'ERROR',
+            'Universal Whitelist fehlgeschlagen',
+            results.length > 0 && results.every(result => result.error === ACTIVE_BAN_WHITELIST_WARNING)
+              ? ACTIVE_BAN_WHITELIST_WARNING
+              : 'Keiner der aktiven Gameserver konnte sicher eingereiht werden. Die Anfrage bleibt offen und kann erneut bearbeitet werden.',
+          ),
         );
         return;
       }
