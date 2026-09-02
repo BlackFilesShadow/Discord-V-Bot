@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import { getVirtualAccountById, listVirtualAccounts, type VirtualAccountRawDb } from '../../../modules/economy/virtualAccounts';
@@ -27,6 +27,27 @@ async function readProjection(accountId: string, guildId: string, connId: string
     connId,
   );
   return rows[0] ?? null;
+}
+
+async function isTerminallyDeleted(guildId: GuildId, connId: NitradoConnId, accountId: string): Promise<boolean> {
+  const rows = await rawDb().$queryRawUnsafe<Array<{ deleted: boolean }>>(
+    'SELECT EXISTS(SELECT 1 FROM "EconomyVirtualAccountDeleted" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3) AS deleted',
+    accountId,
+    String(guildId),
+    String(connId),
+  );
+  return Boolean(rows[0]?.deleted);
+}
+
+async function rejectDeletedMutation(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+  if (await isTerminallyDeleted(scope.guildId, connId, String(req.params.accountId))) {
+    res.status(410).json({ error: 'Dieses Konto wurde dauerhaft gelöscht und kann nicht mehr verändert werden.' });
+    return;
+  }
+  next();
 }
 
 async function serializeCustomAccount(guildId: GuildId, connId: NitradoConnId, accountId: string) {
@@ -96,6 +117,15 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuil
     accounts: await Promise.all(activeCustom.map(account => serializeCustomAccount(scope.guildId, connId, account.id))),
   });
 });
+
+// Every mutating compatibility path must fail closed for an internally retained
+// history row. Without these guards a caller who kept the old account ID could
+// otherwise attempt to reconfigure, sync, archive or pay out from a deleted row.
+economyVirtualAccountTerminalDeletionRouter.put('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedMutation);
+economyVirtualAccountTerminalDeletionRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedMutation);
+economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/sync', requireGuildPermission('economy.manage'), rejectDeletedMutation);
+economyVirtualAccountTerminalDeletionRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), rejectDeletedMutation);
+economyVirtualAccountTerminalDeletionRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), rejectDeletedMutation);
 
 // A delete is final from the control surface. Historical rows can remain only as
 // immutable FK targets; they cannot be turned back into active user accounts.
