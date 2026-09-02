@@ -6,6 +6,12 @@ enum EconomyMarketOrderStatus {
   CLOSED
 }
 
+enum EconomyMarketOrderReadyNoticeStatus {
+  PENDING
+  SENDING
+  SENT
+}
+
 model EconomyMarketOrder {
   id                String                   @id @default(cuid())
   guildId           String
@@ -27,23 +33,29 @@ model EconomyMarketOrder {
   @@index([guildId, nitradoConnId, userDiscordId, createdAt], map: "EconomyMarketOrder_scope_user_created_idx")
 }
 
-// Persistenter Zustellungs-/Loesch-Datensatz fuer die "Bestellung bereit"-
-// Mention, exakt nach dem Muster von ServerBanExpiryNotice: die 1-Minuten-
-// Loeschung ist damit auch ueber einen Bot-Neustart hinweg garantiert (kein
-// blosses setTimeout, das beim Neustart verloren ginge).
+// Persistenter Outbox- und Cleanup-Datensatz fuer die "Bestellung bereit"-
+// Mention. PENDING/SENDING werden retryfaehig versendet; SENT wird nach der
+// festgelegten Stunde restart-sicher geloescht.
 model EconomyMarketOrderReadyNotice {
-  id            String             @id @default(cuid())
-  orderId       String             @unique
-  order         EconomyMarketOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "EconomyMarketOrderReadyNotice_order_fkey")
+  id            String                              @id @default(cuid())
+  orderId       String                              @unique
+  order         EconomyMarketOrder                  @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "EconomyMarketOrderReadyNotice_order_fkey")
   guildId       String
   nitradoConnId String
-  channelId     String
+  channelId     String?
   userDiscordId String
   messageId     String?
-  deleteAt      DateTime
+  status        EconomyMarketOrderReadyNoticeStatus @default(SENT)
+  attempts      Int                                 @default(0)
+  nextAttemptAt DateTime?
+  leaseUntil    DateTime?
+  lastError     String?
+  sentAt        DateTime?
+  deleteAt      DateTime?
   deletedAt     DateTime?
-  createdAt     DateTime           @default(now())
+  createdAt     DateTime                            @default(now())
 
+  @@index([status, nextAttemptAt, leaseUntil], map: "EconomyMarketOrderReadyNotice_send_due_idx")
   @@index([deletedAt, deleteAt], map: "EconomyMarketOrderReadyNotice_pending_idx")
   @@index([guildId, nitradoConnId], map: "EconomyMarketOrderReadyNotice_scope_idx")
 }
