@@ -33,6 +33,10 @@ type CatalogRow = {
   banCatalogMessageId: string | null;
   nitradoConn: { encryptedToken: string; nitradoServerId: string | null; status: string };
 };
+type CatalogSnapshot = { names: string[]; fetchedAt: number };
+
+const catalogSnapshots = new Map<string, CatalogSnapshot>();
+const catalogReads = new Map<string, Promise<string[]>>();
 
 function fields(kind: CatalogKind) {
   return kind === 'whitelist'
@@ -44,7 +48,11 @@ function parseKind(value: string): CatalogKind | null {
   return value === 'whitelist' || value === 'ban' ? value : null;
 }
 
-async function entries(row: CatalogRow, kind: CatalogKind): Promise<string[]> {
+function snapshotKey(row: CatalogRow, kind: CatalogKind): string {
+  return `${row.guildId}:${row.nitradoConnId}:${kind}`;
+}
+
+async function liveEntries(row: CatalogRow, kind: CatalogKind): Promise<string[]> {
   if (row.nitradoConn.status !== 'ACTIVE' || !row.nitradoConn.nitradoServerId) throw new Error('Nitrado-Verbindung ist nicht aktiv oder nicht vollständig gebunden.');
   const token = decrypt(row.nitradoConn.encryptedToken, config.security.encryptionKey);
   const client = new NitradoClient(token);
@@ -52,6 +60,24 @@ async function entries(row: CatalogRow, kind: CatalogKind): Promise<string[]> {
     ? await client.getWhitelist(row.nitradoConn.nitradoServerId)
     : await client.getBanlist(row.nitradoConn.nitradoServerId);
   return result.map(item => item.identifier).filter(Boolean).sort((a, b) => a.localeCompare(b, 'de'));
+}
+
+async function entries(row: CatalogRow, kind: CatalogKind, forceRefresh = false): Promise<string[]> {
+  const key = snapshotKey(row, kind);
+  const cached = catalogSnapshots.get(key);
+  if (!forceRefresh && cached) return cached.names;
+
+  const activeRead = catalogReads.get(key);
+  if (activeRead) return activeRead;
+
+  const read = liveEntries(row, kind)
+    .then(names => {
+      catalogSnapshots.set(key, { names, fetchedAt: Date.now() });
+      return names;
+    })
+    .finally(() => catalogReads.delete(key));
+  catalogReads.set(key, read);
+  return read;
 }
 
 function embed(kind: CatalogKind, names: string[], page: number, query?: string): EmbedBuilder {
@@ -79,6 +105,16 @@ function components(kind: CatalogKind, connId: string, page: number, total: numb
   )];
 }
 
+function payload(row: CatalogRow, kind: CatalogKind, names: string[], page: number, query?: string) {
+  const pages = Math.max(1, Math.ceil(names.length / PAGE_SIZE));
+  const safePage = Math.max(0, Math.min(page, pages - 1));
+  return {
+    embeds: [embed(kind, names, safePage, query)],
+    components: components(kind, row.nitradoConnId, safePage, pages),
+    allowedMentions: { parse: [] as never[] },
+  };
+}
+
 async function catalogRow(guildId: string, connId: string): Promise<CatalogRow | null> {
   return prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId, nitradoConnId: connId } },
@@ -89,30 +125,35 @@ async function catalogRow(guildId: string, connId: string): Promise<CatalogRow |
   }) as Promise<CatalogRow | null>;
 }
 
-async function publish(client: Client, row: CatalogRow, kind: CatalogKind, page = 0, query?: string): Promise<void> {
+function isCurrentCatalogMessage(interaction: ButtonInteraction, row: CatalogRow, kind: CatalogKind): boolean {
+  const meta = fields(kind);
+  return Boolean(row[meta.channel] && row[meta.message]
+    && interaction.channelId === row[meta.channel]
+    && interaction.message.id === row[meta.message]);
+}
+
+async function publish(client: Client, row: CatalogRow, kind: CatalogKind, page = 0, query?: string, forceRefresh = true): Promise<void> {
   const meta = fields(kind);
   const channelId = row[meta.channel];
   if (!channelId) return;
   const guild = client.guilds.cache.get(row.guildId);
   const channel = guild ? await guild.channels.fetch(channelId).catch(() => null) : null;
   if (!channel || channel.type !== ChannelType.GuildText) throw new Error(`${meta.title}-Kanal ist kein normaler Textkanal.`);
-  const names = await entries(row, kind);
+  const names = await entries(row, kind, forceRefresh);
   const filtered = query ? names.filter(name => name.toLocaleLowerCase('de').includes(query.toLocaleLowerCase('de'))) : names;
-  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.max(0, Math.min(page, pages - 1));
-  const payload = { embeds: [embed(kind, filtered, safePage, query)], components: components(kind, row.nitradoConnId, safePage, pages), allowedMentions: { parse: [] as never[] } };
   const messageId = row[meta.message];
   let message = messageId ? await (channel as TextChannel).messages.fetch(messageId).catch(() => null) : null;
-  if (message) await message.edit(payload);
+  const messagePayload = payload(row, kind, filtered, page, query);
+  if (message) await message.edit(messagePayload);
   else {
-    message = await (channel as TextChannel).send(payload);
+    message = await (channel as TextChannel).send(messagePayload);
     await prisma.serverSettings.update({ where: { guildId_nitradoConnId: { guildId: row.guildId, nitradoConnId: row.nitradoConnId } }, data: { [meta.message]: message.id } });
   }
 }
 
 export async function syncServerListCatalog(client: Client, guildId: string, connId: string, kind: CatalogKind): Promise<void> {
   const row = await catalogRow(guildId, connId);
-  if (row) await publish(client, row, kind);
+  if (row) await publish(client, row, kind, 0, undefined, true);
 }
 
 async function syncConfiguredCatalogs(client: Client): Promise<void> {
@@ -145,29 +186,68 @@ export async function handleServerListCatalogButton(interaction: ButtonInteracti
   const kind = parseKind(action === 'search' || action === 'refresh' ? parts[2] : action);
   const connId = action === 'search' || action === 'refresh' ? parts[3] : parts[2];
   if (!kind || !connId || !interaction.guildId) return;
+
   if (action === 'search') {
     const modal = new ModalBuilder().setCustomId(`listcat_search:${kind}:${connId}`).setTitle(`${fields(kind).title} durchsuchen`);
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('query').setLabel('Spielername').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(128)));
     await interaction.showModal(modal);
     return;
   }
-  const row = await catalogRow(interaction.guildId, connId);
-  if (!row) return;
+
   await interaction.deferUpdate();
-  const page = action === 'refresh' ? 0 : Number(parts[3] ?? '0');
-  await publish(interaction.client, row, kind, Number.isInteger(page) && page >= 0 ? page : 0);
+  const row = await catalogRow(interaction.guildId, connId);
+  if (!row || !isCurrentCatalogMessage(interaction, row, kind)) {
+    await interaction.followUp({ content: 'Dieser Katalog-Button ist nicht mehr aktuell. Bitte die feste Katalognachricht verwenden.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
+    return;
+  }
+
+  try {
+    const forceRefresh = action === 'refresh';
+    const page = forceRefresh ? 0 : Number(parts[3] ?? '0');
+    const names = await entries(row, kind, forceRefresh);
+    await interaction.editReply(payload(row, kind, names, Number.isInteger(page) && page >= 0 ? page : 0));
+  } catch (error) {
+    logger.warn(`${fields(kind).title}-Interaktion fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
+    await interaction.followUp({
+      content: action === 'refresh'
+        ? 'Aktualisierung bei Nitrado fehlgeschlagen. Die bisherige Katalogansicht bleibt erhalten.'
+        : 'Katalog konnte gerade nicht geladen werden. Bitte erneut versuchen oder „Aktualisieren“ verwenden.',
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => undefined);
+  }
 }
 
 export async function handleServerListCatalogSearch(interaction: ModalSubmitInteraction): Promise<void> {
   const [, kindRaw, connId] = interaction.customId.split(':');
   const kind = parseKind(kindRaw);
   if (!kind || !connId || !interaction.guildId) return;
-  const row = await catalogRow(interaction.guildId, connId);
-  if (!row) return;
-  const query = interaction.fields.getTextInputValue('query').trim();
+
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const names = await entries(row, kind);
-  const index = names.findIndex(name => name.toLocaleLowerCase('de').includes(query.toLocaleLowerCase('de')));
-  await publish(interaction.client, row, kind, index < 0 ? 0 : Math.floor(index / PAGE_SIZE), query);
-  await interaction.editReply(index < 0 ? 'Kein passender Eintrag gefunden.' : 'Katalog auf den passenden Eintrag gesetzt.');
+  const row = await catalogRow(interaction.guildId, connId);
+  if (!row) {
+    await interaction.editReply('Der Katalog ist für diesen Gameserver nicht mehr konfiguriert.');
+    return;
+  }
+
+  const query = interaction.fields.getTextInputValue('query').trim();
+  if (!query) {
+    await interaction.editReply('Bitte einen Spielernamen eingeben.');
+    return;
+  }
+
+  try {
+    const names = await entries(row, kind, false);
+    const filtered = names.filter(name => name.toLocaleLowerCase('de').includes(query.toLocaleLowerCase('de')));
+    if (!filtered.length) {
+      await interaction.editReply('Kein passender Eintrag gefunden.');
+      return;
+    }
+    await publish(interaction.client, row, kind, 0, query, false);
+    await interaction.editReply(filtered.length === 1
+      ? '1 passender Eintrag gefunden und im Katalog angezeigt.'
+      : `${filtered.length} passende Einträge gefunden und im Katalog angezeigt.`);
+  } catch (error) {
+    logger.warn(`${fields(kind).title}-Suche fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
+    await interaction.editReply('Die Suche konnte gerade nicht abgeschlossen werden. Bitte erneut versuchen.');
+  }
 }
