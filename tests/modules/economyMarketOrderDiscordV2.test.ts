@@ -75,17 +75,20 @@ test('strict order replay validates stored order and exact persisted transfer pa
   expect(service).toContain("sourceRef: `market-order:${fingerprint}`");
 });
 
-test('pending and ready embeds expose the requested lifecycle and one-hour deletion', () => {
+test('pending and ready embeds expose the requested lifecycle and one-minute deletion', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
-  const service = read('src/modules/economy/blackMarketOrderV2.ts');
+  const runtime = read('src/modules/economy/marketOrderReadyRuntime.ts');
 
   expect(interactions).toContain("setTitle('📦 Bestellung ausstehend')");
   expect(interactions).toContain("name: 'Username'");
   expect(interactions).toContain("name: 'Datum'");
   expect(interactions).toContain("name: 'Uhrzeit'");
-  expect(interactions).toContain("setTitle('✅ Bestellung fertig')");
-  expect(interactions).toContain('content: `<@${userDiscordId}>`');
-  expect(service).toContain('60 * 60_000');
+  expect(runtime).toContain("setTitle('✅ Bestellung bereit')");
+  expect(runtime).toContain('content: `<@${notice.userDiscordId}>`');
+  expect(runtime).toContain("{ name: 'Händler'");
+  expect(runtime).toContain("{ name: 'Bestellung'");
+  expect(runtime).toContain("{ name: 'Artikel'");
+  expect(runtime).toContain('READY_TTL_MS = 60_000');
 });
 
 test('vendor catalog renders compact article, price and currency without N+1 vendor lookup', () => {
