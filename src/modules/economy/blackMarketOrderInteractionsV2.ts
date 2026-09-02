@@ -25,6 +25,7 @@ import {
 } from './blackMarketOrder';
 import {
   createMarketOrderV2,
+  MAX_MARKET_ORDER_LINES,
   MAX_MARKET_ORDER_UNITS,
   scheduleMarketOrderReadyNoticeOneHour,
 } from './blackMarketOrderV2';
@@ -208,10 +209,10 @@ async function cartPayload(token: string, draft: CartDraft) {
       : 'Wähle einen Artikel und eine Menge aus und füge ihn dem Warenkorb hinzu.')
     .addFields(
       { name: 'Virtuelles Konto', value: vendor ?? 'Noch nicht gewählt', inline: true },
-      { name: 'Artikel im Warenkorb', value: `${totalUnits(draft)}/${MAX_MARKET_ORDER_UNITS}`, inline: true },
+      { name: 'Warenkorb', value: `${Object.keys(draft.lines).length}/${MAX_MARKET_ORDER_LINES} Positionen · ${totalUnits(draft)} Stück`, inline: true },
       { name: 'Gesamtsumme', value: `**${total.toLocaleString('de-DE')} ${cfg.emoji}**`, inline: true },
     )
-    .setFooter({ text: 'Zahlung wahlweise aus Wallet oder Bank · maximal 20 Artikel je Bestellung' });
+    .setFooter({ text: 'Zahlung aus Wallet oder Bank · max. 25 Positionen · je Position 1–20 Stück' });
 
   const listingSelect = new StringSelectMenuBuilder()
     .setCustomId(`marketorder:item:${token}`)
@@ -335,8 +336,8 @@ export async function handleMarketOrderAddButton(interaction: ButtonInteraction)
     const current = draft.lines[listing.id] ?? 0;
     const next = current + draft.selectedQuantity;
     if (next > MAX_MARKET_ORDER_UNITS) throw new Error(`Von ${listing.name} sind pro Bestellung maximal ${MAX_MARKET_ORDER_UNITS} Stück möglich.`);
-    if (totalUnits(draft) + draft.selectedQuantity > MAX_MARKET_ORDER_UNITS) {
-      throw new Error(`Eine Bestellung darf insgesamt maximal ${MAX_MARKET_ORDER_UNITS} Artikel enthalten.`);
+    if (current === 0 && Object.keys(draft.lines).length >= MAX_MARKET_ORDER_LINES) {
+      throw new Error(`Eine Bestellung darf maximal ${MAX_MARKET_ORDER_LINES} verschiedene Artikel enthalten.`);
     }
     draft.vendorAccountId = listing.vendorAccountId;
     draft.lines[listing.id] = next;

@@ -11,6 +11,7 @@ import { upsertConfig } from '../../src/modules/economy/repository';
 import { createVirtualAccount } from '../../src/modules/economy/virtualAccounts';
 import {
   createMarketOrderV2,
+  MAX_MARKET_ORDER_LINES,
   MAX_MARKET_ORDER_UNITS,
   scheduleMarketOrderReadyNoticeOneHour,
 } from '../../src/modules/economy/blackMarketOrderV2';
@@ -107,20 +108,127 @@ describeDb('Schwarzmarkt-Bestellung V2 (Mengen + Wallet/Bank)', () => {
     expect(vendor?.balance).toBe(400n);
   });
 
-  it('begrenzt den gesamten Warenkorb auf maximal 20 Artikel', async () => {
+  it('begrenzt jede einzelne Position auf maximal 20 Stück', async () => {
+    await expect(createMarketOrderV2({
+      guildId,
+      nitradoConnId: connId,
+      userDiscordId: buyerId,
+      sourcePocket: 'WALLET',
+      lines: [{ listingId: 'v2-listing-a', quantity: MAX_MARKET_ORDER_UNITS + 1 }],
+      idempotencyKey: randomUUID(),
+    })).rejects.toThrow(/Menge muss zwischen 1 und 20/);
+
+    await expect(prisma.economyMarketOrder.count({ where: { guildId } })).resolves.toBe(0);
+  });
+
+  it('erlaubt 25 verschiedene Positionen unabhängig von der Gesamtstückzahl', async () => {
+    const listings = Array.from({ length: MAX_MARKET_ORDER_LINES }, (_, index) => ({
+      id: `v2-extra-${String(index).padStart(2, '0')}`,
+      guildId,
+      nitradoConnId: connId,
+      vendorAccountId: vendorId,
+      sku: `V2-X-${String(index).padStart(2, '0')}`,
+      name: `Extra ${index}`,
+      price: 1n,
+      stock: 0,
+      createdByDiscordId: ownerId,
+    }));
+    await prisma.economyMarketListing.createMany({ data: listings });
+
+    const result = await createMarketOrderV2({
+      guildId,
+      nitradoConnId: connId,
+      userDiscordId: buyerId,
+      sourcePocket: 'WALLET',
+      lines: listings.map((listing, index) => ({ listingId: listing.id, quantity: index === 0 ? 20 : 1 })),
+      idempotencyKey: randomUUID(),
+    });
+
+    expect(result.booked).toBe(true);
+    expect(result.order.purchases).toHaveLength(MAX_MARKET_ORDER_LINES);
+    expect(result.order.totalAmount).toBe(44n);
+    const account = await prisma.economyAccount.findUnique({
+      where: { guildServerUser: { guildId, nitradoConnId: connId, userDiscordId: buyerId } },
+    });
+    expect(account?.walletBalance).toBe(956n);
+  });
+
+  it('lehnt eine 26. verschiedene Position vor jeder Buchung ab', async () => {
+    const lines = Array.from({ length: MAX_MARKET_ORDER_LINES + 1 }, (_, index) => ({
+      listingId: `over-limit-${String(index).padStart(2, '0')}`,
+      quantity: 1,
+    }));
+
+    await expect(createMarketOrderV2({
+      guildId,
+      nitradoConnId: connId,
+      userDiscordId: buyerId,
+      sourcePocket: 'WALLET',
+      lines,
+      idempotencyKey: randomUUID(),
+    })).rejects.toThrow(/maximal 25 verschiedene Artikel/);
+
+    await expect(prisma.economyMarketOrder.count({ where: { guildId } })).resolves.toBe(0);
+  });
+
+  it('replayed nur exakt denselben kanonischen Warenkorb und Zahlungsweg', async () => {
+    const idempotencyKey = 'phase4-replay-key';
+    const first = await createMarketOrderV2({
+      guildId,
+      nitradoConnId: connId,
+      userDiscordId: buyerId,
+      sourcePocket: 'WALLET',
+      lines: [
+        { listingId: 'v2-listing-a', quantity: 2 },
+        { listingId: 'v2-listing-b', quantity: 1 },
+      ],
+      idempotencyKey,
+    });
+
+    const replay = await createMarketOrderV2({
+      guildId,
+      nitradoConnId: connId,
+      userDiscordId: buyerId,
+      sourcePocket: 'WALLET',
+      lines: [
+        { listingId: 'v2-listing-b', quantity: 1 },
+        { listingId: 'v2-listing-a', quantity: 2 },
+      ],
+      idempotencyKey,
+    });
+    expect(replay.booked).toBe(false);
+    expect(replay.order.id).toBe(first.order.id);
+
     await expect(createMarketOrderV2({
       guildId,
       nitradoConnId: connId,
       userDiscordId: buyerId,
       sourcePocket: 'WALLET',
       lines: [
-        { listingId: 'v2-listing-a', quantity: MAX_MARKET_ORDER_UNITS },
+        { listingId: 'v2-listing-a', quantity: 3 },
         { listingId: 'v2-listing-b', quantity: 1 },
       ],
-      idempotencyKey: randomUUID(),
-    })).rejects.toThrow(/maximal 20 Artikel/);
+      idempotencyKey,
+    })).rejects.toThrow(/anderen Bestelldaten/);
 
-    await expect(prisma.economyMarketOrder.count({ where: { guildId } })).resolves.toBe(0);
+    await expect(createMarketOrderV2({
+      guildId,
+      nitradoConnId: connId,
+      userDiscordId: buyerId,
+      sourcePocket: 'BANK',
+      lines: [
+        { listingId: 'v2-listing-a', quantity: 2 },
+        { listingId: 'v2-listing-b', quantity: 1 },
+      ],
+      idempotencyKey,
+    })).rejects.toThrow(/anderen Bestelldaten/);
+
+    await expect(prisma.economyMarketOrder.count({ where: { guildId } })).resolves.toBe(1);
+    const account = await prisma.economyAccount.findUnique({
+      where: { guildServerUser: { guildId, nitradoConnId: connId, userDiscordId: buyerId } },
+    });
+    expect(account?.walletBalance).toBe(750n);
+    expect(account?.bankBalance).toBe(1_000n);
   });
 
   it('plant die Bestellung-fertig-Nachricht restart-sicher fuer genau eine Stunde', async () => {

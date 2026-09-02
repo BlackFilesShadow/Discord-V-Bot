@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
@@ -8,7 +8,10 @@ import { systemUserToVirtualAccount } from './systemVirtualTransfers';
 import type { EconomyPocket } from './virtualAccounts';
 import { getMarketOrder, type MarketOrderView } from './blackMarketOrder';
 
+/** Maximale Menge pro einzelner Bestellposition. */
 export const MAX_MARKET_ORDER_UNITS = 20;
+/** Discord- und Fachlimit fuer unterschiedliche Listings in einer Bestellung. */
+export const MAX_MARKET_ORDER_LINES = 25;
 
 export interface MarketOrderLineInput {
   listingId: string;
@@ -29,6 +32,14 @@ interface ListingItemRow {
   quantity: number;
 }
 
+interface ReplayTransferRow {
+  virtualAccountId: string;
+  delta: bigint;
+  sourcePocket: string | null;
+  sourceRef: string | null;
+  userDiscordId: string | null;
+}
+
 function cleanExternalKey(value: string): string {
   const normalized = value.normalize('NFKC').trim();
   if (!normalized || normalized.length > 48 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
@@ -45,21 +56,85 @@ function normalizeLines(lines: MarketOrderLineInput[]): MarketOrderLineInput[] {
   if (!Array.isArray(lines) || lines.length < 1) throw new Error('Die Bestellung ist leer.');
   const combined = new Map<string, number>();
   for (const line of lines) {
-    if (!line || typeof line.listingId !== 'string' || !line.listingId.trim()) throw new Error('Bestellung enthaelt ein ungueltiges Angebot.');
+    if (!line || typeof line.listingId !== 'string' || !line.listingId.trim()) {
+      throw new Error('Bestellung enthaelt ein ungueltiges Angebot.');
+    }
     if (!Number.isSafeInteger(line.quantity) || line.quantity < 1 || line.quantity > MAX_MARKET_ORDER_UNITS) {
       throw new Error(`Menge muss zwischen 1 und ${MAX_MARKET_ORDER_UNITS} liegen.`);
     }
-    combined.set(line.listingId, (combined.get(line.listingId) ?? 0) + line.quantity);
+    const listingId = line.listingId.trim();
+    combined.set(listingId, (combined.get(listingId) ?? 0) + line.quantity);
   }
-  const result = [...combined.entries()].map(([listingId, quantity]) => ({ listingId, quantity }));
+  const result = [...combined.entries()]
+    .map(([listingId, quantity]) => ({ listingId, quantity }))
+    .sort((a, b) => a.listingId.localeCompare(b.listingId));
+  if (result.length > MAX_MARKET_ORDER_LINES) {
+    throw new Error(`Eine Bestellung darf maximal ${MAX_MARKET_ORDER_LINES} verschiedene Artikel enthalten.`);
+  }
   if (result.some(line => line.quantity > MAX_MARKET_ORDER_UNITS)) {
     throw new Error(`Pro Artikel sind maximal ${MAX_MARKET_ORDER_UNITS} Stück erlaubt.`);
   }
-  const totalUnits = result.reduce((sum, line) => sum + line.quantity, 0);
-  if (totalUnits > MAX_MARKET_ORDER_UNITS) {
-    throw new Error(`Eine Bestellung darf insgesamt maximal ${MAX_MARKET_ORDER_UNITS} Artikel enthalten.`);
-  }
   return result;
+}
+
+function payloadFingerprint(lines: MarketOrderLineInput[], sourcePocket: EconomyPocket): string {
+  const canonical = JSON.stringify({
+    sourcePocket,
+    lines: lines.map(line => [line.listingId, line.quantity]),
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+async function assertReplayMatches(args: {
+  replay: MarketOrderView;
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
+  userDiscordId: UserDiscordId;
+  lines: MarketOrderLineInput[];
+  sourcePocket: EconomyPocket;
+  key: string;
+  fingerprint: string;
+}): Promise<void> {
+  const { replay, lines, sourcePocket } = args;
+  if (replay.userDiscordId !== String(args.userDiscordId)) {
+    throw new Error('Idempotency-Key wurde fuer einen anderen Besteller verwendet.');
+  }
+  if (replay.purchases.length !== lines.length) {
+    throw new Error('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+  }
+  const expected = new Map(lines.map(line => [line.listingId, line.quantity]));
+  let storedTotal = 0n;
+  for (const purchase of replay.purchases) {
+    const quantity = expected.get(purchase.listingId);
+    const valid = quantity === purchase.quantity
+      && purchase.vendorAccountId === replay.vendorAccountId
+      && purchase.sourcePocket === sourcePocket
+      && purchase.amount === purchase.unitPrice * BigInt(purchase.quantity);
+    if (!valid) throw new Error('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+    expected.delete(purchase.listingId);
+    storedTotal += purchase.amount;
+  }
+  if (expected.size !== 0 || storedTotal !== replay.totalAmount) {
+    throw new Error('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+  }
+
+  const transferKey = `virtual-system:${args.guildId}:${args.nitradoConnId}:${args.key}`;
+  const rows = await prisma.$queryRawUnsafe<ReplayTransferRow[]>(
+    'SELECT "virtualAccountId","delta","sourcePocket","sourceRef","userDiscordId" FROM "EconomyVirtualAccountEntry" WHERE "idempotencyKey"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1',
+    transferKey,
+    String(args.guildId),
+    String(args.nitradoConnId),
+  );
+  const entry = rows[0];
+  const exactTransfer = !!entry
+    && entry.virtualAccountId === replay.vendorAccountId
+    && entry.delta === replay.totalAmount
+    && entry.sourcePocket === sourcePocket
+    && entry.sourceRef === `market-order:${args.fingerprint}`
+    && entry.userDiscordId === String(args.userDiscordId);
+  if (!exactTransfer) {
+    throw new Error('Idempotency-Key wurde mit anderen Buchungsdaten wiederverwendet.');
+  }
 }
 
 async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId, key: string): Promise<MarketOrderView | null> {
@@ -78,13 +153,27 @@ export async function createMarketOrderV2(args: {
   sourcePocket: EconomyPocket;
   idempotencyKey: string;
 }): Promise<{ booked: boolean; order: MarketOrderView }> {
+  if (args.sourcePocket !== 'WALLET' && args.sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
   const lines = normalizeLines(args.lines);
   const listingIds = lines.map(line => line.listingId);
   const quantities = new Map(lines.map(line => [line.listingId, line.quantity]));
   const key = orderKey(args.idempotencyKey);
+  const fingerprint = payloadFingerprint(lines, args.sourcePocket);
 
   const replay = await existingOrderByKey(args.guildId, args.nitradoConnId, key);
-  if (replay) return { booked: false, order: replay };
+  if (replay) {
+    await assertReplayMatches({
+      replay,
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      userDiscordId: args.userDiscordId,
+      lines,
+      sourcePocket: args.sourcePocket,
+      key,
+      fingerprint,
+    });
+    return { booked: false, order: replay };
+  }
 
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const cfg = await getConfig(args.guildId, args.nitradoConnId);
@@ -102,6 +191,7 @@ export async function createMarketOrderV2(args: {
     throw new Error('Eine Bestellung kann nur Angebote desselben Haendlers enthalten.');
   }
   const totalAmount = initialRows.reduce((sum, row) => sum + row.price * BigInt(quantities.get(row.id) ?? 1), 0n);
+  if (totalAmount <= 0n) throw new Error('Bestellsumme ist ungueltig.');
 
   const transfer = await systemUserToVirtualAccount<{ listings: LockedListing[] }, string>({
     idempotencyKey: key,
@@ -115,7 +205,7 @@ export async function createMarketOrderV2(args: {
     economyTxType: 'MARKET_PURCHASE',
     entryType: 'MARKET_ORDER',
     reason: `Schwarzmarkt-Bestellung: ${lines.reduce((sum, line) => sum + line.quantity, 0)} Artikel`,
-    sourceRef: `market-order:${lines.map(line => `${line.listingId}x${line.quantity}`).join(',')}`,
+    sourceRef: `market-order:${fingerprint}`,
     actorDiscordId: args.userDiscordId,
   }, {
     beforeClaim: async raw => {
@@ -127,6 +217,10 @@ export async function createMarketOrderV2(args: {
       for (const row of rows) {
         if (!row.active || row.archivedAt) throw new Error(`Angebot "${row.name}" wurde waehrend der Bestellung deaktiviert.`);
         if (row.vendorAccountId !== vendorAccountId) throw new Error('Angebot wurde waehrend der Bestellung einem anderen Haendler zugeordnet.');
+      }
+      const lockedTotal = rows.reduce((sum, row) => sum + row.price * BigInt(quantities.get(row.id) ?? 1), 0n);
+      if (lockedTotal !== totalAmount) {
+        throw new Error('Mindestens ein Preis hat sich waehrend der Bestellung geaendert. Bitte Warenkorb neu laden.');
       }
       return { listings: rows };
     },
@@ -164,12 +258,23 @@ export async function createMarketOrderV2(args: {
 
   const order = await existingOrderByKey(args.guildId, args.nitradoConnId, key);
   if (!order) throw new Error('Schwarzmarkt-Bestellung konnte nicht vollstaendig gelesen werden.');
+  await assertReplayMatches({
+    replay: order,
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    userDiscordId: args.userDiscordId,
+    lines,
+    sourcePocket: args.sourcePocket,
+    key,
+    fingerprint,
+  });
   logAudit('MARKET_ORDER_CREATED', 'ECONOMY', {
     guildId: args.guildId,
     nitradoConnId: args.nitradoConnId,
     orderId: order.id,
     userDiscordId: args.userDiscordId,
     items: lines.reduce((sum, line) => sum + line.quantity, 0),
+    distinctListings: lines.length,
     amount: totalAmount.toString(),
     sourcePocket: args.sourcePocket,
     booked: transfer.booked,

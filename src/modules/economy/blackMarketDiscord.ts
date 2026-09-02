@@ -283,7 +283,7 @@ function orderButtonEmbed(vendorName: string): EmbedBuilder {
   return new EmbedBuilder()
     .setColor(0x22c55e)
     .setTitle('🛒 Bestellung aufgeben')
-    .setDescription(`Stelle einen Warenkorb mit bis zu **20 Artikeln** von **${safeEmbedDescription(vendorName)}** zusammen und bezahle automatisch aus **Wallet oder Bank**.`)
+    .setDescription(`Stelle einen Warenkorb mit bis zu **25 verschiedenen Artikeln** von **${safeEmbedDescription(vendorName)}** zusammen, wähle **1–20 Stück je Artikel** und bezahle automatisch aus **Wallet oder Bank**.`)
     .setFooter({ text: 'V-Bot · Schwarzmarkt · Sammelbestellung' });
 }
 
