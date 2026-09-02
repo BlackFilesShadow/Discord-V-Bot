@@ -91,6 +91,15 @@ beforeEach(() => {
   db.$queryRawUnsafe.mockImplementation(async (sql: string) => queryResult(sql));
 });
 
+const blockedCases: Array<[string, () => void, string]> = [
+  ['inaktiver Status', () => { state.status = 'ARCHIVED'; }, 'Nur aktive Haendler'],
+  ['aktive Angebote', () => { state.activeListings = 1n; }, 'aktive Angebote'],
+  ['offene Sammelbestellungen', () => { state.openOrders = 1n; }, 'offene Sammelbestellungen'],
+  ['offene Fulfillments', () => { state.pendingFulfillments = 1n; }, 'offene Bestellungen'],
+  ['Wallet-Guthaben', () => { state.balance = 1n; }, 'Wallet oder Bank'],
+  ['Bank-Guthaben', () => { state.bankBalance = 1n; }, 'Wallet oder Bank'],
+];
+
 describe('safe market vendor removal', () => {
   test('archiviert und versteckt einen leeren aktiven Haendler atomar', async () => {
     const result = await removeMarketVendorFromControl({
@@ -133,14 +142,7 @@ describe('safe market vendor removal', () => {
     })).rejects.toThrow('MARKET_VENDOR-Systemkonto nicht gefunden.');
   });
 
-  test.each([
-    ['inaktiver Status', () => { state.status = 'ARCHIVED'; }, 'Nur aktive Haendler'],
-    ['aktive Angebote', () => { state.activeListings = 1n; }, 'aktive Angebote'],
-    ['offene Sammelbestellungen', () => { state.openOrders = 1n; }, 'offene Sammelbestellungen'],
-    ['offene Fulfillments', () => { state.pendingFulfillments = 1n; }, 'offene Bestellungen'],
-    ['Wallet-Guthaben', () => { state.balance = 1n; }, 'Wallet oder Bank'],
-    ['Bank-Guthaben', () => { state.bankBalance = 1n; }, 'Wallet oder Bank'],
-  ])('blockiert %s', async (_label, mutate, message) => {
+  test.each(blockedCases)('blockiert %s', async (_label, mutate, message) => {
     mutate();
     await expect(removeMarketVendorFromControl({
       guildId: GUILD,
@@ -182,9 +184,10 @@ describe('phase 3 contract', () => {
     expect(service).toContain("vendor.status !== 'ACTIVE'");
     expect(service).toContain('EconomyMarketListing');
     expect(service).toContain('EconomyMarketOrder');
-    expect(service).toContain("status\"='OPEN");
+    expect(service).toContain('EconomyMarketOrderStatus');
+    expect(service).toContain('OPEN');
     expect(service).toContain('EconomyMarketPurchaseFulfillment');
-    expect(service).toContain("status\"='PENDING");
+    expect(service).toContain('PENDING');
     expect(service).toContain('EconomyVirtualAccountFinance');
     expect(service).toContain('vendor.balance !== 0n');
     expect(service).toContain('EconomyMarketVendorControlHidden');
@@ -203,6 +206,6 @@ describe('phase 3 contract', () => {
     expect(ui).toContain('const removeVendor = useMutation');
     expect(ui).toContain('/economy/black-market/vendors/${id}?${scope}');
     expect(ui).toContain('Haendler ${vendor.name} entfernen');
-    expect(ui).toContain('vendor.status === \'ACTIVE\'');
+    expect(ui).toContain("vendor.status === 'ACTIVE'");
   });
 });
