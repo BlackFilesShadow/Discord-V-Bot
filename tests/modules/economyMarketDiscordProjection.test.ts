@@ -88,3 +88,34 @@ test('legacy order-button constraint remains valid until successful vendor sync 
   expect(migrationFlat).toContain('\"pageIndex\" = 0');
   expect(migrationFlat).toContain('\"listingId\" IS NULL');
 });
+
+test('Discord configuration validates every active channel and separates saved state from live sync', () => {
+  const validation = compact(read('src/modules/economy/marketDiscordChannelValidation.ts'));
+  const route = compact(read('src/dashboard/routes/v2/economyBlackMarket.ts'));
+  const ui = read('dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx');
+  const uiFlat = compact(ui);
+
+  expect(validation).toContain("code === '10003'");
+  expect(validation).toContain("code === '50001'");
+  expect(validation).toContain("code === '50013'");
+  expect(validation).toContain("'Verkaufsliste-Kanal'");
+  expect(validation).toContain("'Direktkauf-Kanal'");
+  expect(validation).toContain("'Bestellungs-Kanal'");
+  expect(validation).toContain("'Bestellung-bereit-Kanal'");
+  expect(validation).toContain("[PermissionFlagsBits.ViewChannel, 'Kanal ansehen']");
+  expect(validation).toContain("[PermissionFlagsBits.SendMessages, 'Nachrichten senden']");
+  expect(validation).toContain("[PermissionFlagsBits.EmbedLinks, 'Links einbetten']");
+  expect(validation).toContain("[PermissionFlagsBits.ReadMessageHistory, 'Nachrichtenverlauf lesen']");
+
+  expect(route).toContain('await validateMarketDiscordChannels(client, scope.guildId, config)');
+  expect(route).toContain('if (projection) await validateMarketDiscordChannels(client, scope.guildId, projection)');
+  expect(route).toContain('if (!sameDiscordConfig(projection, config))');
+  expect(route).toContain('res.json({ projection, syncWarning })');
+  expect(route).toContain('details: { nitradoConnId: connId, ...config, syncWarning }');
+
+  expect(uiFlat).toContain('syncWarning: string | null');
+  expect(uiFlat).toContain('result.syncWarning');
+  expect(ui).toContain('GESPEICHERT · SYNC-FEHLER');
+  expect(ui).toContain('Discord-Konfiguration gespeichert, aber noch nicht vollständig live synchronisiert');
+  expect(ui).toContain('Discord-Konfiguration nicht gespeichert');
+});
