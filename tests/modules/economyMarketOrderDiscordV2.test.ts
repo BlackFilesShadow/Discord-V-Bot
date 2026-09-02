@@ -58,13 +58,20 @@ test('cart supports 25 distinct positions, quantities up to 20 and explicit wall
   expect(composite).toContain("i.customId.startsWith('marketorder:qty:')");
 });
 
-test('strict order replay validates stored quantities, payment source and stored total', () => {
+test('strict order replay validates stored order and exact persisted transfer payload', () => {
   const service = read('src/modules/economy/blackMarketOrderV2.ts');
 
   expect(service).toContain('purchase.sourcePocket === sourcePocket');
   expect(service).toContain('purchase.amount === purchase.unitPrice * BigInt(purchase.quantity)');
   expect(service).toContain('storedTotal !== replay.totalAmount');
+  expect(service).toContain('EconomyVirtualAccountEntry');
+  expect(service).toContain('entry.virtualAccountId === replay.vendorAccountId');
+  expect(service).toContain('entry.delta === replay.totalAmount');
+  expect(service).toContain('entry.sourcePocket === sourcePocket');
+  expect(service).toContain('entry.sourceRef === `market-order:${args.fingerprint}`');
+  expect(service).toContain('entry.userDiscordId === String(args.userDiscordId)');
   expect(service).toContain('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+  expect(service).toContain('Idempotency-Key wurde mit anderen Buchungsdaten wiederverwendet.');
   expect(service).toContain("sourceRef: `market-order:${fingerprint}`");
 });
 
