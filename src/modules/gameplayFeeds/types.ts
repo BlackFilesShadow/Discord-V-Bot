@@ -53,6 +53,12 @@ export interface GameplayFeedView {
   targetName: string | null;
   objectType: string | null;
   toolOrWeapon: string | null;
+  /**
+   * Expliziter Anzeigezustand fuer Waffe/Werkzeug. Optional, damit bereits
+   * bestehende direkte View-Aufrufer ohne Toggle weiterhin ihr bisheriges
+   * Renderverhalten behalten; die produktive Runtime setzt den Wert immer.
+   */
+  showTool?: boolean;
   distanceMeters: number | null;
   actorPosition: string | null;
   targetPosition: string | null;
@@ -106,6 +112,7 @@ export function deriveGameplayFeedView(
     targetName: event.targetName?.trim() || null,
     objectType: event.objectType?.trim() || null,
     toolOrWeapon: toggles.showTool ? event.toolOrWeapon?.trim() || null : null,
+    showTool: toggles.showTool,
     distanceMeters: toggles.showDistance ? event.distanceMeters : null,
     actorPosition: toggles.showActorCoords ? event.actorPosition : null,
     targetPosition: toggles.showTargetCoords ? event.targetPosition : null,

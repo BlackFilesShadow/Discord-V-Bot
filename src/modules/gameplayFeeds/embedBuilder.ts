@@ -17,6 +17,7 @@ const TITLES: Record<GameplayFeedView['category'], string> = {
 
 const IZURVIVE_BASE_URL = 'https://www.izurvive.com/';
 const IZURVIVE_ZOOM = 6;
+const ADM_WEAPON_NOT_REPORTED = 'Im ADM-Log nicht angegeben';
 
 function parseHex(value: string): number {
   const raw = value.startsWith('#') ? value.slice(1) : value;
@@ -118,6 +119,15 @@ function addServer(
   }
 }
 
+function addWeaponField(embed: EmbedBuilder, view: GameplayFeedView): void {
+  if (view.showTool === false) return;
+  embed.addFields({
+    name: 'Waffe',
+    value: safeEmbedField(view.toolOrWeapon ?? ADM_WEAPON_NOT_REPORTED, 256),
+    inline: false,
+  });
+}
+
 function humanizePlacementClass(value: string): string {
   const raw = value.trim();
   if (!raw) return 'Objekt';
@@ -187,11 +197,7 @@ export function buildGameplayFeedEmbed(
       value: personWithPosition(view.actorName, view.actorPosition),
       inline: false,
     });
-    embed.addFields({
-      name: 'Waffe',
-      value: safeEmbedField(view.toolOrWeapon ?? 'Nicht ermittelbar', 256),
-      inline: false,
-    });
+    addWeaponField(embed, view);
     if (typeof view.distanceMeters === 'number' && Number.isFinite(view.distanceMeters)) {
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
     }
@@ -201,11 +207,7 @@ export function buildGameplayFeedEmbed(
 
   if (view.category === 'SUICIDE') {
     embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
-    embed.addFields({
-      name: 'Waffe',
-      value: safeEmbedField(view.toolOrWeapon ?? 'Nicht durch ADM ermittelbar', 256),
-      inline: false,
-    });
+    addWeaponField(embed, view);
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
