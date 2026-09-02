@@ -10,6 +10,13 @@ test('market direct-buy components use the existing global component rate limit'
   expect(composite).toContain('handleMarketDirectBuyModal');
 });
 
+test('market vendor catalog navigation uses the same composite rate limit', () => {
+  const composite = fs.readFileSync(path.resolve(__dirname, '../../src/events/interactionCreateComposite.ts'), 'utf8');
+  expect(composite).toContain("i.customId.startsWith('marketcat:v1:')");
+  expect(composite).toContain('handleMarketVendorCatalogPageButton');
+  expect(composite).toContain('checkComponentRateLimit(i.user.id)');
+});
+
 test('market order (Sammelbestellung) components are routed under the same composite rate limit', () => {
   const composite = fs.readFileSync(path.resolve(__dirname, '../../src/events/interactionCreateComposite.ts'), 'utf8');
   expect(composite).toContain("i.customId.startsWith('marketorder:open:')");

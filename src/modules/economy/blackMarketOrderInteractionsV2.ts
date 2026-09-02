@@ -89,23 +89,74 @@ async function replyError(interaction: ComponentInteraction, message: string): P
 interface OrderButtonContextRow {
   guildId: string;
   nitradoConnId: string;
+  vendorAccountId: string | null;
 }
 
-async function resolveOrderButtonContext(args: { channelId: string; messageId: string }): Promise<{ guildId: string; connId: string }> {
+function parseVendorOrderAnchor(customId: string): string | null {
+  if (customId === 'marketorder:open:0') return null;
+  const parts = customId.split(':');
+  if (parts.length !== 4 || parts[0] !== 'marketorder' || parts[1] !== 'open' || parts[2] !== 'v1') {
+    throw new Error('Diese Bestell-Aktion ist ungültig oder veraltet. Bitte den aktuellen Händlerkatalog verwenden.');
+  }
+  const catalogProjectionId = parts[3];
+  if (!/^[A-Za-z0-9_-]{16,64}$/.test(catalogProjectionId)) {
+    throw new Error('Diese Bestell-Aktion ist ungültig oder veraltet. Bitte den aktuellen Händlerkatalog verwenden.');
+  }
+  return catalogProjectionId;
+}
+
+async function resolveOrderButtonContext(args: {
+  customId: string;
+  guildId: string;
+  channelId: string;
+  messageId: string;
+}): Promise<{ guildId: string; connId: string; vendorAccountId: string | null }> {
+  const catalogProjectionId = parseVendorOrderAnchor(args.customId);
+  if (catalogProjectionId === null) {
+    const rows = await prisma.$queryRawUnsafe<OrderButtonContextRow[]>(
+      `SELECT m."guildId", m."nitradoConnId", NULL::text AS "vendorAccountId"
+       FROM "EconomyMarketDiscordMessage" m
+       JOIN "EconomyMarketDiscordProjection" p
+         ON p."id"=m."projectionId" AND p."guildId"=m."guildId" AND p."nitradoConnId"=m."nitradoConnId"
+       WHERE m."kind"='ORDER_BUTTON' AND m."guildId"=$1 AND m."channelId"=$2 AND m."messageId"=$3
+         AND p."catalogChannelId"=m."channelId"
+         AND p."directBuyEnabled"=TRUE AND p."orderChannelId" IS NOT NULL AND p."orderReadyChannelId" IS NOT NULL
+       LIMIT 1`,
+      args.guildId,
+      args.channelId,
+      args.messageId,
+    );
+    const row = rows[0];
+    if (!row) throw new Error('Diese Bestell-Aktion ist veraltet oder Bestellungen sind nicht mehr aktiv.');
+    return { guildId: row.guildId, connId: row.nitradoConnId, vendorAccountId: null };
+  }
+
   const rows = await prisma.$queryRawUnsafe<OrderButtonContextRow[]>(
-    `SELECT m."guildId", m."nitradoConnId"
-     FROM "EconomyMarketDiscordMessage" m
+    `SELECT c."guildId", c."nitradoConnId", c."vendorAccountId"
+     FROM "EconomyMarketVendorCatalogProjection" c
      JOIN "EconomyMarketDiscordProjection" p
-       ON p."id"=m."projectionId" AND p."guildId"=m."guildId" AND p."nitradoConnId"=m."nitradoConnId"
-     WHERE m."kind"='ORDER_BUTTON' AND m."channelId"=$1 AND m."messageId"=$2
+       ON p."id"=c."projectionId" AND p."guildId"=c."guildId" AND p."nitradoConnId"=c."nitradoConnId"
+     JOIN "EconomyVirtualAccount" v
+       ON v."id"=c."vendorAccountId" AND v."guildId"=c."guildId" AND v."nitradoConnId"=c."nitradoConnId"
+     WHERE c."id"=$1 AND c."guildId"=$2 AND c."channelId"=$3 AND c."orderButtonMessageId"=$4
+       AND p."catalogChannelId"=c."channelId"
        AND p."directBuyEnabled"=TRUE AND p."orderChannelId" IS NOT NULL AND p."orderReadyChannelId" IS NOT NULL
+       AND v."kind"='MARKET_VENDOR' AND v."status"='ACTIVE'
+       AND EXISTS (
+         SELECT 1 FROM "EconomyMarketListing" l
+         WHERE l."vendorAccountId"=c."vendorAccountId"
+           AND l."guildId"=c."guildId" AND l."nitradoConnId"=c."nitradoConnId"
+           AND l."active"=TRUE AND l."archivedAt" IS NULL
+       )
      LIMIT 1`,
+    catalogProjectionId,
+    args.guildId,
     args.channelId,
     args.messageId,
   );
   const row = rows[0];
-  if (!row) throw new Error('Diese Bestell-Aktion ist veraltet oder Bestellungen sind nicht mehr aktiv.');
-  return { guildId: row.guildId, connId: row.nitradoConnId };
+  if (!row?.vendorAccountId) throw new Error('Dieser Händler-Bestellbutton ist veraltet oder nicht mehr aktiv.');
+  return { guildId: row.guildId, connId: row.nitradoConnId, vendorAccountId: row.vendorAccountId };
 }
 
 async function vendorName(guildId: string, connId: string, vendorAccountId: string): Promise<string> {
@@ -122,10 +173,16 @@ function optionLabel(listing: MarketListingView): string {
 }
 
 async function cartPayload(token: string, draft: CartDraft) {
-  const [allListings, cfg] = await Promise.all([
+  const [allListings, cfg, boundVendor] = await Promise.all([
     listMarketListings(asGuildId(draft.guildId), asNitradoConnId(draft.connId), false),
     getConfig(asGuildId(draft.guildId), asNitradoConnId(draft.connId)),
+    draft.vendorAccountId
+      ? getVirtualAccountById(asGuildId(draft.guildId), asNitradoConnId(draft.connId), draft.vendorAccountId)
+      : Promise.resolve(null),
   ]);
+  if (draft.vendorAccountId && (!boundVendor || boundVendor.kind !== 'MARKET_VENDOR' || boundVendor.status !== 'ACTIVE')) {
+    throw new Error('Dieser Händler ist nicht mehr aktiv. Bitte die aktuelle Verkaufsliste verwenden.');
+  }
   const listings = draft.vendorAccountId
     ? allListings.filter(listing => listing.vendorAccountId === draft.vendorAccountId)
     : allListings;
@@ -141,7 +198,7 @@ async function cartPayload(token: string, draft: CartDraft) {
     return listing ? [{ listing, quantity }] : [];
   });
   const total = lines.reduce((sum, line) => sum + line.listing.price * BigInt(line.quantity), 0n);
-  const vendor = draft.vendorAccountId ? await vendorName(draft.guildId, draft.connId, draft.vendorAccountId) : null;
+  const vendor = boundVendor?.name ?? null;
 
   const embed = new EmbedBuilder()
     .setColor(0x22c55e)
@@ -203,15 +260,23 @@ async function cartPayload(token: string, draft: CartDraft) {
 
 export async function handleMarketOrderButton(interaction: ButtonInteraction): Promise<void> {
   try {
-    if (!interaction.channelId) throw new Error('Bestellungen sind nur in einem Discord-Server möglich.');
-    const context = await resolveOrderButtonContext({ channelId: interaction.channelId, messageId: interaction.message.id });
+    if (!interaction.guildId || !interaction.channelId) throw new Error('Bestellungen sind nur in einem Discord-Server möglich.');
+    if (!interaction.client.user || interaction.message.author.id !== interaction.client.user.id) {
+      throw new Error('Diese Bestell-Nachricht wird nicht vom aktuellen V-Bot verwaltet.');
+    }
+    const context = await resolveOrderButtonContext({
+      customId: interaction.customId,
+      guildId: interaction.guildId,
+      channelId: interaction.channelId,
+      messageId: interaction.message.id,
+    });
     const token = newToken();
     const draft: CartDraft = {
       guildId: context.guildId,
       connId: context.connId,
       userDiscordId: interaction.user.id,
       lines: {},
-      vendorAccountId: null,
+      vendorAccountId: context.vendorAccountId,
       selectedListingId: null,
       selectedQuantity: 1,
       page: 0,

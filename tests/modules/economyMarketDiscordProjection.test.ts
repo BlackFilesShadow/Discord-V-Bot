@@ -3,40 +3,88 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
+const compact = (value: string) => value.replace(/\s+/g, ' ').trim();
 
-test('market catalog and direct-buy projections are paged and serialized', () => {
+test('market vendor catalogs are fixed per vendor, paged and serialized', () => {
   const projection = read('src/modules/economy/blackMarketDiscord.ts');
+  const projectionFlat = compact(projection);
+  const prismaModel = read('prisma/economy_market_projection.prisma');
   const interactions = read('src/modules/economy/blackMarketInteractions.ts');
   const composite = read('src/events/interactionCreateComposite.ts');
 
-  expect(projection).toContain('CATALOG_ITEMS_PER_MESSAGE = 5');
-  expect(projection).toContain("kind: 'DIRECT_BUY'");
-  expect(projection).toContain('listingId: listing.id');
-  expect(projection).toContain('const syncInFlight = new Map');
-  expect(projection).toContain('previous.catch(() => null).then(() => syncUnsafe');
-  expect(interactions).toContain('buyInventorylessMarketListing');
-  expect(interactions).toContain('syncMarketDiscordProjection');
-  expect(composite).toContain("customId.startsWith('marketbuy:')");
-  expect(composite).toContain("customId.startsWith('marketbuy_modal:')");
+  expect(projectionFlat).toContain('CATALOG_ITEMS_PER_MESSAGE = 5');
+  expect(projectionFlat).toContain('economyMarketVendorCatalogProjection');
+  expect(compact(prismaModel)).toContain('model EconomyMarketVendorCatalogProjection');
+  expect(compact(prismaModel)).toContain('@@unique([projectionId, vendorAccountId]');
+  expect(projectionFlat).toContain('marketcat:v1:page:${catalogProjectionId}');
+  expect(projectionFlat).toContain('marketorder:open:v1:${catalogProjectionId}');
+  expect(projectionFlat).toContain('const syncInFlight = new Map');
+  expect(projectionFlat).toContain('previous.catch(() => null).then(() => syncUnsafe');
+  expect(compact(composite)).toContain("i.customId.startsWith('marketcat:v1:')");
+  expect(compact(composite)).toContain('handleMarketVendorCatalogPageButton');
+
+  // Direct Buy bleibt bewusst auf dem bestehenden, listing-gebundenen Vertrag.
+  expect(projectionFlat).toContain("kind: 'DIRECT_BUY'");
+  expect(projectionFlat).toContain('listingId: listing.id');
+  expect(compact(interactions)).toContain('buyInventorylessMarketListing');
+  expect(compact(interactions)).toContain('syncMarketDiscordProjection');
+  expect(compact(composite)).toContain("i.customId.startsWith('marketbuy:')");
+  expect(compact(composite)).toContain("i.customId.startsWith('marketbuy_modal:')");
 });
 
-test('market order channels are required whenever direct-buy is enabled', () => {
+test('vendor loading is batched and 300 listings remain safely navigable', () => {
   const projection = read('src/modules/economy/blackMarketDiscord.ts');
-  expect(projection).toContain('orderChannelId: string | null');
-  expect(projection).toContain('orderReadyChannelId: string | null');
-  expect(projection).toContain('args.directBuyEnabled && (!args.orderChannelId || !args.orderReadyChannelId)');
-  expect(projection).toContain("'Bestellungs-Kanal'");
-  expect(projection).toContain("'Bestellung-bereit-Kanal'");
-  expect(projection).toContain("kind: 'ORDER_BUTTON'");
-  expect(projection).toContain('channel: catalogChannel');
-  expect(projection).toContain("setCustomId('marketorder:open:0')");
+  const vendorLoaderStart = projection.indexOf('async function loadActiveVendorCatalogs');
+  const vendorLoaderEnd = projection.indexOf('async function upsertVendorCatalogMessages');
+  const vendorLoader = projection.slice(vendorLoaderStart, vendorLoaderEnd);
+  const projectionFlat = compact(projection);
+  const vendorLoaderFlat = compact(vendorLoader);
+
+  expect(vendorLoaderStart).toBeGreaterThan(-1);
+  expect(vendorLoaderFlat).toContain('economyVirtualAccount.findMany');
+  expect(vendorLoaderFlat).toContain("kind: 'MARKET_VENDOR'");
+  expect(vendorLoaderFlat).toContain("status: 'ACTIVE'");
+  expect(vendorLoaderFlat).not.toContain('getVirtualAccountById');
+  expect(Math.ceil(300 / 5)).toBe(60);
+  expect(projectionFlat).toContain('const pages = chunk(catalog.listings, CATALOG_ITEMS_PER_MESSAGE)');
+  expect(projectionFlat).toContain('if (parsed.page >= pages.length)');
 });
 
-test('database constraints allow the catalog-wide order button written by runtime', () => {
-  const migration = read('prisma/migrations/20260901134500_economy_market_order_button_projection_constraint/migration.sql');
+test('market order channels are required and each vendor gets its own persisted order anchor', () => {
+  const projection = read('src/modules/economy/blackMarketDiscord.ts');
+  const projectionFlat = compact(projection);
+  expect(projectionFlat).toContain('orderChannelId: string | null');
+  expect(projectionFlat).toContain('orderReadyChannelId: string | null');
+  expect(projectionFlat).toContain('args.directBuyEnabled && (!args.orderChannelId || !args.orderReadyChannelId)');
+  expect(projectionFlat).toContain("'Bestellungs-Kanal'");
+  expect(projectionFlat).toContain("'Bestellung-bereit-Kanal'");
+  expect(projectionFlat).toContain('orderButtonMessageId: orderMessage?.id ?? null');
+  expect(projectionFlat).toContain('marketorder:open:v1:${catalogProjectionId}');
+  expect(projectionFlat).toContain('removeLegacyCatalogMessages(client, projection.id)');
+  expect(projectionFlat).not.toContain("new ButtonBuilder().setCustomId('marketorder:open:0')");
+});
 
-  expect(migration).toContain("CHECK (\"kind\" IN ('CATALOG', 'DIRECT_BUY', 'ORDER_BUTTON'))");
-  expect(migration).toContain("\"kind\" = 'ORDER_BUTTON'");
-  expect(migration).toContain('\"pageIndex\" = 0');
-  expect(migration).toContain('\"listingId\" IS NULL');
+test('new vendor projection migration is additive, scoped and message-safe', () => {
+  const migration = read('prisma/migrations/20260901210000_economy_market_vendor_catalog_projection/migration.sql');
+  const migrationFlat = compact(migration);
+
+  expect(migrationFlat).toContain('CREATE TABLE "EconomyMarketVendorCatalogProjection"');
+  expect(migrationFlat).toContain('FOREIGN KEY ("projectionId", "guildId", "nitradoConnId")');
+  expect(migrationFlat).toContain('FOREIGN KEY ("vendorAccountId", "guildId", "nitradoConnId")');
+  expect(migrationFlat).toContain('REFERENCES "EconomyVirtualAccount"("id", "guildId", "nitradoConnId")');
+  expect(migrationFlat).toContain('EconomyMarketVendorCatalogProjection_page_check');
+  expect(migrationFlat).toContain('EconomyMarketVendorCatalogProjection_catalog_message_check');
+  expect(migrationFlat).toContain('EconomyMarketVendorCatalogProjection_order_message_check');
+  expect(migrationFlat).not.toContain('DELETE FROM "EconomyMarketDiscordMessage"');
+  expect(migrationFlat).not.toContain('DROP TABLE');
+});
+
+test('legacy order-button constraint remains valid until successful vendor sync removes old rows', () => {
+  const migration = read('prisma/migrations/20260901134500_economy_market_order_button_projection_constraint/migration.sql');
+  const migrationFlat = compact(migration);
+
+  expect(migrationFlat).toContain("CHECK (\"kind\" IN ('CATALOG', 'DIRECT_BUY', 'ORDER_BUTTON'))");
+  expect(migrationFlat).toContain("\"kind\" = 'ORDER_BUTTON'");
+  expect(migrationFlat).toContain('\"pageIndex\" = 0');
+  expect(migrationFlat).toContain('\"listingId\" IS NULL');
 });
