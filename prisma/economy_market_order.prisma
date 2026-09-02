@@ -35,7 +35,7 @@ model EconomyMarketOrder {
 
 // Persistenter Outbox- und Cleanup-Datensatz fuer die "Bestellung bereit"-
 // Mention. PENDING/SENDING werden retryfaehig versendet; SENT wird nach der
-// festgelegten Stunde restart-sicher geloescht.
+// festgelegten Minute restart-sicher geloescht.
 model EconomyMarketOrderReadyNotice {
   id            String                              @id @default(cuid())
   orderId       String                              @unique
