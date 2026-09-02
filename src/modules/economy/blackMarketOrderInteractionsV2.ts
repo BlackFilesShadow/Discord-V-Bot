@@ -298,8 +298,11 @@ export async function handleMarketOrderCancelButton(interaction: ButtonInteracti
   catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
-function orderItemLines(order: MarketOrderView, names: Map<string, string>): string[] {
-  return order.purchases.map(purchase => { const name = names.get(purchase.listingId) ?? purchase.deliveryItems[0]?.itemText ?? 'Artikel'; return `• **${name}** × ${purchase.quantity} — ${purchase.amount.toLocaleString('de-DE')}`; });
+function orderItemLines(order: MarketOrderView, names: Map<string, string>, currencyEmoji: string): string[] {
+  return order.purchases.map(purchase => {
+    const name = names.get(purchase.listingId) ?? purchase.deliveryItems[0]?.itemText ?? 'Artikel';
+    return `• **${name}** — ${purchase.quantity} × ${purchase.unitPrice.toLocaleString('de-DE')} = **${purchase.amount.toLocaleString('de-DE')} ${currencyEmoji}**`;
+  });
 }
 
 async function postOrderChannelEmbed(client: Client, order: MarketOrderView, currencyName: string, currencyEmoji: string): Promise<void> {
@@ -312,10 +315,16 @@ async function postOrderChannelEmbed(client: Client, order: MarketOrderView, cur
   const username = member?.displayName ?? member?.user.username ?? order.userDiscordId;
   const vendor = await vendorName(order.guildId, order.nitradoConnId, order.vendorAccountId);
   const listings = await prisma.economyMarketListing.findMany({ where: { id: { in: order.purchases.map(purchase => purchase.listingId) }, guildId: order.guildId, nitradoConnId: order.nitradoConnId }, select: { id: true, name: true } });
-  const names = new Map(listings.map(listing => [listing.id, listing.name])); const lines = orderItemLines(order, names); const createdUnix = Math.floor(order.createdAt.getTime() / 1000);
+  const names = new Map(listings.map(listing => [listing.id, listing.name]));
+  const lines = orderItemLines(order, names, currencyEmoji);
+  const createdUnix = Math.floor(order.createdAt.getTime() / 1000);
+  const sourcePocket = order.purchases[0]?.sourcePocket;
+  const payment = sourcePocket === 'BANK' ? 'Bank' : 'Wallet';
+  const buyer = `${username.slice(0, 900)}\n<@${order.userDiscordId}> · \`${order.userDiscordId}\``;
   const embed = new EmbedBuilder().setColor(0xf59e0b).setTitle('📦 Bestellung ausstehend').addFields(
-    { name: 'Virtuelles Konto', value: vendor, inline: true }, { name: 'Username', value: username.slice(0, 1024), inline: true }, { name: 'Status', value: '**Bestellung ausstehend**', inline: true },
-    { name: 'Datum', value: `<t:${createdUnix}:D>`, inline: true }, { name: 'Uhrzeit', value: `<t:${createdUnix}:T>`, inline: true }, { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${currencyEmoji}** (${currencyName})`, inline: true },
+    { name: 'Händler', value: vendor, inline: true }, { name: 'Username', value: buyer, inline: true }, { name: 'Status', value: '**Bestellung ausstehend**', inline: true },
+    { name: 'Datum', value: `<t:${createdUnix}:D>`, inline: true }, { name: 'Uhrzeit', value: `<t:${createdUnix}:T>`, inline: true }, { name: 'Zahlung', value: payment, inline: true },
+    { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${currencyEmoji}** (${currencyName})`, inline: true },
     { name: 'Artikel', value: lines.join('\n').slice(0, 1024), inline: false },
   ).setFooter({ text: 'V-Bot · Schwarzmarkt · Bestellung offen' }).setTimestamp(order.createdAt);
   const message = await (channel as TextChannel).send({ embeds: [embed], allowedMentions: { parse: [] } });
@@ -356,9 +365,23 @@ async function managedOpenOrders(guildId: ReturnType<typeof asGuildId>, nitradoC
   return all.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
 }
 
-function managerPage(customId: string, index: number): number {
-  const raw = Number(customId.split(':')[index] ?? '0');
-  return Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
+type ManagerComponentKind = 'vacct_mgr_order' | 'vacct_mgr_order_page' | 'vacct_mgr_order_sel';
+
+function parseMarketOrderManagerComponentId(customId: string, expectedKind: ManagerComponentKind): { connId: string; page: number } {
+  const parts = customId.split(':');
+  const expectedLength = expectedKind === 'vacct_mgr_order' ? 2 : 3;
+  if (parts.length !== expectedLength || parts[0] !== expectedKind || !parts[1]) {
+    throw new Error('Diese Manager-Aktion ist ungültig oder veraltet. Bitte das Panel neu öffnen.');
+  }
+  const connId = String(asNitradoConnId(parts[1]));
+  if (expectedKind === 'vacct_mgr_order') return { connId, page: 0 };
+  const rawPage = parts[2];
+  if (!rawPage || !/^(0|[1-9][0-9]*)$/.test(rawPage)) {
+    throw new Error('Diese Manager-Seite ist ungültig. Bitte das Panel neu öffnen.');
+  }
+  const page = Number(rawPage);
+  if (!Number.isSafeInteger(page)) throw new Error('Diese Manager-Seite ist ungültig. Bitte das Panel neu öffnen.');
+  return { connId, page };
 }
 
 async function managerPayload(interaction: ComponentInteraction, connId: string, requestedPage: number) {
@@ -372,7 +395,7 @@ async function managerPayload(interaction: ComponentInteraction, connId: string,
     const member = guild ? guild.members.cache.get(order.userDiscordId) ?? await guild.members.fetch(order.userDiscordId).catch(() => null) : null;
     const username = member?.displayName ?? member?.user.username ?? order.userDiscordId; const count = order.purchases.reduce((sum, purchase) => sum + purchase.quantity, 0);
     const items = order.purchases.flatMap(purchase => purchase.deliveryItems.map(item => `${item.itemText} x${item.quantity}`)).filter(Boolean).join(', ');
-    return { label: `${username} · ${count} Artikel · ${order.totalAmount.toLocaleString('de-DE')}`.slice(0, 100), value: order.id, description: items ? items.slice(0, 100) : undefined };
+    return { label: `${username} · Bestellung ${order.id.slice(-8)} · ${count} Artikel · ${order.totalAmount.toLocaleString('de-DE')}`.slice(0, 100), value: order.id, description: items ? items.slice(0, 100) : undefined };
   }));
   const select = new StringSelectMenuBuilder().setCustomId(`vacct_mgr_order_sel:${connId}:${page}`).setPlaceholder(`Bestellung auswählen · Seite ${page + 1}/${totalPages}`).addOptions(options);
   const components: Array<ActionRowBuilder<StringSelectMenuBuilder> | ActionRowBuilder<ButtonBuilder>> = [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)];
@@ -384,15 +407,17 @@ async function managerPayload(interaction: ComponentInteraction, connId: string,
 }
 
 export async function handleMarketOrderManagerButton(interaction: ButtonInteraction): Promise<void> {
-  const connId = interaction.customId.split(':')[1];
-  try { if (!connId) throw new Error('Gameserver-Scope fehlt. Bitte das Management-Embed neu synchronisieren.'); await interaction.reply({ ...(await managerPayload(interaction, connId, 0)), flags: MessageFlags.Ephemeral }); }
-  catch (error) { await replyError(interaction, (error as Error).message); }
+  try {
+    const { connId } = parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order');
+    await interaction.reply({ ...(await managerPayload(interaction, connId, 0)), flags: MessageFlags.Ephemeral });
+  } catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 export async function handleMarketOrderManagerPageButton(interaction: ButtonInteraction): Promise<void> {
-  const parts = interaction.customId.split(':'); const connId = parts[1];
-  try { if (!connId) throw new Error('Gameserver-Scope fehlt.'); await interaction.update(await managerPayload(interaction, connId, managerPage(interaction.customId, 2))); }
-  catch (error) { await replyError(interaction, (error as Error).message); }
+  try {
+    const { connId, page } = parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_page');
+    await interaction.update(await managerPayload(interaction, connId, page));
+  } catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 async function editOriginalOrderMessage(client: Client, order: MarketOrderView): Promise<void> {
@@ -405,9 +430,10 @@ async function editOriginalOrderMessage(client: Client, order: MarketOrderView):
 }
 
 export async function handleMarketOrderManagerSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const parts = interaction.customId.split(':'); const connId = parts[1]; const orderId = interaction.values[0];
   try {
-    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.'); if (!connId) throw new Error('Gameserver-Scope fehlt. Bitte das Management-Embed neu synchronisieren.'); if (!orderId) throw new Error('Keine Bestellung ausgewählt.');
+    const { connId } = parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_sel');
+    const orderId = interaction.values[0];
+    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.'); if (!orderId) throw new Error('Keine Bestellung ausgewählt.');
     const guildId = asGuildId(interaction.guildId); const nitradoConnId = asNitradoConnId(connId); const orderRows = await managedOpenOrders(guildId, nitradoConnId, interaction.user.id); const order = orderRows.find(row => row.id === orderId);
     if (!order) throw new Error('Bestellung ist nicht mehr offen oder dir nicht zugewiesen.');
     await interaction.deferUpdate();
