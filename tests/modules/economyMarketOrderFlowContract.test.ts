@@ -12,6 +12,6 @@ test('production order flow keeps paid -> pending -> manager close -> retryable 
   expect(interactions).toContain('postOrderChannelEmbed(interaction.client');
   expect(interactions).toContain('editOriginalOrderMessage');
   expect(orderService).toContain("'PENDING',0,CURRENT_TIMESTAMP");
-  expect(readyRuntime).toContain(".setTitle('✅ Bestellung fertig')");
-  expect(readyRuntime).toContain('automatische Löschung nach 1 Stunde');
+  expect(readyRuntime).toContain(".setTitle('✅ Bestellung bereit')");
+  expect(readyRuntime).toContain('Löschung nach 1 Minute');
 });
