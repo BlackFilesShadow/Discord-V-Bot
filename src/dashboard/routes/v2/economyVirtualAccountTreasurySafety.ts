@@ -1,11 +1,12 @@
 import { ChannelType } from 'discord.js';
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { getVirtualAccountById, type EconomyPocket, type VirtualAccountRawDb } from '../../../modules/economy/virtualAccounts';
+import { getVirtualAccountById, listVirtualAccounts, type EconomyPocket, type VirtualAccountRawDb } from '../../../modules/economy/virtualAccounts';
 import { getVirtualAccountMetadata } from '../../../modules/economy/virtualAccountMetadata';
 import { ensureVirtualAccountFinance, listVirtualAccountManagers } from '../../../modules/economy/virtualAccountFinance';
+import { listHiddenVirtualAccountIds } from '../../../modules/economy/virtualAccountDeletion';
 import { safePayoutVirtualAccountToUser } from '../../../modules/economy/virtualAccountMoneySafety';
 import { ensureBankTreasurySerialized } from '../../../modules/economy/virtualAccountTreasury';
 import {
@@ -42,7 +43,7 @@ async function readProjection(accountId: string, guildId: string, connId: string
   return rows[0] ?? null;
 }
 
-async function serializeAccount(guildId: GuildId, connId: NitradoConnId, accountId: string) {
+async function serializeAccount(guildId: GuildId, connId: NitradoConnId, accountId: string, hidden = false) {
   const account = await getVirtualAccountById(guildId, connId, accountId);
   if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
   const [finance, metadata, managers, projection] = await Promise.all([
@@ -51,10 +52,27 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
     listVirtualAccountManagers(guildId, connId, accountId),
     readProjection(accountId, String(guildId), String(connId)),
   ]);
+  const isCustom = account.kind === 'CUSTOM';
+  const pocketsEmpty = account.balance === 0n && finance.bankBalance === 0n;
+  const managedBy = account.kind === 'LOTTERY_POT'
+    ? 'LOTTERY'
+    : account.kind === 'MARKET_VENDOR'
+      ? 'BLACK_MARKET'
+      : finance.accountPurpose === 'BANK_TREASURY'
+        ? 'SERVER_BANK'
+        : 'VIRTUAL_ACCOUNTS';
+  const readOnlyReason = account.kind === 'LOTTERY_POT'
+    ? 'Lotterie-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Lotterie-Funktion.'
+    : account.kind === 'MARKET_VENDOR'
+      ? 'Schwarzmarkt-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Schwarzmarkt-Funktion.'
+      : hidden
+        ? 'Dieses CUSTOM-Konto ist aus der allgemeinen Kontenverwaltung ausgeblendet.'
+        : null;
   return {
     id: account.id,
     kind: account.kind,
     name: account.name,
+    hidden,
     walletBalance: account.balance.toString(),
     bankBalance: finance.bankBalance.toString(),
     totalBalance: (account.balance + finance.bankBalance).toString(),
@@ -76,6 +94,16 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
     accountPurpose: finance.accountPurpose,
     managers: managers.map(manager => manager.userDiscordId),
     projection,
+    capabilities: {
+      managedBy,
+      canConfigure: isCustom && !hidden && account.status !== 'ARCHIVED',
+      canDelete: isCustom && !hidden,
+      canArchive: isCustom && !hidden && account.status !== 'ARCHIVED' && pocketsEmpty,
+      canPayout: isCustom && !hidden && account.status === 'ACTIVE',
+      canSyncProjection: isCustom && !hidden && account.status !== 'ARCHIVED',
+      canRestore: isCustom && hidden,
+      readOnlyReason,
+    },
   };
 }
 
@@ -165,6 +193,55 @@ async function syncConfiguration(guildId: GuildId, connId: NitradoConnId, accoun
   return warnings.length > 0 ? warnings.join(' | ') : null;
 }
 
+async function requireCustomControlAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+  const account = await getVirtualAccountById(scope.guildId, connId, String(req.params.accountId));
+  if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
+  if (account.kind !== 'CUSTOM') {
+    res.status(400).json({ error: 'Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.' });
+    return;
+  }
+  next();
+}
+
+// Authoritative capability registry before the general control router. The
+// legacy control panel receives CUSTOM accounts only; domain-owned system
+// accounts are exposed separately and read-only in the shared workspace.
+economyVirtualAccountTreasurySafetyRouter.get('/control/accounts', requireGuildPermission('economy.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+  const [accounts, hiddenIds] = await Promise.all([
+    listVirtualAccounts(scope.guildId, connId, true),
+    listHiddenVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
+  ]);
+  const customAccounts = accounts.filter(account => account.kind === 'CUSTOM');
+  res.json({
+    accounts: await Promise.all(customAccounts.map(account => serializeAccount(scope.guildId, connId, account.id, hiddenIds.has(account.id)))),
+  });
+});
+
+economyVirtualAccountTreasurySafetyRouter.get('/control/system-accounts', requireGuildPermission('economy.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+  const [accounts, hiddenIds] = await Promise.all([
+    listVirtualAccounts(scope.guildId, connId, true),
+    listHiddenVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
+  ]);
+  const systemAccounts = accounts.filter(account => account.kind !== 'CUSTOM');
+  res.json({
+    accounts: await Promise.all(systemAccounts.map(account => serializeAccount(scope.guildId, connId, account.id, hiddenIds.has(account.id)))),
+  });
+});
+
+// System accounts never fall through to generic control-surface mutations.
+economyVirtualAccountTreasurySafetyRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), requireCustomControlAccount);
+economyVirtualAccountTreasurySafetyRouter.post('/control/accounts/:accountId/restore', requireGuildPermission('economy.manage'), requireCustomControlAccount);
+economyVirtualAccountTreasurySafetyRouter.post('/control/accounts/:accountId/sync', requireGuildPermission('economy.manage'), requireCustomControlAccount);
+
 // Authoritative atomic CREATE before the general control router.
 economyVirtualAccountTreasurySafetyRouter.post('/control/accounts', requireGuildPermission('economy.manage'), async (req, res) => {
   const scope = req.guildScope!;
@@ -209,6 +286,12 @@ economyVirtualAccountTreasurySafetyRouter.put('/control/accounts/:accountId', re
   const body = (req.body ?? {}) as Record<string, unknown>;
   const accountId = String(req.params.accountId);
   try {
+    const account = await getVirtualAccountById(scope.guildId, connId, accountId);
+    if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
+    if (account.kind !== 'CUSTOM') {
+      res.status(400).json({ error: 'Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.' });
+      return;
+    }
     const { channelId, archiveChannelId } = await validateAccountChannels(String(scope.guildId), body);
     const managers = await validateManagers(String(scope.guildId), body.managers);
     await updateConfiguredVirtualAccount({
