@@ -55,11 +55,14 @@ describe('Economy account capability workspace', () => {
     expect(wrapper).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
   });
 
-  test('system registry is read-only, resilient and derives ownership from server capabilities', () => {
+  test('system registry is read-only, resilient and never hides incomplete responses as empty', () => {
     expect(systemUi).toContain('/control/system-accounts?slot=');
     expect(systemUi).toContain('Array.isArray(query.data?.accounts)');
+    expect(systemUi).toContain('const hasValidAccounts =');
     expect(systemUi).toContain('const accounts =');
-    expect(systemUi).toContain('accounts.length === 0');
+    expect(systemUi).toContain('query.data && !hasValidAccounts');
+    expect(systemUi).toContain('Systemkonto-Antwort ist unvollständig.');
+    expect(systemUi).toContain('hasValidAccounts && accounts.length === 0');
     expect(systemUi).toContain('accounts.map(account =>');
     expect(systemUi).toContain('account.capabilities.managedBy');
     expect(systemUi).toContain('account.capabilities.readOnlyReason');
