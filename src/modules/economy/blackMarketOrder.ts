@@ -114,6 +114,40 @@ export async function listOpenMarketOrders(
   return Promise.all(rows.map(toOrderView));
 }
 
+/** Eine echte serverseitige Seite ueber alle verwalteten Vendor-IDs. */
+export async function listManagedOpenMarketOrdersPage(
+  guildId: GuildId,
+  nitradoConnId: NitradoConnId,
+  vendorAccountIds: string[],
+  take = 25,
+  requestedOffset = 0,
+): Promise<{ orders: MarketOrderView[]; total: number; offset: number }> {
+  await assertEconomyScopeReady(guildId, nitradoConnId);
+  const scopedVendorIds = [...new Set(vendorAccountIds.filter(Boolean))];
+  if (scopedVendorIds.length === 0) return { orders: [], total: 0, offset: 0 };
+  const safeTake = Math.max(1, Math.min(25, Math.floor(take)));
+  const safeRequestedOffset = Math.max(0, Math.floor(requestedOffset));
+  const countRows = await rawDb().$queryRawUnsafe<Array<{ total: number }>>(
+    `SELECT COUNT(*)::integer AS total
+     FROM "EconomyMarketOrder"
+     WHERE "guildId"=$1 AND "nitradoConnId"=$2
+       AND "vendorAccountId" = ANY($3::text[]) AND "status"='OPEN'`,
+    String(guildId), String(nitradoConnId), scopedVendorIds,
+  );
+  const total = countRows[0]?.total ?? 0;
+  if (total === 0) return { orders: [], total: 0, offset: 0 };
+  const lastOffset = Math.floor((total - 1) / safeTake) * safeTake;
+  const offset = Math.min(safeRequestedOffset, lastOffset);
+  const rows = await rawDb().$queryRawUnsafe<DbOrderRow[]>(
+    `${ORDER_SELECT}
+     WHERE "guildId"=$1 AND "nitradoConnId"=$2
+       AND "vendorAccountId" = ANY($3::text[]) AND "status"='OPEN'
+     ORDER BY "createdAt" ASC, "id" ASC LIMIT $4 OFFSET $5`,
+    String(guildId), String(nitradoConnId), scopedVendorIds, safeTake, offset,
+  );
+  return { orders: await Promise.all(rows.map(toOrderView)), total, offset };
+}
+
 async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId, key: string): Promise<MarketOrderView | null> {
   const rows = await rawDb().$queryRawUnsafe<Array<{ id: string }>>(
     'SELECT o."id" FROM "EconomyMarketOrder" o JOIN "EconomyMarketPurchase" p ON p."orderId"=o."id" WHERE left(p."idempotencyKey", length($1) + 1) = $1 || \':\' AND o."guildId"=$2 AND o."nitradoConnId"=$3 LIMIT 1',
