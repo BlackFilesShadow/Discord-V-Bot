@@ -8,11 +8,15 @@ const runtime = fs.readFileSync(path.join(root, 'src/modules/economy/marketOrder
 const composite = fs.readFileSync(path.join(root, 'src/events/interactionCreateComposite.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'prisma/migrations/20260902043000_economy_market_ready_outbox/migration.sql'), 'utf8');
 
-test('Bestellung abschließen reads connId from vacct_mgr_order:<connId>', () => {
-  expect(source).toContain('export async function handleMarketOrderManagerButton');
-  expect(source).toContain("const connId = interaction.customId.split(':')[1]");
+test('Bestellung abschließen parses every manager custom id fail-closed', () => {
+  expect(source).toContain('function parseMarketOrderManagerComponentId');
+  expect(source).toContain("expectedKind === 'vacct_mgr_order' ? 2 : 3");
+  expect(source).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order')");
+  expect(source).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_page')");
+  expect(source).toContain("parseMarketOrderManagerComponentId(interaction.customId, 'vacct_mgr_order_sel')");
+  expect(source).toContain('String(asNitradoConnId(parts[1]))');
+  expect(source).toContain("!/^(0|[1-9][0-9]*)$/.test(rawPage)");
   expect(source).toContain('.setCustomId(`vacct_mgr_order_sel:${connId}:${page}`)');
-  expect(source).toContain('export async function handleMarketOrderManagerSelect');
 });
 
 test('manager pages over all open orders instead of silently slicing the first 25', () => {
