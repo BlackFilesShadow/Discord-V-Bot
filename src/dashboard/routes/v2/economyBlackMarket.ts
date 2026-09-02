@@ -23,6 +23,10 @@ import {
   removeMarketListingFromControl,
 } from '../../../modules/economy/blackMarketControlDeletion';
 import {
+  listHiddenMarketVendorIds,
+  removeMarketVendorFromControl,
+} from '../../../modules/economy/blackMarketVendorDeletion';
+import {
   configureMarketDiscordProjection,
   getMarketDiscordProjection,
   syncMarketDiscordProjection,
@@ -94,8 +98,11 @@ async function immediateVirtualSync(req: Req, accountId: string): Promise<string
 
 economyBlackMarketRouter.get('/vendors', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
-  const vendors = await listMarketVendors(scope.guildId, connId);
-  res.json({ nitradoConnId: connId, vendors: vendors.map(vendorJson) });
+  const [vendors, hiddenIds] = await Promise.all([
+    listMarketVendors(scope.guildId, connId),
+    listHiddenMarketVendorIds({ guildId: scope.guildId, nitradoConnId: connId }),
+  ]);
+  res.json({ nitradoConnId: connId, vendors: vendors.filter(row => !hiddenIds.has(row.id)).map(vendorJson) });
 });
 
 economyBlackMarketRouter.post('/vendors', requireGuildPermission('economy.manage'), async (req, res) => {
@@ -132,6 +139,35 @@ economyBlackMarketRouter.post('/vendors/:vendorId/archive', requireGuildPermissi
     const vendor = await archiveMarketVendor({ guildId: scope.guildId, nitradoConnId: connId, vendorAccountId: String(req.params.vendorId), actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
     const syncWarning = await immediateVirtualSync(req, vendor.id);
     res.json({ ...vendorJson(vendor), syncWarning });
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyBlackMarketRouter.delete('/vendors/:vendorId', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  try {
+    const removed = await removeMarketVendorFromControl({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      vendorAccountId: String(req.params.vendorId),
+      actorDiscordId: asUserDiscordId(scope.actorDiscordId),
+    });
+    const [marketWarning, virtualWarning] = await Promise.all([
+      immediateMarketSync(req),
+      immediateVirtualSync(req, removed.id),
+    ]);
+    const syncWarning = [marketWarning, virtualWarning].filter(Boolean).join(' · ') || null;
+    logAuditDb('MARKET_VENDOR_REMOVED', 'ECONOMY', {
+      actorUserId: req.auth!.userId,
+      guildId: scope.guildId,
+      details: {
+        nitradoConnId: connId,
+        vendorAccountId: removed.id,
+        vendorName: removed.name,
+        mode: removed.mode,
+        changed: removed.changed,
+      },
+    });
+    res.json({ ok: true, removed, syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 

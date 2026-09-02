@@ -1,0 +1,10 @@
+// Phase 3: dauerhafter Control-Hidden-Marker fuer sicher entfernte Schwarzmarkt-Haendler.
+// Der MARKET_VENDOR-Datensatz selbst bleibt fuer Bestell-, Kauf- und Audit-Historie erhalten.
+model EconomyMarketVendorControlHidden {
+  vendorAccountId String   @id
+  guildId         String
+  nitradoConnId   String
+  hiddenAt        DateTime @default(now())
+
+  @@index([guildId, nitradoConnId], map: "EconomyMarketVendorControlHidden_scope_idx")
+}
