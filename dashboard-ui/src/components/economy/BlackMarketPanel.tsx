@@ -349,7 +349,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                       <span>Frei <strong className="text-white block">{money(vendor.withdrawableBalance, currencyEmoji)}</strong></span>
                     </div>
                     {vendor.status === 'ACTIVE' && (
-                      <div className="grid gap-2 2xl:grid-cols-[minmax(0,1fr)_110px_110px_auto_auto_auto] items-end">
+                      <div className="grid gap-2 2xl:grid-cols-[minmax(0,1fr)_110px_110px_auto_auto] items-end">
                         <Input aria-label={`Auszahlungsziel ${vendor.name}`} value={draft.targetUserId} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetUserId: e.target.value.trim() } }))} placeholder="Discord User-ID" />
                         <Input aria-label={`Auszahlungsbetrag ${vendor.name}`} value={draft.amount} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, amount: e.target.value.trim() } }))} inputMode="numeric" placeholder={`Betrag ${currencyEmoji}`} />
                         <Select aria-label={`Auszahlungszielkonto ${vendor.name}`} value={draft.targetPocket} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetPocket: e.target.value as 'WALLET' | 'BANK' } }))}>
@@ -358,6 +358,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                         <Button size="sm" variant="ghost" disabled={!payoutValid || payoutVendor.isPending} onClick={() => payoutVendor.mutate({ id: vendor.id, draft })}><WalletCards className="h-3.5 w-3.5 mr-1" />Auszahlen</Button>
                         <Button aria-label={`Haendler ${vendor.name} archivieren`} title="Archivieren ist erst möglich, wenn Guthaben, aktive Angebote und offene Bestellungen abgearbeitet sind." size="sm" variant="ghost" disabled={archiveVendor.isPending || removeVendor.isPending} onClick={() => archiveVendor.mutate(vendor.id)}><Archive className="h-3.5 w-3.5 mr-1" />Archivieren</Button>
                         <Button
+                          className="2xl:col-start-5"
                           aria-label={`Haendler ${vendor.name} entfernen`}
                           title="Entfernen ist nur für aktive Händler ohne Wallet-/Bank-Guthaben, aktive Angebote oder offene Bestellungen möglich. Historie bleibt erhalten."
                           size="sm"
