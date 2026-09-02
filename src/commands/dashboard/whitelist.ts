@@ -16,6 +16,11 @@ import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
+import { type BanClient } from '../../modules/bans/banRegistry';
+import {
+  ACTIVE_BAN_WHITELIST_WARNING,
+  isWhitelistBlockedByActiveServerBan,
+} from '../../modules/bans/whitelistBanGuard';
 import {
   enqueueWhitelistAdd,
   enqueueWhitelistRemove,
@@ -99,6 +104,15 @@ export const whitelistCommand: Command = {
         ? 'Dieser Spielername wird auf diesem Server gerade von der Whitelist entfernt. Bitte warte auf den Nitrado-Abgleich.'
         : 'Dieser Spielername ist auf diesem Server bereits auf der Whitelist.';
       await reply(i, message, true, 'ERROR');
+      return;
+    }
+
+    if (await isWhitelistBlockedByActiveServerBan(
+      prisma as unknown as BanClient,
+      { guildId: scope.guildId, nitradoConnId: target.id },
+      id,
+    )) {
+      await reply(i, ACTIVE_BAN_WHITELIST_WARNING, true, 'ERROR', 'Whitelist durch Bann gesperrt');
       return;
     }
 
@@ -194,6 +208,13 @@ export const wlAddCommand: Command = {
     for (const target of targets) {
       try {
         await prisma.$transaction(async tx => {
+          if (await isWhitelistBlockedByActiveServerBan(
+            tx as unknown as BanClient,
+            { guildId: scope.guildId, nitradoConnId: target.id },
+            id,
+          )) {
+            throw new Error(ACTIVE_BAN_WHITELIST_WARNING);
+          }
           await tx.whitelistEntry.upsert({
             where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id } },
             create: {
