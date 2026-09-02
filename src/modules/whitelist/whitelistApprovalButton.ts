@@ -13,6 +13,11 @@ import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { Colors, statusTitle } from '../../utils/embedDesign';
 import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
+import { type BanClient } from '../bans/banRegistry';
+import {
+  ACTIVE_BAN_WHITELIST_WARNING,
+  isWhitelistBlockedByActiveServerBan,
+} from '../bans/whitelistBanGuard';
 import { resolveDelegatedPermissionContext } from '../permissions/access';
 
 /**
@@ -102,6 +107,13 @@ async function enqueueUniversalWhitelist(args: {
   return Promise.all(args.targets.map(async target => {
     try {
       await prisma.$transaction(async tx => {
+        if (await isWhitelistBlockedByActiveServerBan(
+          tx as unknown as BanClient,
+          { guildId: args.guildId, nitradoConnId: target.id },
+          args.gameId,
+        )) {
+          throw new Error(ACTIVE_BAN_WHITELIST_WARNING);
+        }
         await tx.whitelistEntry.upsert({
           where: {
             guildId_nitradoConnId_gameId: {
@@ -170,6 +182,13 @@ async function claimUniversalWhitelistOnFirstSuccessfulTarget(args: {
           },
         });
         if (claim.count !== 1) return false;
+        if (await isWhitelistBlockedByActiveServerBan(
+          tx as unknown as BanClient,
+          { guildId: args.guildId, nitradoConnId: target.id },
+          args.gameId,
+        )) {
+          throw new Error(ACTIVE_BAN_WHITELIST_WARNING);
+        }
 
         await tx.whitelistEntry.upsert({
           where: {
@@ -268,6 +287,15 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     }
   }
 
+  if (isApprove && !isUniversal && await isWhitelistBlockedByActiveServerBan(
+    prisma as unknown as BanClient,
+    { guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId },
+    reqRow.gameId,
+  )) {
+    await replyEphemeral(btn, responseEmbed('ERROR', 'Whitelist durch Bann gesperrt', ACTIVE_BAN_WHITELIST_WARNING));
+    return;
+  }
+
   await btn.deferUpdate();
 
   try {
@@ -363,13 +391,19 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
           failed.length === 0 ? 'Universal Whitelist eingereiht' : 'Universal Whitelist teilweise eingereiht',
           failed.length === 0
             ? `Der Spieler wurde für alle ${succeeded.length} aktiven Gameserver unabhängig eingereiht: ${successNames}.`
-            : `Erfolgreich (${succeeded.length}): ${successNames}.\nFehlgeschlagen (${failed.length}): ${failedNames}. Die erfolgreichen Server werden dadurch nicht blockiert.`,
+            : `Erfolgreich (${succeeded.length}): ${successNames}.\nFehlgeschlagen (${failed.length}): ${failedNames}. ${failed.some(result => result.error === ACTIVE_BAN_WHITELIST_WARNING) ? '⚠️ Mindestens ein Ziel ist aktiv gebannt; dafür wurde keine Whitelist-Freigabe eingereiht.' : 'Die erfolgreichen Server werden dadurch nicht blockiert.'}`,
         ),
       );
       return;
     }
 
     const claimed = await prisma.$transaction(async tx => {
+      if (isApprove && await isWhitelistBlockedByActiveServerBan(
+        tx as unknown as BanClient,
+        { guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId },
+        reqRow.gameId,
+      )) return 'BANNED' as const;
+
       const cas = await tx.whitelistRequest.updateMany({
         where: { id: requestId, guildId: reqRow.guildId, status: 'PENDING' },
         data: {
@@ -412,6 +446,14 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
       }
       return true;
     });
+
+    if (claimed === 'BANNED') {
+      await followUpEphemeral(
+        btn,
+        responseEmbed('ERROR', 'Whitelist durch Bann gesperrt', ACTIVE_BAN_WHITELIST_WARNING),
+      );
+      return;
+    }
 
     if (!claimed) {
       await followUpEphemeral(
