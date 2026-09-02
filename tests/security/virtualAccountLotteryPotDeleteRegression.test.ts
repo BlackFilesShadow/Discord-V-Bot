@@ -54,10 +54,20 @@ describe('virtual account terminal removal regression', () => {
     expect(terminal).toContain('listDeletedVirtualAccountIds');
     expect(terminal).toContain("account.kind === 'CUSTOM' && !deletedIds.has(account.id)");
     expect(terminal).toContain("post('/control/accounts/:accountId/restore'");
-    expect(terminal).toContain("res.status(410)");
+    expect(terminal).toContain('res.status(410)');
     expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
     expect(deletion).toContain('return false;');
     expect(deletion).not.toContain('DELETE FROM "EconomyVirtualAccountDeleted" WHERE "accountId"');
+  });
+
+  it('blocks direct mutations against internally retained deleted account IDs', () => {
+    expect(terminal).toContain('async function rejectDeletedMutation');
+    expect(terminal).toContain('Dieses Konto wurde dauerhaft gelöscht und kann nicht mehr verändert werden.');
+    expect(terminal).toContain("put('/control/accounts/:accountId'");
+    expect(terminal).toContain("delete('/control/accounts/:accountId'");
+    expect(terminal).toContain("post('/control/accounts/:accountId/sync'");
+    expect(terminal).toContain("post('/:accountId/archive'");
+    expect(terminal).toContain("post('/:accountId/payout'");
   });
 
   it('runs terminal deletion before the Phase-2 capability and compatibility routers', () => {
