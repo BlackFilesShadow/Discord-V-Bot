@@ -74,7 +74,7 @@ export function BlackMarketDiscordSettings({
   );
 
   const save = useMutation({
-    mutationFn: () => api.put<{ projection: MarketProjection }>(
+    mutationFn: () => api.put<{ projection: MarketProjection; syncWarning: string | null }>(
       `/api/v2/guilds/${guildId}/economy/black-market/discord?${scope}`,
       {
         catalogChannelId: catalogChannelId || null,
@@ -86,10 +86,15 @@ export function BlackMarketDiscordSettings({
     ),
     onSuccess: result => {
       setTouched(false);
-      onMessage({ ok: true, text: 'Discord-Verkaufsliste, Bestellbutton und Direktkauf wurden gespeichert und sofort synchronisiert.' });
+      onMessage({
+        ok: true,
+        text: result.syncWarning
+          ? `Discord-Konfiguration gespeichert, aber noch nicht vollständig live synchronisiert: ${result.syncWarning}`
+          : 'Discord-Verkaufsliste, Bestellbutton und Direktkauf wurden gespeichert und sofort synchronisiert.',
+      });
       qc.setQueryData(['economy-black-market-discord', guildId, slot], { projection: result.projection });
     },
-    onError: (error: Error) => onMessage({ ok: false, text: `Discord-Integration fehlgeschlagen: ${error.message}` }),
+    onError: (error: Error) => onMessage({ ok: false, text: `Discord-Konfiguration nicht gespeichert: ${error.message}` }),
   });
 
   const sync = useMutation({
@@ -98,7 +103,7 @@ export function BlackMarketDiscordSettings({
       {},
     ),
     onSuccess: result => {
-      onMessage({ ok: true, text: 'Discord-Verkaufsliste und Bestellbutton wurden sofort neu synchronisiert.' });
+      onMessage({ ok: true, text: 'Discord-Verkaufsliste, Direktkauf und Bestellkanäle wurden geprüft und neu synchronisiert.' });
       qc.setQueryData(['economy-black-market-discord', guildId, slot], { projection: result.projection });
     },
     onError: (error: Error) => onMessage({ ok: false, text: `Live-Sync fehlgeschlagen: ${error.message}` }),
@@ -113,7 +118,7 @@ export function BlackMarketDiscordSettings({
         <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Radio className="h-3.5 w-3.5" />Discord Live-Sync</p>
         <div className="flex items-center gap-2">
           {current?.lastSyncError
-            ? <Badge variant="warn">SYNC-FEHLER</Badge>
+            ? <Badge variant="warn">GESPEICHERT · SYNC-FEHLER</Badge>
             : current?.lastSyncedAt ? <Badge variant="ok">LIVE</Badge> : <Badge variant="neutral">NICHT AKTIV</Badge>}
           {canManage && (
             <Button
@@ -185,7 +190,11 @@ export function BlackMarketDiscordSettings({
         </div>
       )}
 
-      {current?.lastSyncError && <p className="text-xs text-danger">Discord-Syncfehler: {current.lastSyncError}</p>}
+      {current?.lastSyncError && (
+        <p className="text-xs text-danger">
+          Konfiguration ist gespeichert, aber Discord ist noch nicht vollständig live: {current.lastSyncError}
+        </p>
+      )}
       {channels.isError && <p className="text-xs text-danger">Discord-Kanäle konnten nicht geladen werden: {(channels.error as Error).message}</p>}
       {projection.isError && <p className="text-xs text-danger">Discord-Konfiguration konnte nicht geladen werden: {(projection.error as Error).message}</p>}
     </div>
