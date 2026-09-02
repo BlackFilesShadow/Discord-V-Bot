@@ -27,7 +27,6 @@ import {
   createMarketOrderV2,
   MAX_MARKET_ORDER_LINES,
   MAX_MARKET_ORDER_UNITS,
-  scheduleMarketOrderReadyNoticeOneHour,
 } from './blackMarketOrderV2';
 import { listManagedVirtualAccounts } from './virtualAccountFinance';
 import { getVirtualAccountById } from './virtualAccounts';
@@ -193,7 +192,6 @@ async function cartPayload(token: string, draft: CartDraft) {
   draft.page = Math.max(0, Math.min(totalPages - 1, draft.page));
   const pageItems = listings.slice(draft.page * PAGE_SIZE, draft.page * PAGE_SIZE + PAGE_SIZE);
   const listingById = new Map(allListings.map(listing => [listing.id, listing]));
-
   const lines = Object.entries(draft.lines).flatMap(([listingId, quantity]) => {
     const listing = listingById.get(listingId);
     return listing ? [{ listing, quantity }] : [];
@@ -205,7 +203,7 @@ async function cartPayload(token: string, draft: CartDraft) {
     .setColor(0x22c55e)
     .setTitle('🛒 Bestellung aufgeben')
     .setDescription(lines.length
-      ? lines.map(line => `• **${line.listing.name}** × ${line.quantity} — ${((line.listing.price * BigInt(line.quantity))).toLocaleString('de-DE')} ${cfg.emoji}`).join('\n')
+      ? lines.map(line => `• **${line.listing.name}** × ${line.quantity} — ${(line.listing.price * BigInt(line.quantity)).toLocaleString('de-DE')} ${cfg.emoji}`).join('\n')
       : 'Wähle einen Artikel und eine Menge aus und füge ihn dem Warenkorb hinzu.')
     .addFields(
       { name: 'Virtuelles Konto', value: vendor ?? 'Noch nicht gewählt', inline: true },
@@ -217,25 +215,20 @@ async function cartPayload(token: string, draft: CartDraft) {
   const listingSelect = new StringSelectMenuBuilder()
     .setCustomId(`marketorder:item:${token}`)
     .setPlaceholder(totalPages > 1 ? `Artikel wählen · Seite ${draft.page + 1}/${totalPages}` : 'Artikel wählen')
-    .setMinValues(1)
-    .setMaxValues(1)
+    .setMinValues(1).setMaxValues(1)
     .addOptions(pageItems.map(listing => ({
-      label: optionLabel(listing),
-      value: listing.id,
+      label: optionLabel(listing), value: listing.id,
       description: `${listing.price.toLocaleString('de-DE')} ${cfg.currencyName} · ${listing.sku}`.slice(0, 100),
       default: listing.id === draft.selectedListingId,
     })));
-
   const quantitySelect = new StringSelectMenuBuilder()
     .setCustomId(`marketorder:qty:${token}`)
     .setPlaceholder(`Menge wählen · aktuell ${draft.selectedQuantity}`)
-    .setMinValues(1)
-    .setMaxValues(1)
+    .setMinValues(1).setMaxValues(1)
     .addOptions(Array.from({ length: MAX_MARKET_ORDER_UNITS }, (_, index) => {
       const quantity = index + 1;
       return { label: `${quantity} Stück`, value: String(quantity), default: quantity === draft.selectedQuantity };
     }));
-
   const rows: Array<ActionRowBuilder<StringSelectMenuBuilder> | ActionRowBuilder<ButtonBuilder>> = [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(listingSelect),
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(quantitySelect),
@@ -245,373 +238,187 @@ async function cartPayload(token: string, draft: CartDraft) {
       new ButtonBuilder().setCustomId(`marketorder:pay:b:${token}`).setLabel('Mit Bank bezahlen').setEmoji('🏦').setStyle(ButtonStyle.Primary).setDisabled(lines.length === 0),
     ),
   ];
-
-  if (totalPages > 1) {
-    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`marketorder:page:${token}:${Math.max(0, draft.page - 1)}`).setLabel('◀ Zurück').setStyle(ButtonStyle.Secondary).setDisabled(draft.page <= 0),
-      new ButtonBuilder().setCustomId(`marketorder:page:${token}:${Math.min(totalPages - 1, draft.page + 1)}`).setLabel('Weiter ▶').setStyle(ButtonStyle.Secondary).setDisabled(draft.page >= totalPages - 1),
-    ));
-  }
+  if (totalPages > 1) rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`marketorder:page:${token}:${Math.max(0, draft.page - 1)}`).setLabel('◀ Zurück').setStyle(ButtonStyle.Secondary).setDisabled(draft.page <= 0),
+    new ButtonBuilder().setCustomId(`marketorder:page:${token}:${Math.min(totalPages - 1, draft.page + 1)}`).setLabel('Weiter ▶').setStyle(ButtonStyle.Secondary).setDisabled(draft.page >= totalPages - 1),
+  ));
   rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`marketorder:cancel:${token}`).setLabel('Abbrechen').setStyle(ButtonStyle.Danger),
   ));
-
   return { embeds: [embed], components: rows, allowedMentions: { parse: [] as never[] } };
 }
 
 export async function handleMarketOrderButton(interaction: ButtonInteraction): Promise<void> {
   try {
     if (!interaction.guildId || !interaction.channelId) throw new Error('Bestellungen sind nur in einem Discord-Server möglich.');
-    if (!interaction.client.user || interaction.message.author.id !== interaction.client.user.id) {
-      throw new Error('Diese Bestell-Nachricht wird nicht vom aktuellen V-Bot verwaltet.');
-    }
-    const context = await resolveOrderButtonContext({
-      customId: interaction.customId,
-      guildId: interaction.guildId,
-      channelId: interaction.channelId,
-      messageId: interaction.message.id,
-    });
+    if (!interaction.client.user || interaction.message.author.id !== interaction.client.user.id) throw new Error('Diese Bestell-Nachricht wird nicht vom aktuellen V-Bot verwaltet.');
+    const context = await resolveOrderButtonContext({ customId: interaction.customId, guildId: interaction.guildId, channelId: interaction.channelId, messageId: interaction.message.id });
     const token = newToken();
-    const draft: CartDraft = {
-      guildId: context.guildId,
-      connId: context.connId,
-      userDiscordId: interaction.user.id,
-      lines: {},
-      vendorAccountId: context.vendorAccountId,
-      selectedListingId: null,
-      selectedQuantity: 1,
-      page: 0,
-      createdAt: Date.now(),
-    };
+    const draft: CartDraft = { guildId: context.guildId, connId: context.connId, userDiscordId: interaction.user.id, lines: {}, vendorAccountId: context.vendorAccountId, selectedListingId: null, selectedQuantity: 1, page: 0, createdAt: Date.now() };
     carts.set(token, draft);
     await interaction.reply({ ...(await cartPayload(token, draft)), flags: MessageFlags.Ephemeral });
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+  } catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 export async function handleMarketOrderItemSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  try {
-    const token = parseToken(interaction.customId);
-    const draft = getCartForUser(token, interaction.user.id);
-    draft.selectedListingId = interaction.values[0] ?? null;
-    await interaction.update(await cartPayload(token, draft));
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+  try { const token = parseToken(interaction.customId); const draft = getCartForUser(token, interaction.user.id); draft.selectedListingId = interaction.values[0] ?? null; await interaction.update(await cartPayload(token, draft)); }
+  catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 export async function handleMarketOrderQuantitySelect(interaction: StringSelectMenuInteraction): Promise<void> {
   try {
-    const token = parseToken(interaction.customId);
-    const draft = getCartForUser(token, interaction.user.id);
-    const quantity = Number(interaction.values[0] ?? '1');
+    const token = parseToken(interaction.customId); const draft = getCartForUser(token, interaction.user.id); const quantity = Number(interaction.values[0] ?? '1');
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > MAX_MARKET_ORDER_UNITS) throw new Error('Ungültige Bestellmenge.');
-    draft.selectedQuantity = quantity;
-    await interaction.update(await cartPayload(token, draft));
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+    draft.selectedQuantity = quantity; await interaction.update(await cartPayload(token, draft));
+  } catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 export async function handleMarketOrderAddButton(interaction: ButtonInteraction): Promise<void> {
   try {
-    const token = parseToken(interaction.customId);
-    const draft = getCartForUser(token, interaction.user.id);
+    const token = parseToken(interaction.customId); const draft = getCartForUser(token, interaction.user.id);
     if (!draft.selectedListingId) throw new Error('Bitte zuerst einen Artikel auswählen.');
-    const listing = await prisma.economyMarketListing.findFirst({
-      where: {
-        id: draft.selectedListingId,
-        guildId: draft.guildId,
-        nitradoConnId: draft.connId,
-        active: true,
-        archivedAt: null,
-      },
-      select: { id: true, vendorAccountId: true, name: true },
-    });
+    const listing = await prisma.economyMarketListing.findFirst({ where: { id: draft.selectedListingId, guildId: draft.guildId, nitradoConnId: draft.connId, active: true, archivedAt: null }, select: { id: true, vendorAccountId: true, name: true } });
     if (!listing) throw new Error('Der ausgewählte Artikel ist nicht mehr verfügbar.');
-    if (draft.vendorAccountId && draft.vendorAccountId !== listing.vendorAccountId) {
-      throw new Error('Eine Bestellung kann nur Artikel desselben virtuellen Händlerkontos enthalten.');
-    }
-    const current = draft.lines[listing.id] ?? 0;
-    const next = current + draft.selectedQuantity;
+    if (draft.vendorAccountId && draft.vendorAccountId !== listing.vendorAccountId) throw new Error('Eine Bestellung kann nur Artikel desselben virtuellen Händlerkontos enthalten.');
+    const current = draft.lines[listing.id] ?? 0; const next = current + draft.selectedQuantity;
     if (next > MAX_MARKET_ORDER_UNITS) throw new Error(`Von ${listing.name} sind pro Bestellung maximal ${MAX_MARKET_ORDER_UNITS} Stück möglich.`);
-    if (current === 0 && Object.keys(draft.lines).length >= MAX_MARKET_ORDER_LINES) {
-      throw new Error(`Eine Bestellung darf maximal ${MAX_MARKET_ORDER_LINES} verschiedene Artikel enthalten.`);
-    }
-    draft.vendorAccountId = listing.vendorAccountId;
-    draft.lines[listing.id] = next;
-    draft.selectedListingId = null;
-    draft.selectedQuantity = 1;
-    draft.page = 0;
+    if (current === 0 && Object.keys(draft.lines).length >= MAX_MARKET_ORDER_LINES) throw new Error(`Eine Bestellung darf maximal ${MAX_MARKET_ORDER_LINES} verschiedene Artikel enthalten.`);
+    draft.vendorAccountId = listing.vendorAccountId; draft.lines[listing.id] = next; draft.selectedListingId = null; draft.selectedQuantity = 1; draft.page = 0;
     await interaction.update(await cartPayload(token, draft));
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+  } catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 export async function handleMarketOrderPageButton(interaction: ButtonInteraction): Promise<void> {
-  try {
-    const parts = interaction.customId.split(':');
-    const token = parts[2];
-    const page = Number(parts[3] ?? '0');
-    if (!token) throw new Error('Bestell-Auswahl ist abgelaufen. Bitte erneut öffnen.');
-    const draft = getCartForUser(token, interaction.user.id);
-    draft.page = Number.isFinite(page) ? Math.max(0, page) : 0;
-    draft.selectedListingId = null;
-    await interaction.update(await cartPayload(token, draft));
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+  try { const parts = interaction.customId.split(':'); const token = parts[2]; const page = Number(parts[3] ?? '0'); if (!token) throw new Error('Bestell-Auswahl ist abgelaufen. Bitte erneut öffnen.'); const draft = getCartForUser(token, interaction.user.id); draft.page = Number.isFinite(page) ? Math.max(0, page) : 0; draft.selectedListingId = null; await interaction.update(await cartPayload(token, draft)); }
+  catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 export async function handleMarketOrderCancelButton(interaction: ButtonInteraction): Promise<void> {
-  try {
-    const token = parseToken(interaction.customId);
-    const draft = getCartForUser(token, interaction.user.id);
-    carts.delete(token);
-    await interaction.update({
-      embeds: [new EmbedBuilder().setColor(0x6b7280).setTitle('Bestellung abgebrochen').setDescription(`Der Warenkorb mit ${totalUnits(draft)} Artikel(n) wurde verworfen. Es wurde nichts bezahlt.`)],
-      components: [],
-      allowedMentions: { parse: [] },
-    });
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+  try { const token = parseToken(interaction.customId); const draft = getCartForUser(token, interaction.user.id); carts.delete(token); await interaction.update({ embeds: [new EmbedBuilder().setColor(0x6b7280).setTitle('Bestellung abgebrochen').setDescription(`Der Warenkorb mit ${totalUnits(draft)} Artikel(n) wurde verworfen. Es wurde nichts bezahlt.`)], components: [], allowedMentions: { parse: [] } }); }
+  catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
 function orderItemLines(order: MarketOrderView, names: Map<string, string>): string[] {
-  return order.purchases.map(purchase => {
-    const name = names.get(purchase.listingId) ?? purchase.deliveryItems[0]?.itemText ?? 'Artikel';
-    return `• **${name}** × ${purchase.quantity} — ${purchase.amount.toLocaleString('de-DE')}`;
-  });
+  return order.purchases.map(purchase => { const name = names.get(purchase.listingId) ?? purchase.deliveryItems[0]?.itemText ?? 'Artikel'; return `• **${name}** × ${purchase.quantity} — ${purchase.amount.toLocaleString('de-DE')}`; });
 }
 
 async function postOrderChannelEmbed(client: Client, order: MarketOrderView, currencyName: string, currencyEmoji: string): Promise<void> {
-  const projection = await prisma.economyMarketDiscordProjection.findUnique({
-    where: { guildId_nitradoConnId: { guildId: order.guildId, nitradoConnId: order.nitradoConnId } },
-    select: { orderChannelId: true },
-  });
+  const projection = await prisma.economyMarketDiscordProjection.findUnique({ where: { guildId_nitradoConnId: { guildId: order.guildId, nitradoConnId: order.nitradoConnId } }, select: { orderChannelId: true } });
   if (!projection?.orderChannelId) throw new Error('Bestellungs-Kanal ist nicht konfiguriert.');
   const channel = await client.channels.fetch(projection.orderChannelId).catch(() => null);
   if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Bestellungs-Kanal ist nicht erreichbar.');
-
   const guild = client.guilds.cache.get(order.guildId) ?? await client.guilds.fetch(order.guildId).catch(() => null);
   const member = guild ? await guild.members.fetch(order.userDiscordId).catch(() => null) : null;
   const username = member?.displayName ?? member?.user.username ?? order.userDiscordId;
   const vendor = await vendorName(order.guildId, order.nitradoConnId, order.vendorAccountId);
-  const listings = await prisma.economyMarketListing.findMany({
-    where: { id: { in: order.purchases.map(purchase => purchase.listingId) }, guildId: order.guildId, nitradoConnId: order.nitradoConnId },
-    select: { id: true, name: true },
-  });
-  const names = new Map(listings.map(listing => [listing.id, listing.name]));
-  const lines = orderItemLines(order, names);
-  const createdUnix = Math.floor(order.createdAt.getTime() / 1000);
-
-  const embed = new EmbedBuilder()
-    .setColor(0xf59e0b)
-    .setTitle('📦 Bestellung ausstehend')
-    .addFields(
-      { name: 'Virtuelles Konto', value: vendor, inline: true },
-      { name: 'Username', value: username.slice(0, 1024), inline: true },
-      { name: 'Status', value: '**Bestellung ausstehend**', inline: true },
-      { name: 'Datum', value: `<t:${createdUnix}:D>`, inline: true },
-      { name: 'Uhrzeit', value: `<t:${createdUnix}:T>`, inline: true },
-      { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${currencyEmoji}** (${currencyName})`, inline: true },
-      { name: 'Artikel', value: lines.join('\n').slice(0, 1024), inline: false },
-    )
-    .setFooter({ text: 'V-Bot · Schwarzmarkt · Bestellung offen' })
-    .setTimestamp(order.createdAt);
-
+  const listings = await prisma.economyMarketListing.findMany({ where: { id: { in: order.purchases.map(purchase => purchase.listingId) }, guildId: order.guildId, nitradoConnId: order.nitradoConnId }, select: { id: true, name: true } });
+  const names = new Map(listings.map(listing => [listing.id, listing.name])); const lines = orderItemLines(order, names); const createdUnix = Math.floor(order.createdAt.getTime() / 1000);
+  const embed = new EmbedBuilder().setColor(0xf59e0b).setTitle('📦 Bestellung ausstehend').addFields(
+    { name: 'Virtuelles Konto', value: vendor, inline: true }, { name: 'Username', value: username.slice(0, 1024), inline: true }, { name: 'Status', value: '**Bestellung ausstehend**', inline: true },
+    { name: 'Datum', value: `<t:${createdUnix}:D>`, inline: true }, { name: 'Uhrzeit', value: `<t:${createdUnix}:T>`, inline: true }, { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${currencyEmoji}** (${currencyName})`, inline: true },
+    { name: 'Artikel', value: lines.join('\n').slice(0, 1024), inline: false },
+  ).setFooter({ text: 'V-Bot · Schwarzmarkt · Bestellung offen' }).setTimestamp(order.createdAt);
   const message = await (channel as TextChannel).send({ embeds: [embed], allowedMentions: { parse: [] } });
-  await attachMarketOrderMessage({
-    guildId: asGuildId(order.guildId),
-    nitradoConnId: asNitradoConnId(order.nitradoConnId),
-    orderId: order.id,
-    channelId: channel.id,
-    messageId: message.id,
-  });
+  await attachMarketOrderMessage({ guildId: asGuildId(order.guildId), nitradoConnId: asNitradoConnId(order.nitradoConnId), orderId: order.id, channelId: channel.id, messageId: message.id });
 }
 
 export async function handleMarketOrderPayButton(interaction: ButtonInteraction): Promise<void> {
-  const parts = interaction.customId.split(':');
-  const pocketCode = parts[2];
-  const token = parts[3];
+  const parts = interaction.customId.split(':'); const pocketCode = parts[2]; const token = parts[3];
   try {
-    if (!token) throw new Error('Bestell-Auswahl ist abgelaufen. Bitte erneut öffnen.');
-    const draft = getCartForUser(token, interaction.user.id);
-    const lines = Object.entries(draft.lines).map(([listingId, quantity]) => ({ listingId, quantity }));
-    if (lines.length === 0) throw new Error('Der Warenkorb ist leer.');
-    const sourcePocket = pocketCode === 'b' ? 'BANK' : pocketCode === 'w' ? 'WALLET' : null;
-    if (!sourcePocket) throw new Error('Ungültige Zahlungsart.');
-
-    await interaction.deferUpdate();
-    const cfg = await getConfig(asGuildId(draft.guildId), asNitradoConnId(draft.connId));
-    const result = await createMarketOrderV2({
-      guildId: asGuildId(draft.guildId),
-      nitradoConnId: asNitradoConnId(draft.connId),
-      userDiscordId: asUserDiscordId(draft.userDiscordId),
-      lines,
-      sourcePocket,
-      idempotencyKey: token,
-    });
-    carts.delete(token);
-
+    if (!token) throw new Error('Bestell-Auswahl ist abgelaufen. Bitte erneut öffnen.'); const draft = getCartForUser(token, interaction.user.id);
+    const lines = Object.entries(draft.lines).map(([listingId, quantity]) => ({ listingId, quantity })); if (lines.length === 0) throw new Error('Der Warenkorb ist leer.');
+    const sourcePocket = pocketCode === 'b' ? 'BANK' : pocketCode === 'w' ? 'WALLET' : null; if (!sourcePocket) throw new Error('Ungültige Zahlungsart.');
+    await interaction.deferUpdate(); const cfg = await getConfig(asGuildId(draft.guildId), asNitradoConnId(draft.connId));
+    const result = await createMarketOrderV2({ guildId: asGuildId(draft.guildId), nitradoConnId: asNitradoConnId(draft.connId), userDiscordId: asUserDiscordId(draft.userDiscordId), lines, sourcePocket, idempotencyKey: token }); carts.delete(token);
     let discordWarning: string | null = null;
-    try {
-      await postOrderChannelEmbed(interaction.client, result.order, cfg.currencyName, cfg.emoji);
-    } catch (embedError) {
-      discordWarning = ' Die Zahlung war erfolgreich und die Bestellung wurde gespeichert, aber das Bestell-Embed konnte nicht gesendet werden. Bitte einen Admin informieren.';
-      logger.error(`Bestell-Embed fehlgeschlagen (${result.order.id}):`, embedError as Error);
-    }
-
-    await interaction.editReply({
-      embeds: [new EmbedBuilder()
-        .setColor(discordWarning ? 0xf59e0b : 0x22c55e)
-        .setTitle(discordWarning ? '⚠️ Bestellung bezahlt' : '✅ Bestellung aufgegeben')
-        .setDescription(`**${result.order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** wurden aus deiner **${sourcePocket === 'BANK' ? 'Bank' : 'Wallet'}** abgebucht.${discordWarning ?? ' Deine Bestellung steht nun auf **ausstehend**.'}`)],
-      components: [],
-      allowedMentions: { parse: [] },
-    });
+    try { await postOrderChannelEmbed(interaction.client, result.order, cfg.currencyName, cfg.emoji); }
+    catch (embedError) { discordWarning = ' Die Zahlung war erfolgreich und die Bestellung wurde gespeichert, aber das Bestell-Embed konnte nicht gesendet werden. Bitte einen Admin informieren.'; logger.error(`Bestell-Embed fehlgeschlagen (${result.order.id}):`, embedError as Error); }
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(discordWarning ? 0xf59e0b : 0x22c55e).setTitle(discordWarning ? '⚠️ Bestellung bezahlt' : '✅ Bestellung aufgegeben').setDescription(`**${result.order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** wurden aus deiner **${sourcePocket === 'BANK' ? 'Bank' : 'Wallet'}** abgebucht.${discordWarning ?? ' Deine Bestellung steht nun auf **ausstehend**.'}`)], components: [], allowedMentions: { parse: [] } });
   } catch (error) {
     logger.warn(`Schwarzmarkt-Bestellung fehlgeschlagen: ${(error as Error).message}`);
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung fehlgeschlagen').setDescription((error as Error).message)],
-        components: [],
-        allowedMentions: { parse: [] },
-      }).catch(() => undefined);
-    } else {
-      await replyError(interaction, (error as Error).message);
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung fehlgeschlagen').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
+    else await replyError(interaction, (error as Error).message);
+  }
+}
+
+async function managedOpenOrders(guildId: ReturnType<typeof asGuildId>, nitradoConnId: ReturnType<typeof asNitradoConnId>, userId: string): Promise<MarketOrderView[]> {
+  const accounts = (await listManagedVirtualAccounts(guildId, nitradoConnId, asUserDiscordId(userId))).filter(account => account.kind === 'MARKET_VENDOR');
+  if (accounts.length === 0) throw new Error('Dir ist kein Schwarzmarkt-Händlerkonto zugewiesen.');
+  const all: MarketOrderView[] = [];
+  for (const account of accounts) {
+    let offset = 0;
+    while (true) {
+      const page = await listOpenMarketOrders(guildId, nitradoConnId, account.id, 100, offset);
+      all.push(...page); offset += page.length;
+      if (page.length < 100) break;
     }
   }
+  return all.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
+}
+
+function managerPage(customId: string, index: number): number {
+  const raw = Number(customId.split(':')[index] ?? '0');
+  return Number.isSafeInteger(raw) && raw >= 0 ? raw : 0;
+}
+
+async function managerPayload(interaction: ComponentInteraction, connId: string, requestedPage: number) {
+  if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');
+  const guildId = asGuildId(interaction.guildId); const nitradoConnId = asNitradoConnId(connId);
+  const open = await managedOpenOrders(guildId, nitradoConnId, interaction.user.id);
+  if (open.length === 0) throw new Error('Aktuell sind keine offenen Bestellungen vorhanden.');
+  const totalPages = Math.max(1, Math.ceil(open.length / PAGE_SIZE)); const page = Math.min(totalPages - 1, requestedPage); const pageOrders = open.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const guild = interaction.guild;
+  const options = await Promise.all(pageOrders.map(async order => {
+    const member = guild ? guild.members.cache.get(order.userDiscordId) ?? await guild.members.fetch(order.userDiscordId).catch(() => null) : null;
+    const username = member?.displayName ?? member?.user.username ?? order.userDiscordId; const count = order.purchases.reduce((sum, purchase) => sum + purchase.quantity, 0);
+    const items = order.purchases.flatMap(purchase => purchase.deliveryItems.map(item => `${item.itemText} x${item.quantity}`)).filter(Boolean).join(', ');
+    return { label: `${username} · ${count} Artikel · ${order.totalAmount.toLocaleString('de-DE')}`.slice(0, 100), value: order.id, description: items ? items.slice(0, 100) : undefined };
+  }));
+  const select = new StringSelectMenuBuilder().setCustomId(`vacct_mgr_order_sel:${connId}:${page}`).setPlaceholder(`Bestellung auswählen · Seite ${page + 1}/${totalPages}`).addOptions(options);
+  const components: Array<ActionRowBuilder<StringSelectMenuBuilder> | ActionRowBuilder<ButtonBuilder>> = [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)];
+  if (totalPages > 1) components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`vacct_mgr_order_page:${connId}:${Math.max(0, page - 1)}`).setLabel('◀ Zurück').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+    new ButtonBuilder().setCustomId(`vacct_mgr_order_page:${connId}:${Math.min(totalPages - 1, page + 1)}`).setLabel('Weiter ▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
+  ));
+  return { embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('Bestellung abschließen').setDescription(`Wähle eine offene Bestellung anhand des **Usernames** aus. Es werden alle offenen Bestellungen angezeigt · Seite **${page + 1}/${totalPages}**.`)], components, allowedMentions: { parse: [] as never[] } };
 }
 
 export async function handleMarketOrderManagerButton(interaction: ButtonInteraction): Promise<void> {
   const connId = interaction.customId.split(':')[1];
-  try {
-    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');
-    if (!connId) throw new Error('Gameserver-Scope fehlt. Bitte das Management-Embed neu synchronisieren.');
-    const guildId = asGuildId(interaction.guildId);
-    const nitradoConnId = asNitradoConnId(connId);
-    const accounts = (await listManagedVirtualAccounts(guildId, nitradoConnId, asUserDiscordId(interaction.user.id)))
-      .filter(account => account.kind === 'MARKET_VENDOR');
-    if (accounts.length === 0) throw new Error('Dir ist kein Schwarzmarkt-Händlerkonto zugewiesen.');
-    const open = (await Promise.all(accounts.map(account => listOpenMarketOrders(guildId, nitradoConnId, account.id)))).flat();
-    if (open.length === 0) throw new Error('Aktuell sind keine offenen Bestellungen vorhanden.');
-
-    const guild = interaction.guild;
-    const options = await Promise.all(open.slice(0, 25).map(async order => {
-      const member = guild ? guild.members.cache.get(order.userDiscordId) ?? await guild.members.fetch(order.userDiscordId).catch(() => null) : null;
-      const username = member?.displayName ?? member?.user.username ?? order.userDiscordId;
-      const count = order.purchases.reduce((sum, purchase) => sum + purchase.quantity, 0);
-      const items = order.purchases.flatMap(purchase => purchase.deliveryItems.map(item => `${item.itemText} x${item.quantity}`)).filter(Boolean).join(', ');
-      return {
-        label: `${username} · ${count} Artikel · ${order.totalAmount.toLocaleString('de-DE')}`.slice(0, 100),
-        value: order.id,
-        description: items ? items.slice(0, 100) : undefined,
-      };
-    }));
-
-    const select = new StringSelectMenuBuilder()
-      .setCustomId(`vacct_mgr_order_sel:${connId}`)
-      .setPlaceholder('Bestellung nach Username auswählen')
-      .addOptions(options);
-    await interaction.reply({
-      embeds: [new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setTitle('Bestellung abschließen')
-        .setDescription('Wähle die offene Bestellung anhand des **Usernames** aus. Danach wird der Kunde automatisch erwähnt und als „Bestellung fertig“ benachrichtigt.')],
-      components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-      flags: MessageFlags.Ephemeral,
-      allowedMentions: { parse: [] },
-    });
-  } catch (error) {
-    await replyError(interaction, (error as Error).message);
-  }
+  try { if (!connId) throw new Error('Gameserver-Scope fehlt. Bitte das Management-Embed neu synchronisieren.'); await interaction.reply({ ...(await managerPayload(interaction, connId, 0)), flags: MessageFlags.Ephemeral }); }
+  catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
-async function postOrderReadyEmbed(client: Client, orderId: string, guildId: string, connId: string, userDiscordId: string): Promise<void> {
-  const projection = await prisma.economyMarketDiscordProjection.findUnique({
-    where: { guildId_nitradoConnId: { guildId, nitradoConnId: connId } },
-    select: { orderReadyChannelId: true },
-  });
-  if (!projection?.orderReadyChannelId) throw new Error('Bestellung-fertig-Kanal ist nicht konfiguriert.');
-  const channel = await client.channels.fetch(projection.orderReadyChannelId).catch(() => null);
-  if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Bestellung-fertig-Kanal ist nicht erreichbar.');
+export async function handleMarketOrderManagerPageButton(interaction: ButtonInteraction): Promise<void> {
+  const parts = interaction.customId.split(':'); const connId = parts[1];
+  try { if (!connId) throw new Error('Gameserver-Scope fehlt.'); await interaction.update(await managerPayload(interaction, connId, managerPage(interaction.customId, 2))); }
+  catch (error) { await replyError(interaction, (error as Error).message); }
+}
 
-  const embed = new EmbedBuilder()
-    .setColor(0x22c55e)
-    .setTitle('✅ Bestellung fertig')
-    .setDescription('Deine Bestellung ist fertig und kann abgeholt werden.')
-    .addFields({ name: 'Status', value: '**Bestellung fertig**', inline: true })
-    .setFooter({ text: 'V-Bot · Schwarzmarkt · automatische Löschung nach 1 Stunde' })
-    .setTimestamp();
-  const message = await (channel as TextChannel).send({
-    content: `<@${userDiscordId}>`,
-    embeds: [embed],
-    allowedMentions: { users: [userDiscordId] },
-  });
-  await scheduleMarketOrderReadyNoticeOneHour({
-    guildId: asGuildId(guildId),
-    nitradoConnId: asNitradoConnId(connId),
-    orderId,
-    channelId: channel.id,
-    userDiscordId: asUserDiscordId(userDiscordId),
-    messageId: message.id,
-  });
+async function editOriginalOrderMessage(client: Client, order: MarketOrderView): Promise<void> {
+  if (!order.orderChannelId || !order.orderMessageId) return;
+  const channel = await client.channels.fetch(order.orderChannelId).catch(() => null); if (!channel || channel.type !== ChannelType.GuildText) return;
+  const message = await channel.messages.fetch(order.orderMessageId).catch(() => null); if (!message) return;
+  const existing = message.embeds[0]?.toJSON();
+  const fields = (existing?.fields ?? []).map(field => field.name === 'Status' ? { ...field, value: '**Bestellung abgeschlossen**' } : field);
+  await message.edit({ embeds: [new EmbedBuilder(existing).setColor(0x22c55e).setTitle('✅ Bestellung abgeschlossen').setFields(fields).setFooter({ text: 'V-Bot · Schwarzmarkt · Bestellung abgeschlossen' }).setTimestamp(order.closedAt ?? new Date())], components: [], allowedMentions: { parse: [] } });
 }
 
 export async function handleMarketOrderManagerSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  const connId = interaction.customId.split(':')[1];
-  const orderId = interaction.values[0];
+  const parts = interaction.customId.split(':'); const connId = parts[1]; const orderId = interaction.values[0];
   try {
-    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.');
-    if (!connId) throw new Error('Gameserver-Scope fehlt. Bitte das Management-Embed neu synchronisieren.');
-    if (!orderId) throw new Error('Keine Bestellung ausgewählt.');
-    const guildId = asGuildId(interaction.guildId);
-    const nitradoConnId = asNitradoConnId(connId);
-    const accounts = (await listManagedVirtualAccounts(guildId, nitradoConnId, asUserDiscordId(interaction.user.id)))
-      .filter(account => account.kind === 'MARKET_VENDOR');
-    const orderRows = (await Promise.all(accounts.map(account => listOpenMarketOrders(guildId, nitradoConnId, account.id)))).flat();
-    const order = orderRows.find(row => row.id === orderId);
+    if (!interaction.guildId) throw new Error('Nur auf einem Discord-Server verfügbar.'); if (!connId) throw new Error('Gameserver-Scope fehlt. Bitte das Management-Embed neu synchronisieren.'); if (!orderId) throw new Error('Keine Bestellung ausgewählt.');
+    const guildId = asGuildId(interaction.guildId); const nitradoConnId = asNitradoConnId(connId); const orderRows = await managedOpenOrders(guildId, nitradoConnId, interaction.user.id); const order = orderRows.find(row => row.id === orderId);
     if (!order) throw new Error('Bestellung ist nicht mehr offen oder dir nicht zugewiesen.');
-
     await interaction.deferUpdate();
-    const result = await closeMarketOrder({
-      guildId,
-      nitradoConnId,
-      orderId,
-      vendorAccountId: order.vendorAccountId,
-      actorDiscordId: asUserDiscordId(interaction.user.id),
-    });
-    if (result.changed) await postOrderReadyEmbed(interaction.client, orderId, interaction.guildId, connId, order.userDiscordId);
-    await interaction.editReply({
-      embeds: [new EmbedBuilder()
-        .setColor(0x22c55e)
-        .setTitle('✅ Bestellung abgeschlossen')
-        .setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen. Der Kunde wurde erwähnt; das Fertig-Embed wird nach **1 Stunde** automatisch gelöscht.`)],
-      components: [],
-      allowedMentions: { users: [order.userDiscordId] },
-    });
+    const result = await closeMarketOrder({ guildId, nitradoConnId, orderId, vendorAccountId: order.vendorAccountId, actorDiscordId: asUserDiscordId(interaction.user.id) });
+    if (result.changed) await editOriginalOrderMessage(interaction.client, result.order).catch(error => logger.warn(`Bestell-Embed Abschluss-Update fehlgeschlagen (${orderId}): ${(error as Error).message}`));
+    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x22c55e).setTitle('✅ Bestellung abgeschlossen').setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen. Die Fertig-Benachrichtigung ist persistent eingeplant und wird retry-sicher zugestellt.`)], components: [], allowedMentions: { users: [order.userDiscordId] } });
   } catch (error) {
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({
-        embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung konnte nicht abgeschlossen werden').setDescription((error as Error).message)],
-        components: [],
-        allowedMentions: { parse: [] },
-      }).catch(() => undefined);
-    } else {
-      await replyError(interaction, (error as Error).message);
-    }
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung konnte nicht abgeschlossen werden').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
+    else await replyError(interaction, (error as Error).message);
   }
 }
 
-/** Alte, bereits geöffnete Auswahl-Nachrichten werden bewusst fail-closed beendet. */
-export async function handleLegacyMarketOrderSelect(interaction: StringSelectMenuInteraction): Promise<void> {
-  await replyError(interaction, 'Diese Bestell-Auswahl stammt aus einer älteren Version. Bitte „Bestellen“ erneut öffnen.');
-}
-
-export async function handleLegacyMarketOrderConfirmButton(interaction: ButtonInteraction): Promise<void> {
-  await replyError(interaction, 'Diese Bestell-Bestätigung stammt aus einer älteren Version. Bitte „Bestellen“ erneut öffnen.');
-}
+export async function handleLegacyMarketOrderSelect(interaction: StringSelectMenuInteraction): Promise<void> { await replyError(interaction, 'Diese Bestell-Auswahl stammt aus einer älteren Version. Bitte „Bestellen“ erneut öffnen.'); }
+export async function handleLegacyMarketOrderConfirmButton(interaction: ButtonInteraction): Promise<void> { await replyError(interaction, 'Diese Bestell-Bestätigung stammt aus einer älteren Version. Bitte „Bestellen“ erneut öffnen.'); }
