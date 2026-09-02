@@ -29,6 +29,7 @@ const txStub = {
   },
   nitradoJob: { findMany: jobFindMany, create: jobCreate },
   whitelistRequest: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  serverBanEntry: { findUnique: jest.fn().mockResolvedValue(null) },
 };
 
 const prismaMock = {

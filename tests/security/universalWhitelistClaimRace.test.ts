@@ -25,6 +25,11 @@ jest.mock('../../src/modules/whitelist/whitelistOutbox', () => ({
   enqueueWhitelistAdd: mockEnqueueWhitelistAdd,
 }));
 
+jest.mock('../../src/modules/bans/whitelistBanGuard', () => ({
+  ACTIVE_BAN_WHITELIST_WARNING: 'active ban',
+  isWhitelistBlockedByActiveServerBan: jest.fn(async () => false),
+}));
+
 jest.mock('../../src/dashboard/socket/emitter', () => ({
   emitGuildEvent: jest.fn(),
 }));

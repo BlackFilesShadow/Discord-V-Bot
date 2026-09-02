@@ -27,6 +27,11 @@ import {
   type WhitelistOutboxClient,
 } from '../../../modules/whitelist/whitelistOutbox';
 import { syncServerListCatalog } from '../../../modules/nitrado/serverListCatalog';
+import { type BanClient } from '../../../modules/bans/banRegistry';
+import {
+  ACTIVE_BAN_WHITELIST_WARNING,
+  isWhitelistBlockedByActiveServerBan,
+} from '../../../modules/bans/whitelistBanGuard';
 
 export const whitelistRouter = Router({ mergeParams: true });
 
@@ -87,7 +92,12 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
   if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_ADD', danger: false })) return;
 
   try {
-    await prisma.$transaction(async tx => {
+    const created = await prisma.$transaction(async tx => {
+      if (await isWhitelistBlockedByActiveServerBan(
+        tx as unknown as BanClient,
+        { guildId: scope.guildId, nitradoConnId: connId },
+        gameId,
+      )) return false;
       await tx.whitelistEntry.create({
         data: {
           guildId: scope.guildId, nitradoConnId: connId, gameId, source: src,
@@ -99,7 +109,9 @@ whitelistRouter.post('/', requireGuildPermission('whitelist.manage'), async (req
         { guildId: scope.guildId, nitradoConnId: connId },
         gameId,
       );
+      return true;
     });
+    if (!created) { res.status(409).json({ error: ACTIVE_BAN_WHITELIST_WARNING }); return; }
   } catch (e) {
     if ((e as { code?: string }).code === 'P2002') {
       res.status(409).json({ error: 'gameId bereits in Whitelist oder noch in Remote-Entfernung.' }); return;
@@ -176,6 +188,12 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
 
   const decidedAt = new Date();
   const decided = await prisma.$transaction(async tx => {
+    if (approve && await isWhitelistBlockedByActiveServerBan(
+      tx as unknown as BanClient,
+      { guildId: scope.guildId, nitradoConnId: connId },
+      reqRow.gameId,
+    )) return 'BANNED' as const;
+
     const cas = await tx.whitelistRequest.updateMany({
       where: { id: reqRow.id, guildId: scope.guildId, nitradoConnId: connId, status: 'PENDING' },
       data: {
@@ -220,6 +238,7 @@ whitelistRouter.post('/requests/:id/decision', requireGuildPermission('whitelist
     return true;
   });
 
+  if (decided === 'BANNED') { res.status(409).json({ error: ACTIVE_BAN_WHITELIST_WARNING }); return; }
   if (!decided) { res.status(409).json({ error: 'Request bereits entschieden.' }); return; }
 
   logAuditDb('WHITELIST_REQUEST_DECISION', 'WHITELIST', {

@@ -26,8 +26,14 @@ jest.mock('../../src/database/prisma', () => ({
       whitelistRequest: { updateMany: (...a: unknown[]) => updateMany(...a) },
       whitelistEntry: { upsert: (...a: unknown[]) => whitelistUpsert(...a) },
       nitradoJob: { create: (...a: unknown[]) => jobCreate(...a) },
+      serverBanEntry: { findUnique: jest.fn().mockResolvedValue(null) },
     }),
   },
+}));
+
+jest.mock('../../src/modules/bans/whitelistBanGuard', () => ({
+  ACTIVE_BAN_WHITELIST_WARNING: 'active ban',
+  isWhitelistBlockedByActiveServerBan: jest.fn(async () => false),
 }));
 
 jest.mock('../../src/dashboard/clientRegistry', () => ({
