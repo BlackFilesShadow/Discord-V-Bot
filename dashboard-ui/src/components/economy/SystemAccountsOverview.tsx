@@ -50,7 +50,8 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
   // Runtime responses can temporarily be incomplete during rolling deployments,
   // stale proxies or test fixtures. Never let an optional read-only registry take
   // down the whole account workspace; an invalid/missing list is rendered empty.
-  const accounts = Array.isArray(query.data?.accounts) ? query.data.accounts : [];
+  const hasValidAccounts = Array.isArray(query.data?.accounts);
+  const accounts = hasValidAccounts ? query.data.accounts : [];
 
   return (
     <Card>
@@ -63,7 +64,10 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
 
       {query.isLoading && <p className="text-sm text-muted">Lade Systemkonten…</p>}
       {query.isError && <p className="text-sm text-danger">Systemkonten konnten nicht geladen werden: {(query.error as Error).message}</p>}
-      {!query.isLoading && !query.isError && accounts.length === 0 && (
+      {!query.isLoading && !query.isError && query.data && !hasValidAccounts && (
+        <p className="text-sm text-warning">Systemkonto-Antwort ist unvollständig. Die übrige Kontenverwaltung bleibt verfügbar; bitte Seite aktualisieren.</p>
+      )}
+      {!query.isLoading && !query.isError && hasValidAccounts && accounts.length === 0 && (
         <p className="text-sm text-muted">Aktuell existieren keine Lotterie- oder Schwarzmarkt-Systemkonten.</p>
       )}
 
