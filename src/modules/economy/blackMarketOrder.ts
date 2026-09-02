@@ -8,10 +8,8 @@ import { getMarketPurchase, type MarketPurchaseView } from './blackMarket';
 import { systemUserToVirtualAccount } from './systemVirtualTransfers';
 import type { VirtualAccountRawDb } from './virtualAccounts';
 
-// EconomyMarketPurchase.quantity is PostgreSQL INTEGER; a Katalog-Bestellung
-// bucht immer Menge 1 je gewaehltem Angebot (keine Mengenabfrage im Select-Menu).
 const ORDER_QUANTITY = 1;
-const MAX_ORDER_ITEMS = 25; // Discord StringSelectMenu erlaubt maximal 25 Optionen je Auswahl.
+const MAX_ORDER_ITEMS = 25;
 
 export type MarketOrderStatus = 'OPEN' | 'CLOSED';
 
@@ -98,26 +96,25 @@ export async function getMarketOrder(guildId: GuildId, nitradoConnId: NitradoCon
   return rows[0] ? toOrderView(rows[0]) : null;
 }
 
-/** Fuer das Manager-Panel-Dropdown: offene Bestellungen eines Vendor-Kontos. */
+/** Alle offenen Bestellungen eines Vendor-Kontos, optional paginiert. */
 export async function listOpenMarketOrders(
   guildId: GuildId,
   nitradoConnId: NitradoConnId,
   vendorAccountId: string,
   take = 25,
+  offset = 0,
 ): Promise<MarketOrderView[]> {
   await assertEconomyScopeReady(guildId, nitradoConnId);
+  const safeTake = Math.max(1, Math.min(100, take));
+  const safeOffset = Math.max(0, Math.floor(offset));
   const rows = await rawDb().$queryRawUnsafe<DbOrderRow[]>(
-    `${ORDER_SELECT} WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "vendorAccountId"=$3 AND "status"='OPEN' ORDER BY "createdAt" ASC LIMIT $4`,
-    String(guildId), String(nitradoConnId), vendorAccountId, Math.max(1, Math.min(25, take)),
+    `${ORDER_SELECT} WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "vendorAccountId"=$3 AND "status"='OPEN' ORDER BY "createdAt" ASC, "id" ASC LIMIT $4 OFFSET $5`,
+    String(guildId), String(nitradoConnId), vendorAccountId, safeTake, safeOffset,
   );
   return Promise.all(rows.map(toOrderView));
 }
 
 async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId, key: string): Promise<MarketOrderView | null> {
-  // Jede Angebotszeile speichert "${key}:${listingId}" als eigenen
-  // Idempotency-Key (siehe mutate() unten); ein exakter Vergleich gegen den
-  // reinen Order-Key traf hier nie. left()+Gleichheit statt LIKE, damit ein
-  // Unterstrich im Key (von cleanExternalKey erlaubt) kein Wildcard ist.
   const rows = await rawDb().$queryRawUnsafe<Array<{ id: string }>>(
     'SELECT o."id" FROM "EconomyMarketOrder" o JOIN "EconomyMarketPurchase" p ON p."orderId"=o."id" WHERE left(p."idempotencyKey", length($1) + 1) = $1 || \':\' AND o."guildId"=$2 AND o."nitradoConnId"=$3 LIMIT 1',
     key, String(guildId), String(nitradoConnId),
@@ -125,14 +122,6 @@ async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId
   return rows[0] ? getMarketOrder(guildId, nitradoConnId, rows[0].id) : null;
 }
 
-/**
- * Katalog-weite Mehrfach-Bestellung: buendelt mehrere Angebote DESSELBEN
- * Haendlers zu genau einer Wallet-Buchung + Bestellung. Bewusst
- * einzelvendor-gescoppt: eine Buchung ueber mehrere Vendor-Konten koennte bei
- * einem Teilfehler eine bereits gezahlte, aber nicht vollstaendige Bestellung
- * hinterlassen. Nutzt dieselbe atomare systemUserToVirtualAccount-Buchung wie
- * der bestehende Einzel-Direktkauf; die Menge ist je Angebot immer 1.
- */
 export async function createMarketOrder(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -230,7 +219,6 @@ export async function createMarketOrder(args: {
   return { booked: transfer.booked, order };
 }
 
-/** Verknuepft die im Bestell-Kanal geposteten Embed/Message-IDs mit der Bestellung. */
 export async function attachMarketOrderMessage(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -245,12 +233,7 @@ export async function attachMarketOrderMessage(args: {
   );
 }
 
-/**
- * Plant die garantierte 1-Minuten-Loeschung der "Bestellung bereit"-Mention
- * (Muster: ServerBanExpiryNotice). Ein einfaches setTimeout wuerde bei einem
- * Bot-Neustart innerhalb der Minute verloren gehen; dieser Datensatz wird
- * stattdessen von marketOrderReadyRuntime.ts persistent abgearbeitet.
- */
+/** Legacy-Helfer: bereits gesendete Ready-Nachricht fuer Cleanup persistieren. */
 export async function scheduleMarketOrderReadyNotice(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -261,17 +244,19 @@ export async function scheduleMarketOrderReadyNotice(args: {
   now?: Date;
 }): Promise<void> {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
-  const deleteAt = new Date((args.now ?? new Date()).getTime() + 60_000);
+  const now = args.now ?? new Date();
+  const deleteAt = new Date(now.getTime() + 60_000);
   await prisma.$executeRawUnsafe(
-    'INSERT INTO "EconomyMarketOrderReadyNotice" ("id","orderId","guildId","nitradoConnId","channelId","userDiscordId","messageId","deleteAt","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP) ON CONFLICT ("orderId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "deleteAt"=EXCLUDED."deleteAt", "deletedAt"=NULL',
-    randomUUID(), args.orderId, String(args.guildId), String(args.nitradoConnId), args.channelId, String(args.userDiscordId), args.messageId, deleteAt,
+    `INSERT INTO "EconomyMarketOrderReadyNotice" ("id","orderId","guildId","nitradoConnId","channelId","userDiscordId","messageId","status","attempts","sentAt","deleteAt","createdAt")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'SENT',1,$8,$9,CURRENT_TIMESTAMP)
+     ON CONFLICT ("orderId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "status"='SENT', "sentAt"=EXCLUDED."sentAt", "deleteAt"=EXCLUDED."deleteAt", "deletedAt"=NULL, "nextAttemptAt"=NULL, "leaseUntil"=NULL, "lastError"=NULL`,
+    randomUUID(), args.orderId, String(args.guildId), String(args.nitradoConnId), args.channelId, String(args.userDiscordId), args.messageId, now, deleteAt,
   );
 }
 
 /**
- * Schliesst eine offene Bestellung: markiert alle enthaltenen Kaeufe als
- * DELIVERED und die Bestellung selbst als CLOSED, atomar in einer Transaktion.
- * Idempotent: ein bereits geschlossenes CLOSED-Ergebnis liefert changed=false.
+ * Schliesst Bestellung + Fulfillments und erzeugt im selben Commit exakt einen
+ * PENDING Ready-Outbox-Datensatz. Ein zweiter Manager-Klick bleibt idempotent.
  */
 export async function closeMarketOrder(args: {
   guildId: GuildId;
@@ -283,12 +268,13 @@ export async function closeMarketOrder(args: {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const changed = await prisma.$transaction(async tx => {
     const raw = tx as unknown as VirtualAccountRawDb;
-    const rows = await raw.$queryRawUnsafe<Array<{ status: MarketOrderStatus }>>(
-      'SELECT "status"::text AS status FROM "EconomyMarketOrder" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "vendorAccountId"=$4 LIMIT 1 FOR UPDATE',
+    const rows = await raw.$queryRawUnsafe<Array<{ status: MarketOrderStatus; userDiscordId: string }>>(
+      'SELECT "status"::text AS status,"userDiscordId" FROM "EconomyMarketOrder" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "vendorAccountId"=$4 LIMIT 1 FOR UPDATE',
       args.orderId, String(args.guildId), String(args.nitradoConnId), args.vendorAccountId,
     );
-    if (!rows[0]) throw new Error('Bestellung nicht gefunden.');
-    if (rows[0].status === 'CLOSED') return false;
+    const lockedOrder = rows[0];
+    if (!lockedOrder) throw new Error('Bestellung nicht gefunden.');
+    if (lockedOrder.status === 'CLOSED') return false;
     const purchaseIds = await raw.$queryRawUnsafe<Array<{ id: string }>>(
       'SELECT "id" FROM "EconomyMarketPurchase" WHERE "orderId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
       args.orderId, String(args.guildId), String(args.nitradoConnId),
@@ -304,6 +290,12 @@ export async function closeMarketOrder(args: {
       args.orderId, String(args.guildId), String(args.nitradoConnId), String(args.actorDiscordId),
     );
     if (closed !== 1) throw new Error('Bestellung wurde parallel veraendert. Bitte neu laden.');
+    await raw.$executeRawUnsafe(
+      `INSERT INTO "EconomyMarketOrderReadyNotice" ("id","orderId","guildId","nitradoConnId","userDiscordId","status","attempts","nextAttemptAt","createdAt")
+       VALUES ($1,$2,$3,$4,$5,'PENDING',0,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+       ON CONFLICT ("orderId") DO NOTHING`,
+      randomUUID(), args.orderId, String(args.guildId), String(args.nitradoConnId), lockedOrder.userDiscordId,
+    );
     return true;
   });
   const order = await getMarketOrder(args.guildId, args.nitradoConnId, args.orderId);
