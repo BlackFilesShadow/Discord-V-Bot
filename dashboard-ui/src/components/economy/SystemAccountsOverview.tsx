@@ -47,6 +47,10 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
     ),
     retry: false,
   });
+  // Runtime responses can temporarily be incomplete during rolling deployments,
+  // stale proxies or test fixtures. Never let an optional read-only registry take
+  // down the whole account workspace; an invalid/missing list is rendered empty.
+  const accounts = Array.isArray(query.data?.accounts) ? query.data.accounts : [];
 
   return (
     <Card>
@@ -59,12 +63,12 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
 
       {query.isLoading && <p className="text-sm text-muted">Lade Systemkonten…</p>}
       {query.isError && <p className="text-sm text-danger">Systemkonten konnten nicht geladen werden: {(query.error as Error).message}</p>}
-      {!query.isLoading && !query.isError && (query.data?.accounts.length ?? 0) === 0 && (
+      {!query.isLoading && !query.isError && accounts.length === 0 && (
         <p className="text-sm text-muted">Aktuell existieren keine Lotterie- oder Schwarzmarkt-Systemkonten.</p>
       )}
 
       <div className="space-y-3">
-        {query.data?.accounts.map(account => (
+        {accounts.map(account => (
           <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
