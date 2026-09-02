@@ -32,6 +32,14 @@ interface ListingItemRow {
   quantity: number;
 }
 
+interface ReplayTransferRow {
+  virtualAccountId: string;
+  delta: bigint;
+  sourcePocket: string | null;
+  sourceRef: string | null;
+  userDiscordId: string | null;
+}
+
 function cleanExternalKey(value: string): string {
   const normalized = value.normalize('NFKC').trim();
   if (!normalized || normalized.length > 48 || !/^[A-Za-z0-9._:-]+$/.test(normalized)) {
@@ -77,12 +85,16 @@ function payloadFingerprint(lines: MarketOrderLineInput[], sourcePocket: Economy
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-function assertReplayMatches(args: {
+async function assertReplayMatches(args: {
   replay: MarketOrderView;
+  guildId: GuildId;
+  nitradoConnId: NitradoConnId;
   userDiscordId: UserDiscordId;
   lines: MarketOrderLineInput[];
   sourcePocket: EconomyPocket;
-}): void {
+  key: string;
+  fingerprint: string;
+}): Promise<void> {
   const { replay, lines, sourcePocket } = args;
   if (replay.userDiscordId !== String(args.userDiscordId)) {
     throw new Error('Idempotency-Key wurde fuer einen anderen Besteller verwendet.');
@@ -105,6 +117,24 @@ function assertReplayMatches(args: {
   if (expected.size !== 0 || storedTotal !== replay.totalAmount) {
     throw new Error('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
   }
+
+  const transferKey = `virtual-system:${args.guildId}:${args.nitradoConnId}:${args.key}`;
+  const rows = await prisma.$queryRawUnsafe<ReplayTransferRow[]>(
+    'SELECT "virtualAccountId","delta","sourcePocket","sourceRef","userDiscordId" FROM "EconomyVirtualAccountEntry" WHERE "idempotencyKey"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1',
+    transferKey,
+    String(args.guildId),
+    String(args.nitradoConnId),
+  );
+  const entry = rows[0];
+  const exactTransfer = !!entry
+    && entry.virtualAccountId === replay.vendorAccountId
+    && entry.delta === replay.totalAmount
+    && entry.sourcePocket === sourcePocket
+    && entry.sourceRef === `market-order:${args.fingerprint}`
+    && entry.userDiscordId === String(args.userDiscordId);
+  if (!exactTransfer) {
+    throw new Error('Idempotency-Key wurde mit anderen Buchungsdaten wiederverwendet.');
+  }
 }
 
 async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId, key: string): Promise<MarketOrderView | null> {
@@ -123,14 +153,25 @@ export async function createMarketOrderV2(args: {
   sourcePocket: EconomyPocket;
   idempotencyKey: string;
 }): Promise<{ booked: boolean; order: MarketOrderView }> {
+  if (args.sourcePocket !== 'WALLET' && args.sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
   const lines = normalizeLines(args.lines);
   const listingIds = lines.map(line => line.listingId);
   const quantities = new Map(lines.map(line => [line.listingId, line.quantity]));
   const key = orderKey(args.idempotencyKey);
+  const fingerprint = payloadFingerprint(lines, args.sourcePocket);
 
   const replay = await existingOrderByKey(args.guildId, args.nitradoConnId, key);
   if (replay) {
-    assertReplayMatches({ replay, userDiscordId: args.userDiscordId, lines, sourcePocket: args.sourcePocket });
+    await assertReplayMatches({
+      replay,
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      userDiscordId: args.userDiscordId,
+      lines,
+      sourcePocket: args.sourcePocket,
+      key,
+      fingerprint,
+    });
     return { booked: false, order: replay };
   }
 
@@ -151,7 +192,6 @@ export async function createMarketOrderV2(args: {
   }
   const totalAmount = initialRows.reduce((sum, row) => sum + row.price * BigInt(quantities.get(row.id) ?? 1), 0n);
   if (totalAmount <= 0n) throw new Error('Bestellsumme ist ungueltig.');
-  const fingerprint = payloadFingerprint(lines, args.sourcePocket);
 
   const transfer = await systemUserToVirtualAccount<{ listings: LockedListing[] }, string>({
     idempotencyKey: key,
@@ -218,7 +258,16 @@ export async function createMarketOrderV2(args: {
 
   const order = await existingOrderByKey(args.guildId, args.nitradoConnId, key);
   if (!order) throw new Error('Schwarzmarkt-Bestellung konnte nicht vollstaendig gelesen werden.');
-  assertReplayMatches({ replay: order, userDiscordId: args.userDiscordId, lines, sourcePocket: args.sourcePocket });
+  await assertReplayMatches({
+    replay: order,
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    userDiscordId: args.userDiscordId,
+    lines,
+    sourcePocket: args.sourcePocket,
+    key,
+    fingerprint,
+  });
   logAudit('MARKET_ORDER_CREATED', 'ECONOMY', {
     guildId: args.guildId,
     nitradoConnId: args.nitradoConnId,
