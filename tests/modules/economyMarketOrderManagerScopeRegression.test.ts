@@ -33,7 +33,7 @@ test('closing an order atomically enqueues exactly one persistent ready intent',
   expect(source).toContain('persistent eingeplant');
 });
 
-test('ready delivery has retry state, lease and one-hour cleanup', () => {
+test('ready delivery has retry state, lease and one-minute cleanup', () => {
   expect(migration).toContain("('PENDING', 'SENDING', 'SENT')");
   expect(migration).toContain('"attempts" INTEGER NOT NULL DEFAULT 0');
   expect(migration).toContain('"nextAttemptAt" TIMESTAMP(3)');
@@ -41,7 +41,7 @@ test('ready delivery has retry state, lease and one-hour cleanup', () => {
   expect(runtime).toContain('FOR UPDATE SKIP LOCKED');
   expect(runtime).toContain("status: 'PENDING'");
   expect(runtime).toContain("status: 'SENT'");
-  expect(runtime).toContain('READY_TTL_MS = 60 * 60_000');
+  expect(runtime).toContain('READY_TTL_MS = 60_000');
 });
 
 test('original pending order embed is edited to completed after close', () => {
