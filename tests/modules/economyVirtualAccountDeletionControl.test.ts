@@ -4,17 +4,24 @@ import path from 'node:path';
 const root = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('virtual account removal is balance/status independent while preserving domain history', () => {
+test('custom account deletion is terminal while immutable history stays referentially valid', () => {
   const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
   const route = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
+  const terminal = read('src/dashboard/routes/v2/economyVirtualAccountTerminalDeletion.ts');
+  const v2 = read('src/dashboard/routes/v2.ts');
   const ui = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
 
-  expect(deletion).toContain('status- and balance-independent');
   expect(deletion).toContain('SET "bankBalance"=0');
   expect(deletion).toContain('SET "balance"=0');
-  expect(deletion).toContain('EconomyVirtualAccountControlHidden');
+  expect(deletion).toContain('EconomyVirtualAccountDeleted');
   expect(deletion).toContain('CONTROL_DELETE_RESET');
-  expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
+  expect(deletion).toContain("account.kind !== 'CUSTOM'");
+  expect(deletion).toContain("mode: 'HISTORY_RETAINED'");
+  expect(deletion).not.toContain("mode: 'CONTROL_HIDDEN'");
+  expect(terminal).toContain('!deletedIds.has(account.id)');
+  expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
+  expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter'))
+    .toBeLessThan(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'));
   expect(ui).toContain("{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}");
   expect(route.indexOf('deleteUnusedVirtualAccount')).toBeLessThan(route.indexOf('retireVirtualAccountProjection', route.indexOf("delete('/control/accounts/:accountId'")));
 });
