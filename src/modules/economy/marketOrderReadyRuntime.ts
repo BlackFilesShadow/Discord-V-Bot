@@ -1,17 +1,21 @@
 /**
  * Restart-sichere Ready-Outbox + Cleanup fuer Schwarzmarkt-Bestellungen.
  * PENDING/SENDING werden mit kurzer Lease verarbeitet; Fehler landen mit
- * Backoff wieder in PENDING. SENT-Nachrichten werden nach einer Stunde geloescht.
+ * Backoff wieder in PENDING. SENT-Nachrichten werden nach einer Minute geloescht.
  */
 import { ChannelType, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
+import { asGuildId, asNitradoConnId } from '../../types/scope';
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
+import { getMarketOrder } from './blackMarketOrder';
+import { getConfig } from './repository';
+import { getVirtualAccountById } from './virtualAccounts';
 
 const POLL_INTERVAL_MS = 5_000;
 const BATCH = 50;
 const LEASE_MS = 30_000;
-const READY_TTL_MS = 60 * 60_000;
+const READY_TTL_MS = 60_000;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -36,6 +40,10 @@ function isUnknownDiscordResource(error: unknown, code: number): boolean {
 function retryAt(now: Date, attempts: number): Date {
   const seconds = Math.min(300, Math.max(5, 5 * (2 ** Math.min(6, attempts))));
   return new Date(now.getTime() + seconds * 1000);
+}
+
+function readyMarker(noticeId: string): string {
+  return `Outbox:${noticeId}`;
 }
 
 async function claimReadyNotice(now: Date): Promise<ReadyNoticeRow | null> {
@@ -74,8 +82,35 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
   const channel = await client.channels.fetch(projection.orderReadyChannelId);
   if (!channel || channel.type !== ChannelType.GuildText) throw new Error('Bestellung-fertig-Kanal ist nicht erreichbar.');
 
-  // Falls ein vorheriger Versuch die Nachricht bereits gesendet, aber den DB-
-  // Status noch nicht persistiert hat, wird eine bekannte messageId wiederverwendet.
+  const guildId = asGuildId(notice.guildId);
+  const nitradoConnId = asNitradoConnId(notice.nitradoConnId);
+  const order = await getMarketOrder(guildId, nitradoConnId, notice.orderId);
+  if (!order || order.status !== 'CLOSED' || order.userDiscordId !== notice.userDiscordId) {
+    throw new Error('Abgeschlossene Bestellung fuer Ready-Notice nicht gefunden.');
+  }
+  const [vendor, cfg, listings] = await Promise.all([
+    getVirtualAccountById(guildId, nitradoConnId, order.vendorAccountId),
+    getConfig(guildId, nitradoConnId),
+    prisma.economyMarketListing.findMany({
+      where: {
+        id: { in: order.purchases.map(purchase => purchase.listingId) },
+        guildId: notice.guildId,
+        nitradoConnId: notice.nitradoConnId,
+      },
+      select: { id: true, name: true },
+    }),
+  ]);
+  if (!vendor) throw new Error('Haendlerkonto fuer Ready-Notice nicht gefunden.');
+  const names = new Map(listings.map(listing => [listing.id, listing.name]));
+  const itemLines = order.purchases.map(purchase => {
+    const name = names.get(purchase.listingId) ?? purchase.deliveryItems[0]?.itemText ?? 'Artikel';
+    return `• **${name}** — ${purchase.quantity} × ${purchase.unitPrice.toLocaleString('de-DE')} = **${purchase.amount.toLocaleString('de-DE')} ${cfg.emoji}**`;
+  });
+  const marker = readyMarker(notice.id);
+
+  // Reconcile a Discord send that succeeded before its DB acknowledgement.
+  // The persisted messageId is preferred; otherwise the unique outbox marker
+  // prevents a retry from creating a second mention.
   let messageId = notice.messageId;
   if (messageId) {
     const existing = await channel.messages.fetch(messageId).catch(error => {
@@ -85,12 +120,26 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
     if (!existing) messageId = null;
   }
   if (!messageId) {
+    const recent = await channel.messages.fetch({ limit: 50 });
+    const existing = recent.find(message =>
+      message.author.id === client.user?.id
+      && message.embeds.some(embed => embed.footer?.text?.includes(marker)),
+    );
+    messageId = existing?.id ?? null;
+  }
+  if (!messageId) {
     const embed = new EmbedBuilder()
       .setColor(0x22c55e)
-      .setTitle('✅ Bestellung fertig')
+      .setTitle('✅ Bestellung bereit')
       .setDescription('Deine Bestellung ist fertig und kann abgeholt werden.')
-      .addFields({ name: 'Status', value: '**Bestellung fertig**', inline: true })
-      .setFooter({ text: 'V-Bot · Schwarzmarkt · automatische Löschung nach 1 Stunde' })
+      .addFields(
+        { name: 'Händler', value: vendor.name.slice(0, 1024), inline: true },
+        { name: 'Bestellung', value: `\`${order.id}\``, inline: true },
+        { name: 'Status', value: '**Bestellung bereit**', inline: true },
+        { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** (${cfg.currencyName})`, inline: true },
+        { name: 'Artikel', value: itemLines.join('\n').slice(0, 1024), inline: false },
+      )
+      .setFooter({ text: `V-Bot · Schwarzmarkt · Löschung nach 1 Minute · ${marker}` })
       .setTimestamp(now);
     const sent = await channel.send({
       content: `<@${notice.userDiscordId}>`,
