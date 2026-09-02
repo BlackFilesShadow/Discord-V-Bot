@@ -32,6 +32,7 @@ jest.mock('../../src/modules/economy/blackMarketOrder', () => ({
 jest.mock('../../src/modules/economy/blackMarketOrderV2', () => ({
   __esModule: true,
   createMarketOrderV2: jest.fn(),
+  MAX_MARKET_ORDER_LINES: 25,
   MAX_MARKET_ORDER_UNITS: 20,
   scheduleMarketOrderReadyNoticeOneHour: jest.fn(),
 }));
