@@ -96,17 +96,6 @@ export const whitelistCommand: Command = {
       return;
     }
 
-    const existing = await prisma.whitelistEntry.findUnique({
-      where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id } },
-    });
-    if (existing) {
-      const message = existing.syncState === 'PENDING_REMOVE'
-        ? 'Dieser Spielername wird auf diesem Server gerade von der Whitelist entfernt. Bitte warte auf den Nitrado-Abgleich.'
-        : 'Dieser Spielername ist auf diesem Server bereits auf der Whitelist.';
-      await reply(i, message, true, 'ERROR');
-      return;
-    }
-
     if (await isWhitelistBlockedByActiveServerBan(
       prisma as unknown as BanClient,
       { guildId: scope.guildId, nitradoConnId: target.id },
@@ -114,6 +103,26 @@ export const whitelistCommand: Command = {
     )) {
       await reply(i, ACTIVE_BAN_WHITELIST_WARNING, true, 'ERROR', 'Whitelist durch Bann gesperrt');
       return;
+    }
+
+    const existing = await prisma.whitelistEntry.findUnique({
+      where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id } },
+    });
+    if (existing && existing.syncState !== 'PENDING_REMOVE') {
+      await reply(i, 'Dieser Spielername ist auf diesem Server bereits auf der Whitelist.', true, 'ERROR');
+      return;
+    }
+    if (existing?.syncState === 'PENDING_REMOVE') {
+      // Der Bann ist bereits aufgehoben; die neue Anfrage ersetzt den alten
+      // Remove-Intent. Ein noch laufender Remove-Job wird dadurch zum No-op.
+      await prisma.whitelistEntry.deleteMany({
+        where: {
+          id: existing.id,
+          guildId: scope.guildId,
+          nitradoConnId: target.id,
+          syncState: 'PENDING_REMOVE',
+        },
+      });
     }
 
     const openSame = await prisma.whitelistRequest.findFirst({

@@ -10,7 +10,7 @@ import { hashBanIdentifier } from './banTarget';
 import { isBanned, type BanClient, type BanScope } from './banRegistry';
 
 export const ACTIVE_BAN_WHITELIST_WARNING =
-  '⚠️ Dieser Spieler steht auf diesem Gameserver auf der aktiven Bannliste. Die Whitelist-Freigabe wurde nicht durchgeführt.';
+  '⚠️ Dein angegebener Username wurde auf diesem Gameserver gebannt. Die Whitelist-Freigabe wurde nicht durchgeführt.';
 
 export async function isWhitelistBlockedByActiveServerBan(
   client: BanClient,

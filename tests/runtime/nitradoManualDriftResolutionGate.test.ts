@@ -53,6 +53,29 @@ describe('manual Nitrado drift resolution gate', () => {
     expect(route).toContain("data: { active: false, appliedRemotely: false, liftedAt: now }");
   });
 
+  it('publishes each dashboard-detected drift once into its configured Discord catalog', () => {
+    const route = read('src/dashboard/routes/v2/nitradoDrift.ts');
+
+    expect(route).toContain("import { tryGetDashboardClient } from '../../clientRegistry'");
+    expect(route).toContain('notifyNitradoWhitelistDrift');
+    expect(route).toContain('notifyNitradoBanDrift');
+    expect(route).toContain('Whitelist-Driftmeldung fehlgeschlagen');
+    expect(route).toContain('Ban-Driftmeldung fehlgeschlagen');
+  });
+
+  it('reports an active ban before a pending whitelist removal and allows a post-unban request to supersede it', () => {
+    const command = read('src/commands/dashboard/whitelist.ts');
+    const guard = read('src/modules/bans/whitelistBanGuard.ts');
+    const banCheck = command.indexOf('isWhitelistBlockedByActiveServerBan(');
+    const entryRead = command.indexOf('const existing = await prisma.whitelistEntry.findUnique');
+
+    expect(banCheck).toBeGreaterThanOrEqual(0);
+    expect(entryRead).toBeGreaterThan(banCheck);
+    expect(command).toContain("if (existing?.syncState === 'PENDING_REMOVE')");
+    expect(command).toContain("syncState: 'PENDING_REMOVE'");
+    expect(guard).toContain('Dein angegebener Username wurde auf diesem Gameserver gebannt.');
+  });
+
   it('surfaces the conflict globally on server-slot dashboard pages with both decisions', () => {
     const shell = read('dashboard-ui/src/components/Shell.tsx');
     const banner = read('dashboard-ui/src/components/NitradoDriftBanner.tsx');

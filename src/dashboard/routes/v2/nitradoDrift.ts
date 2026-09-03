@@ -6,6 +6,7 @@ import { decrypt } from '../../../utils/security';
 import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { requireGuildPermission } from '../../middleware/auth';
+import { tryGetDashboardClient } from '../../clientRegistry';
 import { ensureNitradoWriteAllowed } from '../../middleware/nitradoWriteGuard';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
 import {
@@ -22,6 +23,7 @@ import {
   type BanOutboxClient,
 } from '../../../modules/bans/banOutbox';
 import { hashBanIdentifier, matchesBanIdentifier } from '../../../modules/bans/banTarget';
+import { notifyNitradoBanDrift, notifyNitradoWhitelistDrift } from '../../../modules/nitrado/driftDiscord';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
 
@@ -111,6 +113,17 @@ nitradoDriftRouter.get('/whitelist', requireGuildPermission('whitelist.manage'),
       state: 'REMOTE_MISSING' as const,
       canRestore: true,
     }));
+
+  // Das Dashboard hat den frischen Remote-Read bereits erbracht. Deshalb wird
+  // die deduplizierte Discord-Entscheidung sofort erzeugt, statt erst auf den
+  // naechsten Whitelist-Cron warten zu muessen. Ein Versandfehler darf die
+  // sichtbare Drift-Antwort weder verdecken noch die lokale Wahrheit aendern.
+  const client = tryGetDashboardClient();
+  if (client) {
+    await Promise.all(items.map(item => notifyNitradoWhitelistDrift(client, {
+      guildId: String(scope.guildId), nitradoConnId: String(connId), gameId: item.gameId,
+    }).catch(error => logger.warn(`Whitelist-Driftmeldung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`))));
+  }
 
   res.json({ observedAt: new Date().toISOString(), items });
 });
@@ -263,6 +276,13 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
       canRestore: Boolean(identifier),
     };
   });
+
+  const client = tryGetDashboardClient();
+  if (client) {
+    await Promise.all(items.map(item => notifyNitradoBanDrift(client, {
+      guildId: String(scope.guildId), nitradoConnId: String(connId), banId: item.banId,
+    }).catch(error => logger.warn(`Ban-Driftmeldung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`))));
+  }
 
   res.json({ observedAt: new Date().toISOString(), items });
 });
