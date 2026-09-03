@@ -53,11 +53,15 @@ describe('virtual account terminal removal regression', () => {
     expect(migration).not.toContain('RENAME TO "EconomyVirtualAccountDeleted"');
   });
 
-  it('serializes active domain work against terminal live deletion', () => {
+  it('serializes new economic writes and active domain work against terminal live deletion', () => {
     expect(migration).toContain('FOR KEY SHARE');
+    expect(migration).toContain('EconomyVirtualAccountEntry_require_live_account');
     expect(migration).toContain('LotteryRound_require_live_pot');
     expect(migration).toContain('EconomyMarketListing_require_live_vendor');
+    expect(migration).toContain('EconomyMarketPurchase_require_live_vendor');
     expect(migration).toContain('EconomyMarketOrder_require_live_vendor');
+    expect(migration).toContain('new virtual-account ledger entry requires a live account');
+    expect(migration).toContain('new market purchase requires a live vendor account');
     expect(deletion).toContain('FOR UPDATE');
     expect(deletion).toContain('aktiven Fachvorgang');
   });
