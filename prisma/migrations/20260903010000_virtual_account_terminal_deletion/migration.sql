@@ -107,6 +107,76 @@ ALTER TABLE "EconomyMarketOrder"
   REFERENCES "EconomyVirtualAccountHistoryIdentity"("accountId", "guildId", "nitradoConnId")
   ON DELETE RESTRICT ON UPDATE CASCADE;
 
+-- Historical FKs intentionally no longer require a live account. Active domain
+-- work still must. These guards acquire a KEY SHARE lock on the live row, which
+-- serializes correctly against terminal deletion's FOR UPDATE/DELETE locks:
+-- whichever operation wins first makes the other re-check and fail closed.
+CREATE FUNCTION "economy_require_live_lottery_pot"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW."status" IN ('ACTIVE'::"LotteryRoundStatus", 'DRAWING'::"LotteryRoundStatus", 'REFUNDING'::"LotteryRoundStatus") THEN
+    PERFORM 1 FROM "EconomyVirtualAccount"
+    WHERE "id"=NEW."potAccountId" AND "guildId"=NEW."guildId" AND "nitradoConnId"=NEW."nitradoConnId"
+    FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'active lottery round requires a live pot account';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "LotteryRound_require_live_pot"
+BEFORE INSERT OR UPDATE OF "potAccountId", "guildId", "nitradoConnId", "status"
+ON "LotteryRound"
+FOR EACH ROW EXECUTE FUNCTION "economy_require_live_lottery_pot"();
+
+CREATE FUNCTION "economy_require_live_market_listing_vendor"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW."active" = TRUE THEN
+    PERFORM 1 FROM "EconomyVirtualAccount"
+    WHERE "id"=NEW."vendorAccountId" AND "guildId"=NEW."guildId" AND "nitradoConnId"=NEW."nitradoConnId"
+    FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'active market listing requires a live vendor account';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "EconomyMarketListing_require_live_vendor"
+BEFORE INSERT OR UPDATE OF "vendorAccountId", "guildId", "nitradoConnId", "active"
+ON "EconomyMarketListing"
+FOR EACH ROW EXECUTE FUNCTION "economy_require_live_market_listing_vendor"();
+
+CREATE FUNCTION "economy_require_live_market_order_vendor"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW."status" = 'OPEN'::"EconomyMarketOrderStatus" THEN
+    PERFORM 1 FROM "EconomyVirtualAccount"
+    WHERE "id"=NEW."vendorAccountId" AND "guildId"=NEW."guildId" AND "nitradoConnId"=NEW."nitradoConnId"
+    FOR KEY SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'open market order requires a live vendor account';
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "EconomyMarketOrder_require_live_vendor"
+BEFORE INSERT OR UPDATE OF "vendorAccountId", "guildId", "nitradoConnId", "status"
+ON "EconomyMarketOrder"
+FOR EACH ROW EXECUTE FUNCTION "economy_require_live_market_order_vendor"();
+
 -- Upgrade fail-closed: old generic hidden CUSTOM rows may only become terminal
 -- deletes when they are empty and no domain operation is still active.
 DO $$
@@ -131,9 +201,9 @@ BEGIN
     JOIN "EconomyVirtualAccount" account ON account."id" = marker."accountId"
     WHERE account."kind" = 'CUSTOM'::"EconomyVirtualAccountKind"
       AND (
-        EXISTS (SELECT 1 FROM "LotteryRound" r WHERE r."potAccountId"=account."id" AND r."status" IN ('ACTIVE','DRAWING','REFUNDING'))
-        OR EXISTS (SELECT 1 FROM "EconomyMarketListing" l WHERE l."vendorAccountId"=account."id" AND l."active"=TRUE)
-        OR EXISTS (SELECT 1 FROM "EconomyMarketOrder" o WHERE o."vendorAccountId"=account."id" AND o."status"='OPEN'::"EconomyMarketOrderStatus")
+        EXISTS (SELECT 1 FROM "LotteryRound" r WHERE r."potAccountId"=account."id" AND r."guildId"=account."guildId" AND r."nitradoConnId"=account."nitradoConnId" AND r."status" IN ('ACTIVE','DRAWING','REFUNDING'))
+        OR EXISTS (SELECT 1 FROM "EconomyMarketListing" l WHERE l."vendorAccountId"=account."id" AND l."guildId"=account."guildId" AND l."nitradoConnId"=account."nitradoConnId" AND l."active"=TRUE)
+        OR EXISTS (SELECT 1 FROM "EconomyMarketOrder" o WHERE o."vendorAccountId"=account."id" AND o."guildId"=account."guildId" AND o."nitradoConnId"=account."nitradoConnId" AND o."status"='OPEN'::"EconomyMarketOrderStatus")
       )
   ) THEN
     RAISE EXCEPTION 'terminal deletion migration blocked: hidden CUSTOM account still owns active domain work';
