@@ -107,10 +107,28 @@ ALTER TABLE "EconomyMarketOrder"
   REFERENCES "EconomyVirtualAccountHistoryIdentity"("accountId", "guildId", "nitradoConnId")
   ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- Historical FKs intentionally no longer require a live account. Active domain
--- work still must. These guards acquire a KEY SHARE lock on the live row, which
--- serializes correctly against terminal deletion's FOR UPDATE/DELETE locks:
--- whichever operation wins first makes the other re-check and fail closed.
+-- Historical FKs intentionally no longer require a live account. New economic
+-- writes and active domain work still must. Each guard takes a KEY SHARE lock on
+-- the live row, serializing against terminal deletion's FOR UPDATE/DELETE locks.
+CREATE FUNCTION "economy_require_live_virtual_account_entry"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  PERFORM 1 FROM "EconomyVirtualAccount"
+  WHERE "id"=NEW."virtualAccountId" AND "guildId"=NEW."guildId" AND "nitradoConnId"=NEW."nitradoConnId"
+  FOR KEY SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'new virtual-account ledger entry requires a live account';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "EconomyVirtualAccountEntry_require_live_account"
+BEFORE INSERT ON "EconomyVirtualAccountEntry"
+FOR EACH ROW EXECUTE FUNCTION "economy_require_live_virtual_account_entry"();
+
 CREATE FUNCTION "economy_require_live_lottery_pot"()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -154,6 +172,25 @@ CREATE TRIGGER "EconomyMarketListing_require_live_vendor"
 BEFORE INSERT OR UPDATE OF "vendorAccountId", "guildId", "nitradoConnId", "active"
 ON "EconomyMarketListing"
 FOR EACH ROW EXECUTE FUNCTION "economy_require_live_market_listing_vendor"();
+
+CREATE FUNCTION "economy_require_live_market_purchase_vendor"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  PERFORM 1 FROM "EconomyVirtualAccount"
+  WHERE "id"=NEW."vendorAccountId" AND "guildId"=NEW."guildId" AND "nitradoConnId"=NEW."nitradoConnId"
+  FOR KEY SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'new market purchase requires a live vendor account';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "EconomyMarketPurchase_require_live_vendor"
+BEFORE INSERT ON "EconomyMarketPurchase"
+FOR EACH ROW EXECUTE FUNCTION "economy_require_live_market_purchase_vendor"();
 
 CREATE FUNCTION "economy_require_live_market_order_vendor"()
 RETURNS trigger
