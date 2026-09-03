@@ -65,25 +65,25 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(routes).toContain("requireGuildPermission('economy.manage')");
   });
 
-  it('entfernt jede sichtbare Kontoart status- und saldounabhaengig ohne Fachhistorie zu zerstoeren', () => {
+  it('loescht nur leere CUSTOM-Konten und zerstoert dabei weder Guthaben noch Fachhistorie', () => {
     expect(control).toContain("delete('/control/accounts/:accountId'");
     expect(control).toContain("requireGuildPermission('economy.manage')");
     expect(control).toContain('deleteUnusedVirtualAccount');
-    expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
-    expect(deletion).toContain('return hideDomainOwnedAccount');
     expect(deletion).toContain("account.kind !== 'CUSTOM'");
+    expect(deletion).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(deletion).toContain('FOR UPDATE');
-    expect(deletion).toContain('CONTROL_DELETE_RESET');
-    expect(deletion).toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
-    expect(deletion).toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
+    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+    expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+    expect(deletion).not.toContain('CONTROL_DELETE_RESET');
+    expect(deletion).not.toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
+    expect(deletion).not.toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
     expect(deletion).toContain('BANK_TREASURY');
     expect(deletion).toContain('GENERAL');
     expect(deletion).toContain('"EconomyVirtualAccountEntry"');
     expect(deletion).toContain('"LotteryRound"');
     expect(deletion).toContain('"EconomyMarketListing"');
     expect(deletion).toContain('"EconomyMarketPurchase"');
-    expect(deletion).toContain('const hasMoney = account.balance !== 0n || finance.bankBalance !== 0n;');
-    expect(deletion).toContain('const mustPreserveRow = hasMoney');
+    expect(deletion).toContain('const mustPreserveRow = Boolean(entries[0]?.exists) || Boolean(protectedRefs[0]?.protected);');
     expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
     expect(deletion).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
     expect(deletion).toContain("candidate.code === '23503'");
