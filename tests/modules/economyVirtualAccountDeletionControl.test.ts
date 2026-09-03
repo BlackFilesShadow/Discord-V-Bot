@@ -11,10 +11,12 @@ test('custom account deletion is terminal while immutable history stays referent
   const v2 = read('src/dashboard/routes/v2.ts');
   const ui = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
 
-  expect(deletion).toContain('SET "bankBalance"=0');
-  expect(deletion).toContain('SET "balance"=0');
+  expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+  expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+  expect(deletion).not.toContain('SET "bankBalance"=0');
+  expect(deletion).not.toContain('SET "balance"=0');
+  expect(deletion).not.toContain('CONTROL_DELETE_RESET');
   expect(deletion).toContain('EconomyVirtualAccountDeleted');
-  expect(deletion).toContain('CONTROL_DELETE_RESET');
   expect(deletion).toContain("account.kind !== 'CUSTOM'");
   expect(deletion).toContain("mode: 'HISTORY_RETAINED'");
   expect(deletion).not.toContain("mode: 'CONTROL_HIDDEN'");
