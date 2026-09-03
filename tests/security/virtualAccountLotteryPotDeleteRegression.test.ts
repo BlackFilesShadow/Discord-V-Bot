@@ -11,11 +11,14 @@ describe('virtual account terminal removal regression', () => {
   const v2 = read('src/dashboard/routes/v2.ts');
   const migration = read('prisma/migrations/20260903010000_virtual_account_terminal_deletion/migration.sql');
 
-  it('keeps system accounts out of generic deletion and leaves their owning domains authoritative', () => {
+  it('keeps domain-owned accounts out of generic deletion and leaves their owning domains authoritative', () => {
     expect(deletion).toContain("account.kind !== 'CUSTOM'");
     expect(deletion).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
+    expect(deletion).toContain("finance.accountPurpose === 'BANK_TREASURY'");
     expect(safety).toContain('requireCustomControlAccount');
-    expect(terminal).toContain("account.kind !== 'CUSTOM'");
+    expect(terminal).toContain("if (account.kind === 'LOTTERY_POT') return 'LOTTERY';");
+    expect(terminal).toContain("if (account.kind === 'MARKET_VENDOR') return 'BLACK_MARKET';");
+    expect(terminal).toContain("finance.accountPurpose === 'BANK_TREASURY' ? 'SERVER_BANK' : 'VIRTUAL_ACCOUNTS'");
     expect(deletion).not.toContain('hideDomainOwnedAccount');
   });
 
@@ -66,18 +69,22 @@ describe('virtual account terminal removal regression', () => {
     expect(deletion).toContain('aktiven Fachvorgang');
   });
 
-  it('never lists terminally deleted CUSTOM accounts and permanently rejects restore', () => {
+  it('never lists terminally deleted or domain-owned accounts in generic control and permanently rejects restore', () => {
     expect(terminal).toContain('listDeletedVirtualAccountIds');
-    expect(terminal).toContain("account.kind === 'CUSTOM' && !deletedIds.has(account.id)");
+    expect(terminal).toContain('accounts.filter(account => !deletedIds.has(account.id))');
+    expect(terminal).toContain("serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS')");
+    expect(terminal).toContain("serialized.filter(account => account.capabilities.managedBy !== 'VIRTUAL_ACCOUNTS')");
     expect(terminal).toContain("post('/control/accounts/:accountId/restore'");
     expect(terminal).toContain('res.status(410)');
     expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
     expect(deletion).toContain('return false;');
   });
 
-  it('blocks direct mutations against terminally deleted account IDs', () => {
-    expect(terminal).toContain('async function rejectDeletedMutation');
+  it('blocks direct mutations against deleted IDs and live domain-owned accounts', () => {
+    expect(terminal).toContain('async function rejectDeletedOrDomainOwnedMutation');
     expect(terminal).toContain('Dieses Konto wurde dauerhaft gelöscht und kann nicht mehr verändert werden.');
+    expect(terminal).toContain("owner && owner !== 'VIRTUAL_ACCOUNTS'");
+    expect(terminal).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(terminal).toContain("put('/control/accounts/:accountId'");
     expect(terminal).toContain("delete('/control/accounts/:accountId'");
     expect(terminal).toContain("post('/control/accounts/:accountId/sync'");

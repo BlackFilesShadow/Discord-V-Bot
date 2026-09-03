@@ -57,10 +57,10 @@ export async function restoreHiddenVirtualAccount(_args: {
 }
 
 /**
- * Terminal user-visible deletion for CUSTOM accounts.
+ * Terminal user-visible deletion for generic CUSTOM accounts.
  *
  * Safety invariants:
- * - Domain-owned system accounts are rejected and stay owned by their feature.
+ * - Domain-owned system accounts and the CUSTOM-backed Serverbank are rejected.
  * - Wallet and bank must already be zero; deletion never burns or transfers funds.
  * - Active lottery/market work blocks generic deletion.
  * - Historical ledger/lottery/market/order rows point to the dedicated immutable
@@ -98,6 +98,9 @@ export async function deleteUnusedVirtualAccount(args: {
       );
       const finance = finances[0];
       if (!finance) throw new Error('Konto-Finanzprofil fehlt; Löschung wird aus Sicherheitsgründen abgebrochen.');
+      if (finance.accountPurpose === 'BANK_TREASURY') {
+        throw new Error('Serverbank-Konten werden ausschließlich über die Serverbank-Funktion verwaltet und können nicht generisch gelöscht werden.');
+      }
 
       if (account.balance !== 0n || finance.bankBalance !== 0n) {
         throw new Error('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
