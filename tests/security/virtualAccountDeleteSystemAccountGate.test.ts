@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src/modules/economy/virtualAccountDeletion.ts'), 'utf8');
+const normalizedSource = source.replaceAll('\\', '');
 
 describe('virtual account system hard-delete gate', () => {
   // Serverbank is CUSTOM-backed, so its BANK_TREASURY finance purpose is part of the hard-delete boundary.
@@ -10,7 +11,9 @@ describe('virtual account system hard-delete gate', () => {
     expect(source).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(source).toContain("finance.accountPurpose === 'BANK_TREASURY'");
     expect(source).toContain('Serverbank-Konten werden ausschließlich über die Serverbank-Funktion verwaltet und können nicht generisch gelöscht werden.');
-    expect(source).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
+    expect(normalizedSource).toContain('DELETE FROM "EconomyVirtualAccount"');
+    expect(normalizedSource).toContain('AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"');
+    expect(normalizedSource).toContain('AND "balance"=0');
     expect(source).not.toContain('hideDomainOwnedAccount');
     expect(source).not.toContain('DELETE FROM "LotteryRound"');
     expect(source).not.toContain('DELETE FROM "EconomyMarketPurchase"');
