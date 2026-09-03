@@ -46,6 +46,7 @@ function account(id: string, name: string, walletBalance: string, bankBalance = 
     textStyle: 'NORMAL',
     exchangePlayerUnits: null,
     exchangeAccountUnits: null,
+    accountEmoji: '🏦',
     accountPurpose: 'GENERAL',
     managers: [],
     projection: null,
@@ -250,9 +251,15 @@ test.describe('Authenticated virtual-account actions', () => {
     expect(mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)?.query).toBe(`?slot=${SLOT}`);
   });
 
-  test('Hard-Delete verlangt zwei Klicks und bleibt exakt Guild+Slot-gescoped', async ({ page }) => {
+  test('Hard-Delete ist fail-closed, verlangt zwei Klicks und bleibt exakt Guild+Slot-gescoped', async ({ page }) => {
     const mutations = await stubEconomy(page);
     await gotoVirtualAccounts(page);
+
+    const fundedRow = page.getByText('Eventkasse', { exact: false })
+      .locator('xpath=ancestor::div[.//button[normalize-space()="Löschen"]][1]');
+    const fundedDelete = fundedRow.getByRole('button', { name: 'Löschen', exact: true });
+    await expect(fundedDelete).toBeDisabled();
+    await expect(fundedDelete).toHaveAttribute('title', /Wallet und Bank 0 sind/);
 
     const deletePath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}`;
     const row = page.getByText('Löschbare Kasse', { exact: false })
@@ -261,13 +268,14 @@ test.describe('Authenticated virtual-account actions', () => {
     await row.getByRole('button', { name: 'Löschen', exact: true }).click();
     expect(mutation(mutations, deletePath)).toBeUndefined();
     await expect(row.getByRole('button', { name: 'Wirklich löschen?', exact: true })).toBeVisible();
-    await expect(page.getByText(/vorhandenes Wallet-\/Bankguthaben kontrolliert auf 0 gesetzt und historisch protokolliert/)).toBeVisible();
-    await expect(page.getByText(/Lotterie-\/Markt-Systemkonten behalten ihre Fachlogik und Historie unverändert/)).toBeVisible();
+    await expect(page.getByText(/Wallet und Bank müssen bereits 0 sein; Guthaben wird niemals verworfen/)).toBeVisible();
+    await expect(page.getByText(/Historische Buchungen und Referenzen bleiben erhalten/)).toBeVisible();
 
     await row.getByRole('button', { name: 'Wirklich löschen?', exact: true }).click();
     await expect.poll(() => mutation(mutations, deletePath)).toBeTruthy();
     expect(mutation(mutations, deletePath)).toMatchObject({ method: 'DELETE', query: `?slot=${SLOT}`, body: null });
-    await expect(page.getByText(/Das leere Konto wurde dauerhaft gelöscht/)).toBeVisible();
+    await expect(page.getByText(/Konto „Löschbare Kasse“ wurde dauerhaft gelöscht/)).toBeVisible();
+    await expect(page.getByText(/Historische Buchungen und Referenzen bleiben erhalten/)).toBeVisible();
   });
 
   test('Payout nutzt kanonische User-GUID, beide Pockets, Idempotency und exakten Slot-Scope', async ({ page }) => {
