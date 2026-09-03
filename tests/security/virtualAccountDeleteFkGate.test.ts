@@ -19,10 +19,12 @@ describe('virtual account delete FK gate', () => {
     expect(migration).toContain('ON DELETE RESTRICT ON UPDATE CASCADE');
   });
 
-  it('serializes active domain work against live deletion and still fails closed on unknown live FKs', () => {
+  it('serializes all new economic writes and active domain work against live deletion', () => {
     expect(migration).toContain('FOR KEY SHARE');
+    expect(migration).toContain('EconomyVirtualAccountEntry_require_live_account');
     expect(migration).toContain('LotteryRound_require_live_pot');
     expect(migration).toContain('EconomyMarketListing_require_live_vendor');
+    expect(migration).toContain('EconomyMarketPurchase_require_live_vendor');
     expect(migration).toContain('EconomyMarketOrder_require_live_vendor');
     expect(source).toContain('FOR UPDATE');
     expect(source).toContain("candidate.code === '23503'");
