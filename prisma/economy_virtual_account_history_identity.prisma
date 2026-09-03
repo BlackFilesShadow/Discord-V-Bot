@@ -1,0 +1,20 @@
+// Historical identity for terminally deleted virtual accounts.
+//
+// This table is deliberately separate from EconomyVirtualAccount: the latter is
+// active/live storage and is physically deleted for successful CUSTOM deletion.
+// Ledger/lottery/market/order database FKs are migrated to this scoped identity
+// so immutable history survives without a live-account tombstone.
+model EconomyVirtualAccountHistoryIdentity {
+  accountId          String                    @id
+  guildId            String
+  nitradoConnId      String
+  kind               EconomyVirtualAccountKind
+  nameSnapshot       String                    @db.VarChar(80)
+  createdByDiscordId String
+  accountCreatedAt   DateTime
+  deletedAt          DateTime?
+  deletedByDiscordId String?
+
+  @@unique([accountId, guildId, nitradoConnId], map: "EconomyVirtualAccountHistoryIdentity_scope_key")
+  @@index([guildId, nitradoConnId, deletedAt], map: "EconomyVirtualAccountHistoryIdentity_deleted_scope_idx")
+}
