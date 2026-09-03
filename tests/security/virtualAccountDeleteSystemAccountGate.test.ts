@@ -4,23 +4,24 @@ import path from 'node:path';
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src/modules/economy/virtualAccountDeletion.ts'), 'utf8');
 
 describe('virtual account system hard-delete gate', () => {
-  it('rejects all system accounts and keeps physical delete restricted to CUSTOM', () => {
+  it('rejects all domain-owned accounts and keeps physical delete restricted to generic CUSTOM', () => {
     expect(source).toContain("if (account.kind !== 'CUSTOM')");
     expect(source).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
-    expect(source).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
+    expect(source).toContain("finance.accountPurpose === 'BANK_TREASURY'");
+    expect(source).toContain('Serverbank-Konten werden ausschließlich über die Serverbank-Funktion verwaltet und können nicht generisch gelöscht werden.');
+    expect(source).toContain(String.raw`AND \"kind\"=\'CUSTOM\'::\"EconomyVirtualAccountKind\" AND \"balance\"=0`);
     expect(source).not.toContain('hideDomainOwnedAccount');
     expect(source).not.toContain('DELETE FROM "LotteryRound"');
     expect(source).not.toContain('DELETE FROM "EconomyMarketPurchase"');
     expect(source).not.toContain('DELETE FROM "EconomyMarketOrder"');
   });
 
-  it('never burns funds and always removes a successful CUSTOM delete from live storage', () => {
+  it('never burns funds and always removes a successful generic CUSTOM delete from live storage', () => {
     expect(source).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
     expect(source).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
     expect(source).not.toContain('CONTROL_DELETE_RESET');
     expect(source).not.toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
     expect(source).not.toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
-    expect(source).not.toContain('BANK_TREASURY');
     expect(source).not.toContain('writeDeletedMarker');
     expect(source).toContain('EconomyVirtualAccountHistoryIdentity');
     expect(source).toContain('DELETE FROM "EconomyVirtualAccount"');
