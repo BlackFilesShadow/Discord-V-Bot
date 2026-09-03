@@ -89,13 +89,9 @@ function amountInput(id = 'amount') {
 export async function handleVirtualAccountDepositButton(interaction: ButtonInteraction): Promise<void> {
   const accountId = interaction.customId.slice('vacct:deposit:'.length);
   try {
-    const scope = await assertInteractionScope(interaction.guildId, accountId);
-    const account = await getVirtualAccountById(scope.guildId, scope.connId, accountId);
-    if (!account || account.status !== 'ACTIVE' || !account.acceptUserTransfers || account.kind !== 'CUSTOM') throw new Error('Dieses Konto nimmt aktuell keine direkten Einzahlungen an.');
-    const finance = await ensureVirtualAccountFinance(scope.guildId, scope.connId, accountId);
     const modal = new ModalBuilder().setCustomId(`vacct:deposit_modal:${accountId}`).setTitle('Auf virtuelles Konto einzahlen');
     modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(
-      amountInput().setLabel(`Betrag (${finance.currencyName})`).setPlaceholder('z. B. 5000 · Abbuchung aus deinem Wallet'),
+      amountInput().setLabel('Betrag').setPlaceholder('z. B. 5000 · Abbuchung aus deinem Wallet'),
     ));
     await interaction.showModal(modal);
   } catch (error) {
@@ -155,6 +151,7 @@ export async function handleVirtualManagerButton(interaction: ButtonInteraction)
   const [, action, rawConnId] = interaction.customId.split(':');
   if (!interaction.guildId || !rawConnId || !['payout', 'remove', 'balance'].includes(action)) return replyError(interaction, 'Manager-Aktion ist ungültig.');
   try {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const guildId = asGuildId(interaction.guildId);
     const connId = asNitradoConnId(rawConnId);
     const accounts = await listManagedVirtualAccounts(guildId, connId, asUserDiscordId(interaction.user.id));
@@ -174,10 +171,9 @@ export async function handleVirtualManagerButton(interaction: ButtonInteraction)
       .setCustomId(`vacct_mgr_sel:${action}:${connId}`)
       .setPlaceholder(`Konto für „${actionLabel(action)}“ auswählen`)
       .addOptions(options);
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle(actionLabel(action)).setDescription('Wähle das virtuelle Konto aus. Es werden ausschließlich Konten angezeigt, für die du als Kontoverwalter gespeichert bist.')],
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
-      flags: MessageFlags.Ephemeral,
     });
   } catch (error) {
     await replyError(interaction, (error as Error).message);
@@ -188,6 +184,28 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
   const [, action] = interaction.customId.split(':');
   const accountId = interaction.values[0];
   try {
+    if (action === 'payout' || action === 'remove') {
+      const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:${action}:${accountId}`).setTitle(action === 'payout' ? 'Auszahlung aus virtuellem Konto' : 'Betrag kontrolliert entfernen');
+      if (action === 'payout') {
+        modal.addComponents(
+          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('target').setLabel('Empfänger (Mention oder Discord-ID)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('source').setLabel('Quelle: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('targetPocket').setLabel('Ziel beim User: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Grund').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(3).setMaxLength(180)),
+        );
+      } else {
+        modal.addComponents(
+          new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('pocket').setLabel('Pocket: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
+          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Begründung der Korrektur').setStyle(TextInputStyle.Paragraph).setRequired(true).setMinLength(3).setMaxLength(180)),
+        );
+      }
+      await interaction.showModal(modal);
+      return;
+    }
+
+    await interaction.deferUpdate();
     const scope = await assertManager(interaction, accountId);
     const account = await getVirtualAccountById(scope.guildId, scope.connId, accountId);
     const finance = await ensureVirtualAccountFinance(scope.guildId, scope.connId, accountId);
@@ -203,30 +221,7 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
         new ButtonBuilder().setCustomId(`vacct_mgr_move:wb:${accountId}`).setLabel('Wallet → Bank').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(`vacct_mgr_move:bw:${accountId}`).setLabel('Bank → Wallet').setStyle(ButtonStyle.Secondary),
       )] : [];
-      await interaction.update({ embeds: [embed], components });
-      return;
-    }
-    if (account.kind !== 'CUSTOM') throw new Error('Lotterie- und Markt-Systemkonten dürfen nicht über generische Manageraktionen manipuliert werden.');
-    if (action === 'payout') {
-      const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:payout:${accountId}`).setTitle('Auszahlung aus virtuellem Konto');
-      modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('target').setLabel('Empfänger (Mention oder Discord-ID)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('source').setLabel('Quelle: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('targetPocket').setLabel('Ziel beim User: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Grund').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(3).setMaxLength(180)),
-      );
-      await interaction.showModal(modal);
-      return;
-    }
-    if (action === 'remove') {
-      const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:remove:${accountId}`).setTitle('Betrag kontrolliert entfernen');
-      modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('pocket').setLabel('Pocket: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Begründung der Korrektur').setStyle(TextInputStyle.Paragraph).setRequired(true).setMinLength(3).setMaxLength(180)),
-      );
-      await interaction.showModal(modal);
+      await interaction.editReply({ embeds: [embed], components });
       return;
     }
     throw new Error('Manager-Aktion ist ungültig.');
@@ -236,11 +231,8 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
 }
 
 export async function handleVirtualManagerMoveButton(interaction: ButtonInteraction): Promise<void> {
-  const [, , direction, accountId] = interaction.customId.split(':');
+  const [, direction, accountId] = interaction.customId.split(':');
   try {
-    const accountScope = await assertManager(interaction, accountId);
-    const account = await getVirtualAccountById(accountScope.guildId, accountScope.connId, accountId);
-    if (!account || account.kind !== 'CUSTOM') throw new Error('Dieses Konto erlaubt keine generische Pocket-Verschiebung.');
     if (direction !== 'wb' && direction !== 'bw') throw new Error('Pocket-Richtung ist ungültig.');
     const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:move_${direction}:${accountId}`).setTitle(direction === 'wb' ? 'Wallet → Bank' : 'Bank → Wallet');
     modal.addComponents(
