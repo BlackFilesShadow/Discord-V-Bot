@@ -14,15 +14,17 @@ describe('virtual account system hard-delete gate', () => {
     expect(source).not.toContain('DELETE FROM "EconomyMarketOrder"');
   });
 
-  it('never burns wallet or bank funds and only declassifies an already-empty deleted treasury', () => {
+  it('never burns funds and always removes a successful CUSTOM delete from live storage', () => {
     expect(source).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
     expect(source).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
     expect(source).not.toContain('CONTROL_DELETE_RESET');
     expect(source).not.toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
     expect(source).not.toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
-    expect(source).toMatch(/accountPurpose[^\n]*BANK_TREASURY[^\n]*GENERAL/);
-    expect(source).toContain('writeDeletedMarker');
-    expect(source).toContain("mode: 'HISTORY_RETAINED'");
-    expect(source).not.toContain("mode: 'CONTROL_HIDDEN'");
+    expect(source).not.toContain('BANK_TREASURY');
+    expect(source).not.toContain('writeDeletedMarker');
+    expect(source).toContain('EconomyVirtualAccountHistoryIdentity');
+    expect(source).toContain('DELETE FROM "EconomyVirtualAccount"');
+    expect(source).toContain("mode: 'HARD_DELETED'");
+    expect(source).not.toContain("mode: 'HISTORY_RETAINED'");
   });
 });
