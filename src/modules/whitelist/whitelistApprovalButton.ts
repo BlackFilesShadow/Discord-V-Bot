@@ -10,7 +10,7 @@ import {
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { Colors, statusTitle } from '../../utils/embedDesign';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 import { notifyRequesterDecision, postDecisionLog } from './whitelistChannels';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from './whitelistOutbox';
 import { type BanClient } from '../bans/banRegistry';
@@ -44,9 +44,8 @@ function responseEmbed(
   description: string,
 ): EmbedBuilder {
   const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : 0x5865F2;
-  return new EmbedBuilder()
-    .setColor(color)
-    .setTitle(state === 'INFO' ? title : statusTitle(state, title))
+  return vEmbed(color)
+    .setTitle(title)
     .setDescription(description)
     .setTimestamp();
 }

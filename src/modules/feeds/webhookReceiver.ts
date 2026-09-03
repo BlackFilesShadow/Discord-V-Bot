@@ -1,9 +1,9 @@
 /* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 import type { Client, TextChannel } from 'discord.js';
-import { EmbedBuilder } from 'discord.js';
 import crypto from 'crypto';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 
 /**
  * Eingehende Webhook-Posts (Typ WEBHOOK):
@@ -171,9 +171,8 @@ export async function deliverWebhookPayload(
     return { ok: false, status: 409, reason: 'Webhook-Replay erkannt.' };
   }
 
-  const embed = new EmbedBuilder()
+  const embed = vEmbed(typeof data.color === 'number' ? data.color : 0x3498db)
     .setTitle(data.title)
-    .setColor(typeof data.color === 'number' ? data.color : 0x3498db)
     .setFooter({ text: data.footer ?? `📡 ${feed.name}` })
     .setTimestamp(data.timestamp ? new Date(data.timestamp) : new Date());
   if (data.description) embed.setDescription(data.description);

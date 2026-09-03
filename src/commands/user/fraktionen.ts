@@ -8,6 +8,7 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { buildStatusEmbed } from '../../utils/statusEmbed';
+import { vEmbed } from '../../utils/embedDesign';
 
 /**
  * /fraktionen — deutschsprachige guildweite Fraktionsuebersicht.
@@ -85,10 +86,9 @@ const fraktionenCommand: Command = {
         return `${st} **${escapeMarkdown(f.name)}** ${pol}\n👥 ${f._count.members} Mitglieder${leader}${role}`;
       });
 
-      embeds.push(new EmbedBuilder()
+      embeds.push(vEmbed(0xdc2626)
         .setAuthor({ name: 'V-BOT • FRAKTIONEN' })
         .setTitle(`🏛️ Fraktionen auf ${interaction.guild?.name ?? 'diesem Server'}${pages > 1 ? ` · ${pageNo}/${pages}` : ''}`)
-        .setColor(0xdc2626)
         .setDescription(lines.join('\n\n').slice(0, 4096))
         .setFooter({ text: `${factions.length} Fraktion(en) insgesamt • Discord-weit` })
         .setTimestamp());

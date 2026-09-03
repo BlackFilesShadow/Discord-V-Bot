@@ -47,6 +47,16 @@ describe('buildStatusEmbed', () => {
     expect((e.description ?? '').length).toBeLessThanOrEqual(4096);
   });
 
+  it('normalisiert vorhandene Absatzabstände ohne Inhalt hinzuzufügen', () => {
+    const e = buildStatusEmbed({
+      status: 'INFO',
+      title: 'Hinweis',
+      description: 'Erster Abschnitt.\n\n\nZweiter Abschnitt.  \n',
+    }).toJSON();
+
+    expect(e.description).toBe('Erster Abschnitt.\n\nZweiter Abschnitt.');
+  });
+
   it('genau ein Statussymbol im Titel (kein Doppel)', () => {
     const e = buildStatusEmbed({ status: 'ERROR', title: '❌ Fehler' }).toJSON();
     const count = ((e.title ?? '').match(/✅|❕|❌/g) ?? []).length;

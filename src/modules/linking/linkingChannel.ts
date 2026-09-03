@@ -6,6 +6,7 @@ import {
   type GuildTextBasedChannel,
 } from 'discord.js';
 import prisma from '../../database/prisma';
+import { vEmbed } from '../../utils/embedDesign';
 
 export const LINKING_CHANNEL_PERMISSIONS = [
   PermissionFlagsBits.ViewChannel,
@@ -14,8 +15,7 @@ export const LINKING_CHANNEL_PERMISSIONS = [
 ] as const;
 
 export function buildLinkingInfoEmbed(serverLabel: string): EmbedBuilder {
-  return new EmbedBuilder()
-    .setColor(0x5865F2)
+  return vEmbed(0x5865F2)
     .setTitle('🔗 Discord mit DayZ verbinden')
     .setDescription(
       `Verbinde deinen Discord-Account mit deinem Spieler auf **${serverLabel}**.\n\n`

@@ -12,7 +12,7 @@ import { logger, logAudit } from '../../utils/logger';
 import fs from 'fs/promises';
 import path from 'path';
 import { config } from '../../config';
-import { formatBytes } from '../../utils/embedDesign';
+import { formatBytes, vEmbed } from '../../utils/embedDesign';
 
 /**
  * /dev-manufacturer — ausschliesslich Developer.
@@ -63,7 +63,7 @@ function statusEmbed(
   description: string,
 ): EmbedBuilder {
   const color = kind === 'SUCCESS' ? 0x57F287 : kind === 'ERROR' ? 0xED4245 : kind === 'WARNING' ? 0xFEE75C : 0x5865F2;
-  return new EmbedBuilder().setColor(color).setTitle(title).setDescription(description).setTimestamp();
+  return vEmbed(color).setTitle(title).setDescription(description);
 }
 
 const userInclude = {
@@ -285,11 +285,10 @@ async function handleList(interaction: ChatInputCommandInteraction): Promise<voi
     const page = manufacturers.slice(offset, offset + 25);
     const pageNo = Math.floor(offset / 25) + 1;
     const pageCount = Math.ceil(manufacturers.length / 25);
-    const embed = new EmbedBuilder()
+    const embed = vEmbed()
       .setTitle(`🏭 Aktive Hersteller${pageCount > 1 ? ` · ${pageNo}/${pageCount}` : ''}`)
       .setDescription(`**${manufacturers.length}** kanonisch aktive Hersteller insgesamt`)
-      .setColor(0x5865F2)
-      .setTimestamp();
+      .setColor(0x5865F2);
 
     for (const manufacturer of page) {
       const active = manufacturer.packages.filter(pkg => !pkg.isDeleted).length;

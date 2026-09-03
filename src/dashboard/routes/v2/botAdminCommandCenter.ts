@@ -2,12 +2,13 @@
 import { Router } from 'express';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { ChannelType, EmbedBuilder, type TextChannel } from 'discord.js';
+import { ChannelType, type TextChannel } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import { requireBotAdmin } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { logger, logAudit, logAuditDb } from '../../../utils/logger';
 import { tryGetDashboardClient } from '../../clientRegistry';
+import { vEmbed } from '../../../utils/embedDesign';
 import { config } from '../../../config';
 import {
   ALL_PROVIDERS,
@@ -452,7 +453,7 @@ botAdminCommandCenterRouter.patch('/feedback/:id', async (req, res) => {
       if (channel?.isTextBased()) {
         const message = await (channel as TextChannel).messages.fetch(updated.notifyMessageId).catch(() => null);
         if (message) {
-          const embed = new EmbedBuilder()
+          const embed = vEmbed()
             .setTitle(`${updated.category} • ${updated.subject}`)
             .setDescription(updated.message.slice(0, 3500))
             .addFields(

@@ -9,13 +9,14 @@
  */
 
 import {
-  SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, MessageFlags,
+  SlashCommandBuilder, ChatInputCommandInteraction, MessageFlags,
 } from 'discord.js';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 import { type BanClient } from '../../modules/bans/banRegistry';
 import {
   ACTIVE_BAN_WHITELIST_WARNING,
@@ -45,10 +46,9 @@ async function reply(
   state: ReplyState = 'INFO',
   title?: string,
 ): Promise<void> {
-  const color = state === 'SUCCESS' ? 0x57F287 : state === 'ERROR' ? 0xED4245 : 0x5865F2;
+  const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : Colors.Primary;
   const defaultTitle = state === 'SUCCESS' ? 'Erfolgreich' : state === 'ERROR' ? 'Aktion nicht moeglich' : 'Information';
-  const embed = new EmbedBuilder()
-    .setColor(color)
+  const embed = vEmbed(color)
     .setTitle(title ?? defaultTitle)
     .setDescription(content)
     .setTimestamp();
@@ -182,9 +182,8 @@ export const whitelistCommand: Command = {
     });
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'requested', entryId: created.id } });
 
-    const ack = new EmbedBuilder()
+    const ack = vEmbed(Colors.Primary)
       .setTitle('Whitelist-Anfrage gestellt')
-      .setColor(0x5865F2)
       .setDescription(`Deine Anfrage wurde fuer **${targetLabel(target)}** an das Server-Team weitergeleitet.`)
       .addFields({ name: 'Beantragter Name', value: `\`${id}\`` })
       .setFooter({ text: 'V-Bot • Whitelist' })

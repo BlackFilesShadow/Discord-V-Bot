@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import { asGuildId, asNitradoConnId, type GuildId, type NitradoConnId } from '../../types/scope';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
+import { vEmbed } from '../../utils/embedDesign';
 import { getConfig } from './repository';
 import { listMarketListings, type MarketListingView } from './blackMarket';
 
@@ -222,8 +223,7 @@ function vendorCatalogEmbed(args: {
   currencyName: string;
   currencyEmoji: string;
 }): EmbedBuilder {
-  const embed = new EmbedBuilder()
-    .setColor(0x8b5cf6)
+  const embed = vEmbed(0x8b5cf6)
     .setTitle(`🛒 ${safeEmbedField(args.vendorName, 220)}`)
     .setDescription(`Aktive Angebote dieses Händlers · Preise in **${safeEmbedDescription(args.currencyName)} ${args.currencyEmoji}**`)
     .setFooter({ text: `V-Bot · Schwarzmarkt · Live-Sync · Seite ${args.pageIndex + 1}/${args.totalPages}` })

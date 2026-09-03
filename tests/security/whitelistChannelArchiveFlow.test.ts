@@ -13,7 +13,8 @@ describe('Whitelist channel + archive flow regression', () => {
 
   it('keeps /whitelist-antrag as the public member request command and explains exactly that command', () => {
     expect(commandHandler).toContain("whitelist: 'whitelist-antrag'");
-    expect(channels).toContain(".setTitle(statusTitle('INFO', 'Whitelist'))");
+    expect(channels).toContain('vEmbed(Colors.Info)');
+    expect(channels).toContain(".setTitle('Whitelist')");
     expect(channels).toContain('1. Nutze `/whitelist-antrag` in diesem Kanal.');
     expect(channels).not.toContain('1. Nutze `/whitelist` in diesem Kanal.');
   });

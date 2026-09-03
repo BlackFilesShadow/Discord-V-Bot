@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import { Colors } from './embedDesign';
+import { Colors, readableEmbedDescription, vEmbed } from './embedDesign';
 
 /**
  * Zentraler Status-Embed-Builder (Embed-Plan Rev IV, §9.2).
@@ -55,13 +55,11 @@ function cleanTitle(status: EmbedStatus, title: string): string {
 
 export function buildStatusEmbed(opts: StatusEmbedOptions): EmbedBuilder {
   const meta = STATUS_META[opts.status];
-  const embed = new EmbedBuilder()
-    .setColor(meta.color)
+  const embed = vEmbed(meta.color)
     .setTitle(cap(cleanTitle(opts.status, opts.title), 256))
-    .setFooter({ text: cap(opts.footerText ?? 'V-Bot', 2048) })
-    .setTimestamp();
+    .setFooter({ text: cap(opts.footerText ?? 'V-Bot', 2048) });
 
-  if (opts.description) embed.setDescription(cap(opts.description, 4096));
+  if (opts.description) embed.setDescription(cap(readableEmbedDescription(opts.description), 4096));
 
   if (opts.fields?.length) {
     embed.addFields(

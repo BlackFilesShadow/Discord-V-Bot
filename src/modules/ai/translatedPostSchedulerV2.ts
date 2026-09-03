@@ -4,7 +4,7 @@ import type { Client, Guild, TextChannel, NewsChannel, ThreadChannel } from 'dis
 import { AttachmentBuilder, ChannelType, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
-import { Colors, Brand } from '../../utils/embedDesign';
+import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
 import { safeEmbedDescription, safeEmbedTitle, safeEmbedAuthor } from '../../utils/embedSanitize';
 import { resolveTranslatedPostImage, saveTranslatedPostImageFromUrl, removeTranslatedPostImage } from './translatedPostImage';
 import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
@@ -17,7 +17,7 @@ export function buildTranslatePostEmbed(opts: { guild: Guild | null; translated:
   const guildIcon = opts.guild?.iconURL({ size: 128 }) ?? undefined;
   const body = opts.translated && opts.translated.trim().length > 0 ? opts.translated : '_(leer)_';
   const title = opts.customTitle && opts.customTitle.trim().length > 0 ? `${flag} ${opts.customTitle.trim().slice(0, 240)}` : `${flag} Ãœbersetzte Nachricht Â· ${langName}`;
-  const embed = new EmbedBuilder().setColor(Colors.Info).setAuthor({ name: safeEmbedAuthor(`${flag}  ${guildName}`), iconURL: guildIcon }).setTitle(safeEmbedTitle(title)).setDescription(safeEmbedDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)).setFooter({ text: Brand.name, iconURL: guildIcon }).setTimestamp();
+  const embed = vEmbed(Colors.Info).setAuthor({ name: safeEmbedAuthor(`${flag}  ${guildName}`), iconURL: guildIcon }).setTitle(safeEmbedTitle(title)).setDescription(safeEmbedDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)).setFooter({ text: Brand.name, iconURL: guildIcon });
   if (opts.imageUrl) embed.setImage(opts.imageUrl);
   return embed;
 }

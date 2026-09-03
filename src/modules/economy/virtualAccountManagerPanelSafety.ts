@@ -12,6 +12,7 @@ import {
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import type { VirtualAccountRawDb } from './virtualAccounts';
+import { vEmbed } from '../../utils/embedDesign';
 
 export interface SafeManagerPanelRow {
   id: string;
@@ -133,8 +134,7 @@ async function restorePanelStrict(client: Client, panel: SafeManagerPanelRow, tr
 }
 
 function managerPanelEmbed(): EmbedBuilder {
-  return new EmbedBuilder()
-    .setColor(0x5865f2)
+  return vEmbed(0x5865f2)
     .setTitle('🏦 V-Bot · Virtuelle Kontoverwaltung')
     .setDescription([
       'Hier verwaltest du ausschliesslich die virtuellen Konten, fuer die du persoenlich freigeschaltet bist.',

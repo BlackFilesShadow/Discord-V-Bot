@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import { asGuildId, asNitradoConnId, asUserDiscordId } from '../../types/scope';
 import { logger } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 import { listMarketListings, type MarketListingView } from './blackMarket';
 import { getConfig } from './repository';
 import {
@@ -79,7 +80,7 @@ function getCartForUser(token: string, userDiscordId: string): CartDraft {
 
 async function replyError(interaction: ComponentInteraction, message: string): Promise<void> {
   const payload = {
-    embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung abgelehnt').setDescription(message)],
+    embeds: [vEmbed(0xe74c3c).setTitle('Bestellung abgelehnt').setDescription(message)],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] as never[] },
   } as const;
@@ -200,8 +201,7 @@ async function cartPayload(token: string, draft: CartDraft) {
   const total = lines.reduce((sum, line) => sum + line.listing.price * BigInt(line.quantity), 0n);
   const vendor = boundVendor?.name ?? null;
 
-  const embed = new EmbedBuilder()
-    .setColor(0x22c55e)
+  const embed = vEmbed(0x22c55e)
     .setTitle('🛒 Bestellung aufgeben')
     .setDescription(lines.length
       ? lines.map(line => `• **${line.listing.name}** × ${line.quantity} — ${(line.listing.price * BigInt(line.quantity)).toLocaleString('de-DE')} ${cfg.emoji}`).join('\n')
@@ -295,7 +295,7 @@ export async function handleMarketOrderPageButton(interaction: ButtonInteraction
 }
 
 export async function handleMarketOrderCancelButton(interaction: ButtonInteraction): Promise<void> {
-  try { const token = parseToken(interaction.customId); const draft = getCartForUser(token, interaction.user.id); carts.delete(token); await interaction.update({ embeds: [new EmbedBuilder().setColor(0x6b7280).setTitle('Bestellung abgebrochen').setDescription(`Der Warenkorb mit ${totalUnits(draft)} Artikel(n) wurde verworfen. Es wurde nichts bezahlt.`)], components: [], allowedMentions: { parse: [] } }); }
+  try { const token = parseToken(interaction.customId); const draft = getCartForUser(token, interaction.user.id); carts.delete(token); await interaction.update({ embeds: [vEmbed(0x6b7280).setTitle('Bestellung abgebrochen').setDescription(`Der Warenkorb mit ${totalUnits(draft)} Artikel(n) wurde verworfen. Es wurde nichts bezahlt.`)], components: [], allowedMentions: { parse: [] } }); }
   catch (error) { await replyError(interaction, (error as Error).message); }
 }
 
@@ -322,7 +322,7 @@ async function postOrderChannelEmbed(client: Client, order: MarketOrderView, cur
   const sourcePocket = order.purchases[0]?.sourcePocket;
   const payment = sourcePocket === 'BANK' ? 'Bank' : 'Wallet';
   const buyer = `${username.slice(0, 900)}\n<@${order.userDiscordId}> · \`${order.userDiscordId}\``;
-  const embed = new EmbedBuilder().setColor(0xf59e0b).setTitle('📦 Bestellung ausstehend').addFields(
+  const embed = vEmbed(0xf59e0b).setTitle('📦 Bestellung ausstehend').addFields(
     { name: 'Händler', value: vendor, inline: true }, { name: 'Username', value: buyer, inline: true }, { name: 'Status', value: '**Bestellung ausstehend**', inline: true },
     { name: 'Datum', value: `<t:${createdUnix}:D>`, inline: true }, { name: 'Uhrzeit', value: `<t:${createdUnix}:T>`, inline: true }, { name: 'Zahlung', value: payment, inline: true },
     { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${currencyEmoji}** (${currencyName})`, inline: true },
@@ -343,10 +343,10 @@ export async function handleMarketOrderPayButton(interaction: ButtonInteraction)
     let discordWarning: string | null = null;
     try { await postOrderChannelEmbed(interaction.client, result.order, cfg.currencyName, cfg.emoji); }
     catch (embedError) { discordWarning = ' Die Zahlung war erfolgreich und die Bestellung wurde gespeichert, aber das Bestell-Embed konnte nicht gesendet werden. Bitte einen Admin informieren.'; logger.error(`Bestell-Embed fehlgeschlagen (${result.order.id}):`, embedError as Error); }
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(discordWarning ? 0xf59e0b : 0x22c55e).setTitle(discordWarning ? '⚠️ Bestellung bezahlt' : '✅ Bestellung aufgegeben').setDescription(`**${result.order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** wurden aus deiner **${sourcePocket === 'BANK' ? 'Bank' : 'Wallet'}** abgebucht.${discordWarning ?? ' Deine Bestellung steht nun auf **ausstehend**.'}`)], components: [], allowedMentions: { parse: [] } });
+    await interaction.editReply({ embeds: [vEmbed(discordWarning ? 0xf59e0b : 0x22c55e).setTitle(discordWarning ? 'Bestellung bezahlt' : 'Bestellung aufgegeben').setDescription(`**${result.order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** wurden aus deiner **${sourcePocket === 'BANK' ? 'Bank' : 'Wallet'}** abgebucht.${discordWarning ?? ' Deine Bestellung steht nun auf **ausstehend**.'}`)], components: [], allowedMentions: { parse: [] } });
   } catch (error) {
     logger.warn(`Schwarzmarkt-Bestellung fehlgeschlagen: ${(error as Error).message}`);
-    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung fehlgeschlagen').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [vEmbed(0xe74c3c).setTitle('Bestellung fehlgeschlagen').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
     else await replyError(interaction, (error as Error).message);
   }
 }
@@ -403,7 +403,7 @@ async function managerPayload(interaction: ComponentInteraction, connId: string,
     new ButtonBuilder().setCustomId(`vacct_mgr_order_page:${connId}:${Math.max(0, page - 1)}`).setLabel('◀ Zurück').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
     new ButtonBuilder().setCustomId(`vacct_mgr_order_page:${connId}:${Math.min(totalPages - 1, page + 1)}`).setLabel('Weiter ▶').setStyle(ButtonStyle.Secondary).setDisabled(page >= totalPages - 1),
   ));
-  return { embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('Bestellung abschließen').setDescription(`Wähle eine offene Bestellung anhand des **Usernames** aus. Es werden alle offenen Bestellungen angezeigt · Seite **${page + 1}/${totalPages}**.`)], components, allowedMentions: { parse: [] as never[] } };
+  return { embeds: [vEmbed(0x5865f2).setTitle('Bestellung abschließen').setDescription(`Wähle eine offene Bestellung anhand des **Usernames** aus. Es werden alle offenen Bestellungen angezeigt · Seite **${page + 1}/${totalPages}**.`)], components, allowedMentions: { parse: [] as never[] } };
 }
 
 export async function handleMarketOrderManagerButton(interaction: ButtonInteraction): Promise<void> {
@@ -443,9 +443,9 @@ export async function handleMarketOrderManagerSelect(interaction: StringSelectMe
     await interaction.deferUpdate();
     const result = await closeMarketOrder({ guildId, nitradoConnId, orderId, vendorAccountId: order.vendorAccountId, actorDiscordId: asUserDiscordId(interaction.user.id) });
     if (result.changed) await editOriginalOrderMessage(interaction.client, result.order).catch(error => logger.warn(`Bestell-Embed Abschluss-Update fehlgeschlagen (${orderId}): ${(error as Error).message}`));
-    await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x22c55e).setTitle('✅ Bestellung abgeschlossen').setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen. Die Fertig-Benachrichtigung ist persistent eingeplant und wird retry-sicher zugestellt.`)], components: [], allowedMentions: { users: [order.userDiscordId] } });
+    await interaction.editReply({ embeds: [vEmbed(0x22c55e).setTitle('Bestellung abgeschlossen').setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen. Die Fertig-Benachrichtigung ist persistent eingeplant und wird retry-sicher zugestellt.`)], components: [], allowedMentions: { users: [order.userDiscordId] } });
   } catch (error) {
-    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung konnte nicht abgeschlossen werden').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
+    if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [vEmbed(0xe74c3c).setTitle('Bestellung konnte nicht abgeschlossen werden').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
     else await replyError(interaction, (error as Error).message);
   }
 }

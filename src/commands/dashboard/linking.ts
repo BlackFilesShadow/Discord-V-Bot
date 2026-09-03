@@ -1,6 +1,5 @@
 import {
   ChannelType,
-  EmbedBuilder,
   MessageFlags,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -27,6 +26,7 @@ import {
 } from '../../modules/linking/linkRewards';
 import { publishLinkingInfoEmbed } from '../../modules/linking/linkingChannel';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 import { logAudit } from '../../utils/logger';
 
 function slotOption(builder: SlashCommandBuilder): SlashCommandBuilder {
@@ -242,8 +242,7 @@ export const linksCommand: Command = {
       const guid = row.gameId ?? 'GUID nicht mehr auflösbar';
       return `**${index + 1}.** <@${row.userDiscordId}>\n↳ **${name}** · \`${guid}\``;
     });
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
+    const embed = vEmbed(Colors.Primary)
       .setTitle(`🔗 Aktive Spieler-Verknüpfungen (${rows.length})`)
       .setDescription(lines.join('\n').slice(0, 4000))
       .setFooter({ text: await serverLabel(scope.guildId, scope.nitradoConnId!) });
@@ -280,8 +279,7 @@ export const linkInfoCommand: Command = {
       return;
     }
 
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
+    const embed = vEmbed(Colors.Primary)
       .setTitle('🔎 Link-Information')
       .setFooter({ text: await serverLabel(scope.guildId, scope.nitradoConnId!) });
     for (const row of rows.slice(0, 10)) {

@@ -37,6 +37,7 @@ import {
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 import { config } from '../../config';
 import {
   archiveTranscriptAttachments,
@@ -158,10 +159,9 @@ function buildOpenEmbed(template: { embedTitle: string; embedDescription?: strin
         ``,
         `Ein Team-Mitglied meldet sich darin sobald wie möglich.`,
       ].join('\n');
-  return new EmbedBuilder()
+  return vEmbed(accent)
     .setTitle(`🎫  ${template.embedTitle}`)
-    .setDescription(description)
-    .setColor(accent);
+    .setDescription(description);
 }
 
 function buildOpenButton(templateId: string, label: string, embedColor: string): ActionRowBuilder<ButtonBuilder> {
@@ -394,8 +394,7 @@ function buildClosedEmbed(args: {
   const closerLine = isSnowflake(args.closedByDiscordId)
     ? `${m.closedByName}\n<@${args.closedByDiscordId}>`
     : m.closedByName;
-  const e = new EmbedBuilder()
-    .setColor(parseColor(args.embedColor || '#dc2626'))
+  const e = vEmbed(parseColor(args.embedColor || '#dc2626'))
     .setTitle(`🔒  Ticket #${args.ticketNumber} · ${args.ticketLabel}`)
     .addFields(
       { name: '👤  Eröffnet von',  value: openerLine, inline: true },
@@ -840,10 +839,9 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     const messages = normalizeWelcomeMessages((t as unknown as { welcomeMessages?: unknown }).welcomeMessages, t.welcomeText);
     const color = parseColor(t.embedColor);
 
-    const welcome = new EmbedBuilder()
+    const welcome = vEmbed(color)
       .setTitle(`🎫  ${t.label}`)
       .setDescription(messages[0])
-      .setColor(color)
       .setTimestamp(openedAt)
       .addFields(
         { name: 'Eroeffnet von', value: `<@${btn.user.id}>`, inline: true },
@@ -866,9 +864,9 @@ async function openTicketLocked(btn: ButtonInteraction, t: Awaited<ReturnType<ty
     });
 
     for (let i = 1; i < messages.length; i++) {
-      const followUp = new EmbedBuilder()
+      const followUp = vEmbed(color)
         .setDescription(messages[i])
-        .setColor(color);
+    ;
       await channel.send({
         embeds: [followUp],
         allowedMentions: { parse: [] },

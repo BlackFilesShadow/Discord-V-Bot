@@ -17,6 +17,7 @@ import { asUserDiscordId } from '../../types/scope';
 import type { GuildId, NitradoConnId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import {
   createPendingServerAction,
@@ -73,15 +74,14 @@ export const balanceCommand: Command = {
     const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
     const cfg = await getConfig(scope.guildId, connId);
     const total = acc.walletBalance + acc.bankBalance;
-    const e = new EmbedBuilder()
-      .setColor(0xF1C40F)
+    const e = vEmbed(Colors.Gold)
       .setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() })
       .setTitle(`${cfg.emoji} Kontostand`)
       .setDescription(`Konto von **${i.user.username}**`)
       .addFields(
-        { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true },
-        { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true },
-        { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
+        { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: false },
+        { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: false },
+        { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: false },
       )
       .setFooter({ text: await guildFooter(scope.guildId, connId) })
       .setTimestamp();
@@ -212,8 +212,8 @@ export const bankCommand: Command = {
   data: slotOption(new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Gesamtguthaben.') as SlashCommandBuilder),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!; const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId); const cfg = await getConfig(scope.guildId, connId); const total = acc.walletBalance + acc.bankBalance;
-    const e = new EmbedBuilder().setColor(0xF1C40F).setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() }).setTitle(`${cfg.emoji} Bankübersicht`).setDescription(`Konto von **${i.user.username}**`).addFields(
-      { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: true }, { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: true }, { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: true },
+    const e = vEmbed(Colors.Gold).setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() }).setTitle(`${cfg.emoji} Bankübersicht`).setDescription(`Konto von **${i.user.username}**`).addFields(
+      { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: false }, { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: false }, { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: false },
     ).setFooter({ text: await guildFooter(scope.guildId, connId) }).setTimestamp();
     await embedReply(i, e, false);
   }),

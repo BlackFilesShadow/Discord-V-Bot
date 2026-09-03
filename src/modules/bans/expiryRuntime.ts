@@ -9,12 +9,13 @@
  *    Meldungen, ohne technische IDs im Embed anzuzeigen.
  */
 
-import { EmbedBuilder, type GuildTextBasedChannel } from 'discord.js';
+import { type GuildTextBasedChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 import { enqueueServerBanRemove, type BanOutboxClient } from './banOutbox';
 
 // Niedriger gehalten als die meisten anderen Cron-Intervalle: dieser Tick ist
@@ -261,13 +262,12 @@ async function deliverNotice(notice: {
 
     const serverLabel = connection?.alias?.trim() || 'Gameserver';
     const expiresUnix = Math.floor(notice.expiresAt.getTime() / 1000);
-    const embed = new EmbedBuilder()
-      .setColor(0x22c55e)
+    const embed = vEmbed(Colors.Success)
       .setTitle('✅ Server-Bann abgelaufen')
       .setDescription(`Die zeitlich begrenzte Strafe von **${identifier}** ist beendet.`)
       .addFields(
-        { name: 'Server', value: serverLabel, inline: true },
-        { name: 'Bann abgelaufen', value: `<t:${expiresUnix}:R>`, inline: true },
+        { name: 'Server', value: serverLabel, inline: false },
+        { name: 'Bann abgelaufen', value: `<t:${expiresUnix}:R>`, inline: false },
         { name: 'Grund', value: safeText(ban.reason), inline: false },
         { name: 'Status', value: '✅ Von der Nitrado-Bannliste entfernt', inline: false },
       )

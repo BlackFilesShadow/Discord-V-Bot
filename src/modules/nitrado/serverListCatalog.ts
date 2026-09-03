@@ -18,6 +18,7 @@ import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { logger } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 import { NitradoClient } from './nitradoClient';
 
 const PAGE_SIZE = 20;
@@ -154,8 +155,7 @@ function embed(kind: CatalogKind, names: string[], page: number, query?: string)
   const intro = kind === 'whitelist'
     ? 'Aktuell freigeschaltete Spielernamen. Die Liste wird alle 3 Minuten direkt von Nitrado aktualisiert.'
     : 'Aktuell gebannte Spielernamen. Die Liste wird alle 3 Minuten direkt von Nitrado aktualisiert.';
-  return new EmbedBuilder()
-    .setColor(kind === 'whitelist' ? 0x57f287 : 0xed4245)
+  return vEmbed(kind === 'whitelist' ? 0x57f287 : 0xed4245)
     .setTitle(query
       ? `${kind === 'whitelist' ? '✅' : '🔨'} ${meta.title} · Suche`
       : kind === 'whitelist' ? '✅ Whitelist-Katalog' : '🔨 Bann-Katalog')

@@ -2,6 +2,7 @@
 import { Client, EmbedBuilder, Guild, PermissionFlagsBits, TextChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 import { translate } from '../ai/translator';
 import { extractSteamAppId, extractTwitchLogin } from './urlResolver';
 import { getTwitchCreds, getYouTubeKey } from './feedCredentials';
@@ -106,10 +107,9 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
     const toPost = state.toPost.slice(-5);
     for (const raw of toPost) {
       const item = feed.feedType === 'NEWS' ? await translateNews(raw) : raw;
-      const embed = new EmbedBuilder()
+      const embed = vEmbed(feed.feedType === 'NEWS' ? 0xe67e22 : 0x3498db)
         .setTitle((item.title || 'Ohne Titel').slice(0, 256))
         .setDescription((item.description || 'Keine Beschreibung').slice(0, 4096))
-        .setColor(feed.feedType === 'NEWS' ? 0xe67e22 : 0x3498db)
         .setFooter({ text: `📡 ${feed.name} · ${document.format}` })
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
@@ -129,11 +129,10 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
     const stream = await getTwitchStream(login, getTwitchCreds(feed.credentialsEnc) ?? undefined);
     const marker = stream.isLive ? `stream:${stream.streamId || 'live'}` : 'OFFLINE';
     if (stream.isLive && feed.lastItemId !== marker) {
-      const embed = new EmbedBuilder()
+      const embed = vEmbed(0x9146ff)
         .setTitle(`🔴 ${feed.name} ist LIVE!`)
         .setDescription((stream.title || 'Keine Beschreibung').slice(0, 4096))
         .setURL(`https://twitch.tv/${login}`)
-        .setColor(0x9146ff)
         .addFields(
           { name: '🎮 Spiel', value: stream.gameName || 'Unbekannt', inline: true },
           { name: '👁️ Zuschauer', value: String(stream.viewerCount ?? 0), inline: true },
@@ -153,10 +152,9 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
     const entries = await getSteamNews(appId);
     const state = entriesAfterMarker(entries, feed.lastItemId, 'latest');
     for (const item of state.toPost.slice(-5)) {
-      const embed = new EmbedBuilder()
+      const embed = vEmbed(0x1b2838)
         .setTitle(`🎮 ${item.title}`.slice(0, 256))
         .setDescription((item.description || 'Keine Beschreibung').slice(0, 4096))
-        .setColor(0x1b2838)
         .setFooter({ text: `📡 ${feed.name}` })
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
@@ -171,9 +169,8 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
     const result = await getYouTubeEntries(feed.url, getYouTubeKey(feed.credentialsEnc) ?? undefined);
     const state = entriesAfterMarker(result.entries, feed.lastItemId, 'mark-only');
     for (const item of state.toPost.slice(-5)) {
-      const embed = new EmbedBuilder()
+      const embed = vEmbed(0xff0000)
         .setTitle(`▶️ Neues Video: ${item.title}`.slice(0, 256))
-        .setColor(0xff0000)
         .setAuthor({ name: result.channelTitle })
         .setFooter({ text: `📡 ${feed.name}` })
         .setTimestamp(validDate(item.publishedAt));

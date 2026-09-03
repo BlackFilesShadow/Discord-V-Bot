@@ -19,6 +19,7 @@ import {
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { logger } from '../../utils/logger';
+import { readableEmbedDescription } from '../../utils/embedDesign';
 
 // ── Discord-Limits (Stand API v10) ────────────────────────────────────────
 export const EMBED_LIMITS = {
@@ -314,7 +315,7 @@ export function buildDiscordEmbed(data: EmbedData, resolved?: ResolvedMedia): Em
   if (title) embed.setTitle(title.slice(0, EMBED_LIMITS.title));
 
   const description = s(data.description);
-  if (description) embed.setDescription(description.slice(0, EMBED_LIMITS.description));
+  if (description) embed.setDescription(readableEmbedDescription(description).slice(0, EMBED_LIMITS.description));
 
   const url = s(data.url);
   if (url && isValidHttpUrl(url)) embed.setURL(url);

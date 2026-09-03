@@ -17,7 +17,6 @@ import {
   ButtonStyle,
   ChannelType,
   type ButtonInteraction,
-  EmbedBuilder,
   MessageFlags,
   StringSelectMenuBuilder,
   type StringSelectMenuInteraction,
@@ -27,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import { asGuildId, asNitradoConnId, asUserDiscordId } from '../../types/scope';
 import { logger } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { listMarketListings, type MarketListingView } from './blackMarket';
 import { getConfig } from './repository';
@@ -55,7 +55,7 @@ function sweepPendingOrders(now: number): void {
 
 async function replyError(interaction: ButtonInteraction | StringSelectMenuInteraction, message: string): Promise<void> {
   const payload = {
-    embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung abgelehnt').setDescription(message)],
+    embeds: [vEmbed(0xe74c3c).setTitle('Bestellung abgelehnt').setDescription(message)],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] as never[] },
   } as const;
@@ -130,8 +130,7 @@ async function openOrderMenu(interaction: ButtonInteraction, guildId: string, co
   }
   const totalPages = Math.max(1, Math.ceil(listings.length / PAGE_SIZE));
   const safePage = Math.max(0, Math.min(totalPages - 1, page));
-  const embed = new EmbedBuilder()
-    .setColor(0x22c55e)
+  const embed = vEmbed(0x22c55e)
     .setTitle('🛒 Bestellung aufgeben')
     .setDescription('Wähle unten alle gewünschten Angebote aus. Eine Bestellung kann nur Angebote **desselben Händlers** enthalten.');
   const components = buildPageComponents(listings, safePage, connId);
@@ -190,8 +189,7 @@ export async function handleMarketOrderSelect(interaction: StringSelectMenuInter
     });
 
     const vendor = await vendorName(guildId, connId, vendorAccountId);
-    const embed = new EmbedBuilder()
-      .setColor(0x22c55e)
+    const embed = vEmbed(0x22c55e)
       .setTitle('🛒 Bestellung bestätigen')
       .setDescription(rows.map(row => `• ${row.name} — **${row.price.toLocaleString('de-DE')} ${cfg.emoji}**`).join('\n'))
       .addFields(
@@ -215,7 +213,7 @@ export async function handleMarketOrderCancelButton(interaction: ButtonInteracti
   const token = interaction.customId.split(':')[2];
   pendingOrders.delete(token);
   await interaction.update({
-    embeds: [new EmbedBuilder().setColor(0x6b7280).setTitle('Bestellung abgebrochen').setDescription('Es wurde nichts bezahlt.')],
+    embeds: [vEmbed(0x6b7280).setTitle('Bestellung abgebrochen').setDescription('Es wurde nichts bezahlt.')],
     components: [],
   });
 }
@@ -230,8 +228,7 @@ async function postOrderChannelEmbed(guildId: string, connId: string, orderId: s
   if (!projection?.orderChannelId) return;
   const channel = await client.channels.fetch(projection.orderChannelId).catch(() => null);
   if (!channel || channel.type !== ChannelType.GuildText) return;
-  const embed = new EmbedBuilder()
-    .setColor(0xf59e0b)
+  const embed = vEmbed(0xf59e0b)
     .setTitle('📦 Bestellung')
     .addFields(
       { name: 'Händler', value: vendorName_, inline: true },
@@ -248,7 +245,7 @@ export async function handleMarketOrderConfirmButton(interaction: ButtonInteract
   const draft = pendingOrders.get(token);
   if (!draft || draft.userDiscordId !== interaction.user.id || Date.now() - draft.createdAt > PENDING_TTL_MS) {
     pendingOrders.delete(token);
-    await interaction.update({ embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung abgelaufen').setDescription('Bitte über „Bestellen" erneut öffnen.')], components: [] });
+    await interaction.update({ embeds: [vEmbed(0xe74c3c).setTitle('Bestellung abgelaufen').setDescription('Bitte über „Bestellen" erneut öffnen.')], components: [] });
     return;
   }
   pendingOrders.delete(token);
@@ -265,13 +262,13 @@ export async function handleMarketOrderConfirmButton(interaction: ButtonInteract
     const vendor = await vendorName(draft.guildId, draft.connId, result.order.vendorAccountId);
     await postOrderChannelEmbed(draft.guildId, draft.connId, result.order.id, vendor, result.order.totalAmount, cfg.emoji);
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(0x22c55e).setTitle('✅ Bestellung aufgegeben').setDescription(`**${result.order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** wurden aus deinem Wallet abgebucht. Du wirst benachrichtigt, sobald die Bestellung bereit ist.`)],
+      embeds: [vEmbed(0x22c55e).setTitle('Bestellung aufgegeben').setDescription(`**${result.order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** wurden aus deinem Wallet abgebucht. Du wirst benachrichtigt, sobald die Bestellung bereit ist.`)],
       components: [],
     });
   } catch (error) {
     logger.warn(`Schwarzmarkt-Bestellung fehlgeschlagen: ${(error as Error).message}`);
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Bestellung fehlgeschlagen').setDescription((error as Error).message)],
+      embeds: [vEmbed(0xe74c3c).setTitle('Bestellung fehlgeschlagen').setDescription((error as Error).message)],
       components: [],
     }).catch(() => undefined);
   }
@@ -300,7 +297,7 @@ export async function handleMarketOrderManagerButton(interaction: ButtonInteract
       .setPlaceholder('Bestellung zum Abschließen auswählen')
       .addOptions(options);
     await interaction.reply({
-      embeds: [new EmbedBuilder().setColor(0x5865f2).setTitle('Bestellung abschließen').setDescription('Wähle die abzuschließende Bestellung. Der Kunde wird im Bestellung-bereit-Kanal benachrichtigt.')],
+      embeds: [vEmbed(0x5865f2).setTitle('Bestellung abschließen').setDescription('Wähle die abzuschließende Bestellung. Der Kunde wird im Bestellung-bereit-Kanal benachrichtigt.')],
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
       flags: MessageFlags.Ephemeral,
     });
@@ -319,8 +316,7 @@ async function postOrderReadyEmbed(guildId: string, connId: string, orderId: str
   if (!projection?.orderReadyChannelId) return;
   const channel = await client.channels.fetch(projection.orderReadyChannelId).catch(() => null);
   if (!channel || channel.type !== ChannelType.GuildText) return;
-  const embed = new EmbedBuilder()
-    .setColor(0x22c55e)
+  const embed = vEmbed(0x22c55e)
     .setTitle('✅ Bestellung abgeschlossen')
     .setDescription('Status: **Bestellung bereit**')
     .setFooter({ text: 'V-Bot · Schwarzmarkt' })
@@ -355,7 +351,7 @@ export async function handleMarketOrderManagerSelect(interaction: StringSelectMe
     });
     if (result.changed) await postOrderReadyEmbed(guildId, nitradoConnId, orderId, order.userDiscordId);
     await interaction.editReply({
-      embeds: [new EmbedBuilder().setColor(0x22c55e).setTitle('✅ Bestellung abgeschlossen').setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen und der Kunde benachrichtigt.`)],
+      embeds: [vEmbed(0x22c55e).setTitle('Bestellung abgeschlossen').setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen und der Kunde benachrichtigt.`)],
       components: [],
     });
   } catch (error) {

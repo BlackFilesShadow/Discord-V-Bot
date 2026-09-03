@@ -2,7 +2,7 @@ import { EmbedBuilder, type GuildTextBasedChannel } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
-import { Brand } from '../../utils/embedDesign';
+import { Brand, vEmbed } from '../../utils/embedDesign';
 import { safeEmbedField } from '../../utils/embedSanitize';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { identityHash } from '../linking/identity';
@@ -136,8 +136,7 @@ export function buildStructuredGoodbyeEmbed(data: GoodbyeEmbedData): EmbedBuilde
   const safeName = sanitizeGoodbyeVisibleText(data.discordName, 'Discord-Nutzer', 232);
   const joined = data.joinedAt ? formatDate(data.joinedAt) : 'Unbekannt';
 
-  const embed = new EmbedBuilder()
-    .setColor(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
+  const embed = vEmbed(embedColor(data.cleanupEnabled, data.cleanupSnapshot))
     .setAuthor({ name: `${Brand.footerText} • Abschiedsmeldung` })
     .setFooter({ text: `${Brand.footerText} • Austritt dokumentiert` });
 

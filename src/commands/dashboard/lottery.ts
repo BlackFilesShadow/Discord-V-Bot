@@ -1,5 +1,4 @@
 import {
-  EmbedBuilder,
   MessageFlags,
   SlashCommandBuilder,
   SlashCommandSubcommandBuilder,
@@ -16,6 +15,7 @@ import {
 } from '../../modules/economy/lottery';
 import { getConfig } from '../../modules/economy/repository';
 import { logger, logAudit } from '../../utils/logger';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 
 function addSlotOption(builder: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
   return builder.addIntegerOption(o => o
@@ -28,7 +28,7 @@ function addSlotOption(builder: SlashCommandSubcommandBuilder): SlashCommandSubc
 
 async function replyError(interaction: Parameters<Command['execute']>[0], message: string): Promise<void> {
   await interaction.reply({
-    embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle('Lotterie').setDescription(message)],
+    embeds: [vEmbed(Colors.Error).setTitle('Lotterie').setDescription(message)],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -80,14 +80,13 @@ export const lotteryCommand: Command = {
       const tickets = entry?.ticketCount ?? 0;
       const paid = entry?.totalPaid ?? 0n;
       await interaction.reply({
-        embeds: [new EmbedBuilder()
-          .setColor(0x3498DB)
+        embeds: [vEmbed(Colors.Info)
           .setTitle('🎟️ Deine Lotterie-Tickets')
           .setDescription([
             `**Tickets:** ${tickets} / ${round.maxTicketsPerUser}`,
             `**Bezahlt:** ${paid.toLocaleString('de-DE')} ${cfg.emoji}`,
             `**Runde endet:** <t:${Math.floor(round.endsAt.getTime() / 1000)}:R>`,
-          ].join('\n'))],
+          ].join('\n\n'))],
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });

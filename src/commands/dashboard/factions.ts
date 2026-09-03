@@ -27,6 +27,7 @@ import { asGuildId } from '../../types/scope';
 import { logAudit, logger } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
+import { vEmbed } from '../../utils/embedDesign';
 import { assignFactionRole, postFactionEmbed, postFactionList, removeFactionRole } from '../../modules/factions/factionEmbed';
 
 const FACTION_STATUS: Record<string, { label: string; emoji: string }> = {
@@ -121,10 +122,9 @@ export const factionCommand: Command = {
     }
 
     const status = FACTION_STATUS[faction.status] ?? FACTION_STATUS.ACTIVE;
-    const embed = new EmbedBuilder()
+    const embed = vEmbed(factionColor(faction.color))
       .setAuthor({ name: `${interaction.guild?.name ?? 'Server'} • Fraktionsuebersicht` })
       .setTitle(`🏴 ${faction.name}`)
-      .setColor(factionColor(faction.color))
       .setFooter({ text: 'V-Bot • Fraktion' })
       .setTimestamp();
     if (faction.description) embed.setDescription(faction.description.slice(0, 1500));
@@ -167,9 +167,8 @@ export const factionsCommand: Command = {
         const status = FACTION_STATUS[row.status] ?? FACTION_STATUS.ACTIVE;
         return `${status.emoji} **${escapeMarkdown(row.name)}**\n👥 ${row._count.members} Mitglieder`;
       }).join('\n\n');
-      embeds.push(new EmbedBuilder()
+      embeds.push(vEmbed(0xdc2626)
         .setTitle(`🏴 Fraktionen${pageCount > 1 ? ` · ${pageNo}/${pageCount}` : ''}`)
-        .setColor(0xdc2626)
         .setDescription(blocks)
         .setFooter({ text: `V-Bot • ${rows.length} aktive Fraktionen` })
         .setTimestamp());

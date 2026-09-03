@@ -29,7 +29,7 @@ import { asUserDiscordId } from '../../types/scope';
 import type { GuildScope, UserDiscordId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { Colors } from '../../utils/embedDesign';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 
@@ -108,8 +108,7 @@ function buildRoundEmbed(args: {
       ? { name: '📊 Netto', value: `${netStr} ${args.coin}`, inline: false }
       : { name: '📉 Verlust', value: `${netStr} ${args.coin}`, inline: false };
 
-  return new EmbedBuilder()
-    .setColor(meta.color)
+  return vEmbed(meta.color)
     .setAuthor({ name: args.i.user.username, iconURL: args.i.user.displayAvatarURL() })
     .setTitle(`${args.emoji} ${args.title}`)
     .setDescription(`${meta.sym} **${meta.word}**`)
@@ -441,8 +440,7 @@ export const casinoStatsCommand: Command = {
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const net = payout - bet;
     const netStr = (net >= 0n ? '+' : '') + fmt(net);
-    const e = new EmbedBuilder()
-      .setColor(net >= 0n ? Colors.Success : Colors.Error)
+    const e = vEmbed(net >= 0n ? Colors.Success : Colors.Error)
       .setAuthor({ name: target.username, iconURL: target.displayAvatarURL() })
       .setTitle('📊 Casino-Statistik')
       .addFields(

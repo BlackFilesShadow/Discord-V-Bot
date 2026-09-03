@@ -63,6 +63,14 @@ export function statusForColor(color: number): EmbedStatus | null {
   return null;
 }
 
+export function readableEmbedDescription(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 class VEmbedBuilder extends EmbedBuilder {
   constructor(private readonly status: EmbedStatus | null) {
     super();
@@ -70,6 +78,10 @@ class VEmbedBuilder extends EmbedBuilder {
 
   override setTitle(title: string): this {
     return super.setTitle(this.status ? statusTitle(this.status, title) : title);
+  }
+
+  override setDescription(description: string): this {
+    return super.setDescription(readableEmbedDescription(description));
   }
 }
 

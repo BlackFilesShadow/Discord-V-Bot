@@ -1,4 +1,4 @@
-import { EmbedBuilder, MessageFlags, SlashCommandBuilder, SlashCommandSubcommandBuilder } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder, SlashCommandSubcommandBuilder } from 'discord.js';
 import type { Command } from '../../types';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
@@ -8,6 +8,7 @@ import { syncMarketDiscordProjection } from '../../modules/economy/blackMarketDi
 import { syncVirtualAccountProjectionLive } from '../../modules/economy/virtualAccountLiveUpdates';
 import { getConfig } from '../../modules/economy/repository';
 import { logger } from '../../utils/logger';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 
 function addSlot(builder: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
   return builder.addIntegerOption(o => o.setName('slot').setDescription('Gameserver-Slot (bei mehreren Servern erforderlich)').setRequired(false).setMinValue(1).setMaxValue(MAX_GAME_SERVERS_PER_GUILD));
@@ -63,7 +64,7 @@ export const blackMarketCommand: Command = {
         ].filter(Boolean).join('\n')).join('\n\n')
         : 'Aktuell sind keine Angebote verfuegbar.';
       await interaction.reply({
-        embeds: [new EmbedBuilder().setColor(0x2F3136).setTitle('🕶️ Schwarzmarkt').setDescription(bounded(description, 4000))],
+        embeds: [vEmbed(Colors.Neutral).setTitle('🕶️ Schwarzmarkt').setDescription(bounded(description, 4000))],
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });
@@ -82,7 +83,7 @@ export const blackMarketCommand: Command = {
         ].filter(Boolean).join('\n')).join('\n\n')
         : 'Du hast auf diesem Gameserver noch keine Schwarzmarkt-Bestellungen.';
       await interaction.reply({
-        embeds: [new EmbedBuilder().setColor(0x3498DB).setTitle('Deine Schwarzmarkt-Bestellungen').setDescription(bounded(description, 4000))],
+        embeds: [vEmbed(Colors.Info).setTitle('Deine Schwarzmarkt-Bestellungen').setDescription(bounded(description, 4000))],
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] },
       });

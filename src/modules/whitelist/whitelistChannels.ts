@@ -13,14 +13,14 @@
  */
 
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle,
   type Client, type GuildTextBasedChannel, type Snowflake,
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { logger } from '../../utils/logger';
 import { safeEmbedField } from '../../utils/embedSanitize';
-import { Colors, statusTitle } from '../../utils/embedDesign';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 
 /** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
 export const WHITELIST_REASON_MAX = 500;
@@ -126,9 +126,8 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
   const ch = await fetchTextChannel(guildId, settings.whitelistChannelId);
   if (!ch) return { posted: false, updated: false };
 
-  const embed = new EmbedBuilder()
-    .setTitle(statusTitle('INFO', 'Whitelist'))
-    .setColor(Colors.Info)
+  const embed = vEmbed(Colors.Info)
+    .setTitle('Whitelist')
     .setDescription([
       'Du möchtest Zugang zum Server? Hier kannst du deinen Whitelist-Antrag stellen.',
       '',
@@ -180,12 +179,11 @@ export async function postWhitelistApprovalEmbed(args: {
   const ch = await fetchTextChannel(args.guildId, settings.whitelistRequestChannelId);
   if (!ch) return null;
 
-  const embed = new EmbedBuilder()
-    .setTitle(statusTitle('WARNING', 'Neue Whitelist-Anfrage'))
-    .setColor(Colors.Warning)
+  const embed = vEmbed(Colors.Warning)
+    .setTitle('Neue Whitelist-Anfrage')
     .addFields(
-      { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: true },
-      { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: true },
+      { name: 'Antragsteller', value: `<@${args.requesterDiscordId}>`, inline: false },
+      { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: false },
     )
     .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
@@ -222,9 +220,8 @@ export async function notifyRequesterPending(guildId: string, requesterDiscordId
   if (!c) return;
   try {
     const user = await c.users.fetch(requesterDiscordId);
-    const embed = new EmbedBuilder()
-      .setTitle(statusTitle('INFO', 'Whitelist-Anfrage eingegangen'))
-      .setColor(Colors.Info)
+    const embed = vEmbed(Colors.Info)
+      .setTitle('Whitelist-Anfrage eingegangen')
       .setDescription('Deine Anfrage wurde dem zustaendigen Server-Team weitergeleitet. Bitte warte auf die Entscheidung.')
       .addFields({ name: 'Beantragter Name', value: `\`${gameId}\`` })
       .setFooter({ text: 'V-Bot • Whitelist' })
@@ -243,12 +240,8 @@ export async function notifyRequesterDecision(args: {
   if (!c) return;
   try {
     const user = await c.users.fetch(args.requesterDiscordId);
-    const embed = new EmbedBuilder()
-      .setTitle(statusTitle(
-        args.approved ? 'SUCCESS' : 'ERROR',
-        args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt',
-      ))
-      .setColor(args.approved ? Colors.Success : Colors.Error)
+    const embed = vEmbed(args.approved ? Colors.Success : Colors.Error)
+      .setTitle(args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt')
       .addFields({ name: 'Beantragter Name', value: `\`${args.gameId}\`` })
       .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
@@ -273,12 +266,8 @@ async function postTemporaryDecisionNotice(args: {
   const ch = await fetchTextChannel(args.guildId, args.channelId);
   if (!ch) return;
 
-  const embed = new EmbedBuilder()
-    .setTitle(statusTitle(
-      args.approved ? 'SUCCESS' : 'ERROR',
-      args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt',
-    ))
-    .setColor(args.approved ? Colors.Success : Colors.Error)
+  const embed = vEmbed(args.approved ? Colors.Success : Colors.Error)
+    .setTitle(args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt')
     .setDescription(args.approved
       ? 'Deine Whitelist-Anfrage wurde angenommen. Bei Fragen oder für weitere Informationen wende dich bitte an den Support.'
       : 'Deine Whitelist-Anfrage wurde abgelehnt. Bei Fragen oder für weitere Informationen wende dich bitte an den Support.')
@@ -315,18 +304,14 @@ async function postPermanentDecisionArchive(args: {
   ]);
   const when = decisionDateParts(args.decidedAt);
 
-  const embed = new EmbedBuilder()
-    .setTitle(statusTitle(
-      args.approved ? 'SUCCESS' : 'ERROR',
-      args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt',
-    ))
-    .setColor(args.approved ? Colors.Success : Colors.Error)
+  const embed = vEmbed(args.approved ? Colors.Success : Colors.Error)
+    .setTitle(args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt')
     .addFields(
-      { name: 'Discord-Name', value: requesterName, inline: true },
-      { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: true },
+      { name: 'Discord-Name', value: requesterName, inline: false },
+      { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: false },
       { name: args.approved ? 'Genehmigt von' : 'Abgelehnt von', value: adminName, inline: false },
-      { name: 'Datum', value: when.date, inline: true },
-      { name: 'Uhrzeit', value: when.time, inline: true },
+      { name: 'Datum', value: when.date, inline: false },
+      { name: 'Uhrzeit', value: when.time, inline: false },
     )
     .setFooter({ text: 'V-Bot • Whitelist • Archiv' })
     .setTimestamp(args.decidedAt);

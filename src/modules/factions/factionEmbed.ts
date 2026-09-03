@@ -21,6 +21,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 
 const postLocks = new Map<string, Promise<unknown>>();
 
@@ -92,10 +93,9 @@ function buildEmbed(
 
   const description = f.description?.trim().slice(0, 1500) || '_Keine Beschreibung hinterlegt._';
 
-  const e = new EmbedBuilder()
+  const e = vEmbed(parseColor(f.color))
     .setAuthor({ name: `${guildName}  •  Fraktion` })
     .setTitle(`🏴  ${f.name}`)
-    .setColor(parseColor(f.color))
     .setDescription(description)
     .setFooter({ text: 'V-Bot • Fraktionssystem' });
 
@@ -370,9 +370,8 @@ function buildListEmbed(factions: Array<{
   color: string | null;
   leaderDiscordId: string | null;
 }>): EmbedBuilder {
-  const e = new EmbedBuilder()
+  const e = vEmbed(0xdc2626)
     .setTitle(`🏴  Fraktionen`)
-    .setColor(0xdc2626)
     .setFooter({ text: `V-Bot • ${factions.length} aktive Fraktionen` })
     .setTimestamp(new Date());
 

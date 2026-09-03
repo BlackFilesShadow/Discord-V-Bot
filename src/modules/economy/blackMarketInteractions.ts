@@ -4,7 +4,6 @@ import {
   ChannelType,
   Client,
   ComponentType,
-  EmbedBuilder,
   MessageFlags,
   ModalBuilder,
   ModalSubmitInteraction,
@@ -14,6 +13,7 @@ import {
 } from 'discord.js';
 import { asUserDiscordId } from '../../types/scope';
 import { logger } from '../../utils/logger';
+import { vEmbed } from '../../utils/embedDesign';
 import { buyInventorylessMarketListing } from './blackMarketInventoryless';
 import { syncMarketDiscordProjection } from './blackMarketDiscord';
 import {
@@ -80,7 +80,7 @@ function parseQuantity(value: string): number {
 
 async function replyError(interaction: ButtonInteraction | ModalSubmitInteraction, message: string): Promise<void> {
   const payload = {
-    embeds: [new EmbedBuilder().setColor(0xe74c3c).setTitle('Direktkauf abgelehnt').setDescription(message)],
+    embeds: [vEmbed(0xe74c3c).setTitle('Direktkauf abgelehnt').setDescription(message)],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   } as const;
@@ -210,16 +210,15 @@ export async function handleMarketDirectBuyModal(interaction: ModalSubmitInterac
   let confirmationDelivered = false;
   try {
     await interaction.reply({
-      embeds: [new EmbedBuilder()
-        .setColor(0x2ecc71)
-        .setTitle(result.booked ? '✅ Direktkauf gebucht' : '✅ Direktkauf bereits verarbeitet')
+      embeds: [vEmbed(0x2ecc71)
+        .setTitle(result.booked ? 'Direktkauf gebucht' : 'Direktkauf bereits verarbeitet')
         .setDescription([
           `**${result.purchase.quantity}× ${result.listing.name}**`,
           `Gesamt: **${result.purchase.amount.toLocaleString('de-DE')}**`,
           `Bezahlt aus: **${parsed.pocket === 'BANK' ? 'Bank' : 'Wallet'}**`,
           `Bestellung: \`${result.purchase.id}\``,
           `Status: **${result.purchase.fulfillmentStatus === 'PENDING' ? 'Offen' : result.purchase.fulfillmentStatus}**`,
-        ].join('\n'))],
+        ].join('\n\n'))],
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] },
     });

@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { AdmEventType, GameplayFeedKind } from '@prisma/client';
-import { EmbedBuilder, MessageFlags, type ButtonInteraction } from 'discord.js';
+import { MessageFlags, type ButtonInteraction } from 'discord.js';
 import { config } from '../../config';
 import prisma from '../../database/prisma';
 import { safeEmbedField } from '../../utils/embedSanitize';
+import { vEmbed } from '../../utils/embedDesign';
 import { resolveDelegatedPermissionContext } from '../permissions/access';
 
 const CUSTOM_ID_PREFIX = 'flagshort:v1:';
@@ -208,8 +209,7 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
     where: { id: event.nitradoConnId, guildId: event.guildId },
     select: { alias: true },
   });
-  const embed = new EmbedBuilder()
-    .setColor(event.action === 'RAISED' ? 0x22c55e : 0xeab308)
+  const embed = vEmbed(event.action === 'RAISED' ? 0x22c55e : 0xeab308)
     .setTitle('🔎 Flaggen-Aktivität')
     .setDescription(`${event.action === 'RAISED' ? '🚩 Flagge hoch' : '🏳️ Flagge runter'} · ${safeEmbedField(connection?.alias || 'DayZ-Server', 128)}`)
     .addFields(

@@ -1,6 +1,5 @@
 import {
   ChatInputCommandInteraction,
-  EmbedBuilder,
   MessageFlags,
   SlashCommandBuilder,
   SlashCommandSubcommandBuilder,
@@ -19,6 +18,7 @@ import { publishVirtualAccountActivityLive } from '../../modules/economy/virtual
 import { getConfig } from '../../modules/economy/repository';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import { logAudit, logger } from '../../utils/logger';
+import { Colors, vEmbed } from '../../utils/embedDesign';
 
 function addSlotOption(builder: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
   return builder.addIntegerOption(o => o
@@ -39,7 +39,7 @@ function statusLabel(status: VirtualAccountStatus): string {
 
 async function replyError(i: ChatInputCommandInteraction, title: string, message: string): Promise<void> {
   await i.reply({
-    embeds: [new EmbedBuilder().setColor(0xE74C3C).setTitle(title).setDescription(message).setFooter({ text: 'V-Bot Economy' })],
+    embeds: [vEmbed(Colors.Error).setTitle(title).setDescription(message).setFooter({ text: 'V-Bot Economy' })],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -74,8 +74,7 @@ export const virtualAccountCommand: Command = {
     if (sub === 'list') {
       const accounts = await listVirtualAccounts(scope.guildId, connId, false);
       const visible = accounts.filter(a => a.status !== 'ARCHIVED').slice(0, 20);
-      const embed = new EmbedBuilder()
-        .setColor(0x3498DB)
+      const embed = vEmbed(Colors.Info)
         .setTitle('🏦 Virtuelle Konten')
         .setFooter({ text: 'V-Bot Economy' });
       if (visible.length === 0) {
@@ -95,7 +94,7 @@ export const virtualAccountCommand: Command = {
               `Typ: ${finance.accountPurpose === 'BANK_TREASURY' ? 'Serverbank' : account.kind}`,
               `Direkte Einzahlungen: ${account.acceptUserTransfers && account.status === 'ACTIVE' ? 'ja' : 'nein'}`,
               account.expiresAt ? `Ablauf: <t:${Math.floor(account.expiresAt.getTime() / 1000)}:R>` : 'Ablauf: unbegrenzt',
-            ].join(' · '),
+            ].join('\n'),
           });
         }
         embed.setDescription('Konten sind strikt an den ausgewaehlten Gameserver gebunden.').addFields(fields);
@@ -113,18 +112,17 @@ export const virtualAccountCommand: Command = {
     const finance = await ensureVirtualAccountFinance(scope.guildId, connId, account.id);
 
     if (sub === 'info') {
-      const embed = new EmbedBuilder()
-        .setColor(account.status === 'ACTIVE' ? 0x2ECC71 : 0xF1C40F)
+      const embed = vEmbed(account.status === 'ACTIVE' ? Colors.Success : Colors.Warning)
         .setTitle(`${finance.accountEmoji} ${account.name}`)
         .addFields(
-          { name: 'Status', value: statusLabel(account.status), inline: true },
-          { name: 'Wallet', value: `${fmt(account.balance)} ${finance.currencyEmoji}`, inline: true },
-          { name: 'Bankkonto', value: `${fmt(finance.bankBalance)} ${finance.currencyEmoji}`, inline: true },
-          { name: 'Gesamt', value: `${fmt(account.balance + finance.bankBalance)} ${finance.currencyEmoji}`, inline: true },
-          { name: 'Währung', value: `${finance.currencyName} ${finance.currencyEmoji}`, inline: true },
-          { name: 'Typ', value: finance.accountPurpose === 'BANK_TREASURY' ? 'Serverbank' : account.kind, inline: true },
-          { name: 'Direkte Einzahlungen', value: account.acceptUserTransfers && account.status === 'ACTIVE' ? 'Erlaubt' : 'Gesperrt', inline: true },
-          { name: 'Ablauf', value: account.expiresAt ? `<t:${Math.floor(account.expiresAt.getTime() / 1000)}:F>` : 'Kein Ablauf', inline: true },
+          { name: 'Status', value: statusLabel(account.status), inline: false },
+          { name: 'Wallet', value: `${fmt(account.balance)} ${finance.currencyEmoji}`, inline: false },
+          { name: 'Bankkonto', value: `${fmt(finance.bankBalance)} ${finance.currencyEmoji}`, inline: false },
+          { name: 'Gesamt', value: `${fmt(account.balance + finance.bankBalance)} ${finance.currencyEmoji}`, inline: false },
+          { name: 'Währung', value: `${finance.currencyName} ${finance.currencyEmoji}`, inline: false },
+          { name: 'Typ', value: finance.accountPurpose === 'BANK_TREASURY' ? 'Serverbank' : account.kind, inline: false },
+          { name: 'Direkte Einzahlungen', value: account.acceptUserTransfers && account.status === 'ACTIVE' ? 'Erlaubt' : 'Gesperrt', inline: false },
+          { name: 'Ablauf', value: account.expiresAt ? `<t:${Math.floor(account.expiresAt.getTime() / 1000)}:F>` : 'Kein Ablauf', inline: false },
         )
         .setFooter({ text: 'V-Bot Economy' });
       if (finance.bannerUrl) embed.setImage(finance.bannerUrl);
@@ -169,8 +167,7 @@ export const virtualAccountCommand: Command = {
           sourcePocket,
           booked: result.booked,
         });
-        const embed = new EmbedBuilder()
-          .setColor(0x2ECC71)
+        const embed = vEmbed(Colors.Success)
           .setTitle(result.booked ? '✅ Ueberweisung erfolgreich' : '✅ Bereits verarbeitet')
           .setDescription(
             cfg.currencyName.toLocaleLowerCase('de-DE') === result.finance.currencyName.toLocaleLowerCase('de-DE')
@@ -178,8 +175,8 @@ export const virtualAccountCommand: Command = {
               : `Abgebucht: **${fmt(result.playerDebited)}** ${cfg.emoji}\nGutgeschrieben: **${fmt(result.accountCredited)}** ${result.finance.currencyEmoji} → **${account.name}**`,
           )
           .addFields(
-            { name: 'Quelle', value: sourcePocket === 'WALLET' ? 'Wallet' : 'Bank', inline: true },
-            { name: 'Neues Wallet des Kontos', value: `${fmt(result.account.balance)} ${result.finance.currencyEmoji}`, inline: true },
+            { name: 'Quelle', value: sourcePocket === 'WALLET' ? 'Wallet' : 'Bank', inline: false },
+            { name: 'Neues Wallet des Kontos', value: `${fmt(result.account.balance)} ${result.finance.currencyEmoji}`, inline: false },
             { name: 'Grund', value: reason, inline: false },
           )
           .setFooter({ text: 'V-Bot Economy' });
