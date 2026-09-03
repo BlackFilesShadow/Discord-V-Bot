@@ -260,6 +260,9 @@ describe('stage 24 dashboard button matrix architecture', () => {
     expect(source).toContain("['bank-casino', 'Bank und Casino Funktionen', Dice5]");
     expect(source).toContain("['killfeed', 'Killfeed & ADM', Crosshair]");
     expect(source).toContain("tab === 'virtual-accounts'");
+    expect((source.match(/<VirtualAccountsPanel /g) ?? []).length).toBe(1);
+    expect(source).not.toContain('<LotteryPanel ');
+    expect(source).not.toContain('<BlackMarketPanel ');
     expect(source).toContain("tab === 'bank-casino'");
     expect(source).not.toContain('function AdminPayForm');
     expect(source).not.toContain('/admin-pay?slot=');

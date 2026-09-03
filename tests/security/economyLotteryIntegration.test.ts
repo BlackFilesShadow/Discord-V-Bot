@@ -51,8 +51,11 @@ describe('Economy-Lotterie — Runtime/Dashboard Integration', () => {
   });
 
   it('integriert die responsive und slotgescoppte Dashboard-Verwaltung in Economy', () => {
-    expect(serverSlot).toContain("import { LotteryPanel } from '@/components/economy/LotteryPanel';");
-    expect(serverSlot).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
+    const virtualAccountsPanel = read('dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx');
+    expect(serverSlot).toContain("import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';");
+    expect(serverSlot).toContain('<VirtualAccountsPanel guildId={guildId} slot={slot} />');
+    expect(virtualAccountsPanel).toContain("import { LotteryPanel } from './LotteryPanel';");
+    expect(virtualAccountsPanel).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
     expect(panel).toContain("{ guildId, slot }: { guildId: string; slot: string }");
     expect(panel).toContain('lottery/current?${scope}');
     expect(panel).toContain('md:grid-cols-2');

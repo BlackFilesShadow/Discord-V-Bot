@@ -13,8 +13,6 @@ import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
 import { useToast } from '@/lib/toast';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
-import { LotteryPanel } from '@/components/economy/LotteryPanel';
-import { BlackMarketPanel } from '@/components/economy/BlackMarketPanel';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair } from 'lucide-react';
@@ -260,11 +258,7 @@ export default function ServerSlot() {
         {tab === 'links' && guildId && slot && <EconomyLinksPanel guildId={guildId} slot={slot} />}
 
         {tab === 'virtual-accounts' && guildId && slot && (
-          <div className="space-y-6">
-            <VirtualAccountsPanel guildId={guildId} slot={slot} />
-            <LotteryPanel guildId={guildId} slot={slot} />
-            <BlackMarketPanel guildId={guildId} slot={slot} />
-          </div>
+          <VirtualAccountsPanel guildId={guildId} slot={slot} />
         )}
 
         {tab === 'bank-casino' && guildId && slot && (
