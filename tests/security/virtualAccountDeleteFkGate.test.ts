@@ -23,6 +23,14 @@ describe('virtual account delete FK gate', () => {
     expect(migration).toContain('ON DELETE RESTRICT ON UPDATE CASCADE');
   });
 
+  it('keeps the Discord projection available only as a post-delete retirement bridge', () => {
+    expect(migration).toContain('EconomyVirtualAccountProjection_retirement_identity_fkey');
+    expect(migration).toContain('EconomyVirtualAccountProjection_require_live_account');
+    expect(migration).toContain('Discord projection with artifacts requires a live virtual account');
+    expect(migration).toContain('EconomyVirtualAccountProjection_cleanup_after_retirement');
+    expect(migration).toContain('DELETE FROM "EconomyVirtualAccountProjection" WHERE "accountId"=NEW."accountId"');
+  });
+
   it('serializes all new economic writes and active domain work against live deletion', () => {
     expect(migration).toContain('FOR KEY SHARE');
     expect(migration).toContain('EconomyVirtualAccountEntry_require_live_account');
