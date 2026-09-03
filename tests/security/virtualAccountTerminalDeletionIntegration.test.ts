@@ -24,6 +24,10 @@ async function cleanup(): Promise<void> {
   await prisma.economyMarketOrder.deleteMany({ where: { guildId } });
   await prisma.economyMarketListing.deleteMany({ where: { guildId } });
   await prisma.economyVirtualAccountEntry.deleteMany({ where: { guildId } });
+  await prisma.$executeRawUnsafe(
+    'DELETE FROM "EconomyVirtualAccountProjection" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+    String(guildId), String(connId),
+  );
   await prisma.economyVirtualAccount.deleteMany({ where: { guildId } });
   await prisma.$executeRawUnsafe(
     'DELETE FROM "EconomyVirtualAccountHistoryIdentity" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
@@ -54,7 +58,7 @@ describeDb('virtual account terminal deletion history identity', () => {
 
   afterEach(cleanup);
 
-  it('physically removes the live CUSTOM row while preserving immutable history and rejecting new writes', async () => {
+  it('physically removes the live CUSTOM row while preserving history, retirement state and write guards', async () => {
     const account = await createVirtualAccount({
       guildId,
       nitradoConnId: connId,
@@ -91,6 +95,16 @@ describeDb('virtual account terminal deletion history identity', () => {
       },
     });
 
+    await prisma.$executeRawUnsafe(
+      'INSERT INTO "EconomyVirtualAccountProjection" ("accountId","guildId","nitradoConnId","channelId","messageId","archiveThreadId","lastSyncedAt","lastSyncError","createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP,NULL,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
+      account.id,
+      String(guildId),
+      String(connId),
+      '944456789012345681',
+      '944456789012345682',
+      '944456789012345683',
+    );
+
     const result = await deleteUnusedVirtualAccount({
       guildId,
       nitradoConnId: connId,
@@ -112,6 +126,32 @@ describeDb('virtual account terminal deletion history identity', () => {
     expect(identity).toHaveLength(1);
     expect(identity[0]?.deletedAt).toBeInstanceOf(Date);
     expect(identity[0]?.nameSnapshot).toBe('Historienkonto');
+
+    const projection = await prisma.$queryRawUnsafe<Array<{ channelId: string | null; messageId: string | null; archiveThreadId: string | null }>>(
+      'SELECT "channelId", "messageId", "archiveThreadId" FROM "EconomyVirtualAccountProjection" WHERE "accountId"=$1',
+      account.id,
+    );
+    expect(projection).toEqual([{
+      channelId: '944456789012345681',
+      messageId: '944456789012345682',
+      archiveThreadId: '944456789012345683',
+    }]);
+
+    await expect(prisma.$executeRawUnsafe(
+      'UPDATE "EconomyVirtualAccountProjection" SET "channelId"=$2, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1',
+      account.id,
+      '944456789012345684',
+    )).rejects.toThrow(/Discord projection with artifacts requires a live virtual account/);
+
+    await prisma.$executeRawUnsafe(
+      'UPDATE "EconomyVirtualAccountProjection" SET "channelId"=NULL, "messageId"=NULL, "archiveThreadId"=NULL, "updatedAt"=CURRENT_TIMESTAMP WHERE "accountId"=$1',
+      account.id,
+    );
+    const retiredProjection = await prisma.$queryRawUnsafe<Array<{ accountId: string }>>(
+      'SELECT "accountId" FROM "EconomyVirtualAccountProjection" WHERE "accountId"=$1',
+      account.id,
+    );
+    expect(retiredProjection).toHaveLength(0);
 
     await expect(prisma.$executeRawUnsafe(
       'INSERT INTO "EconomyVirtualAccountEntry" ("id","idempotencyKey","guildId","nitradoConnId","virtualAccountId","delta","entryType","sourcePocket","actorDiscordId","reason","sourceRef","createdAt") VALUES ($1,$2,$3,$4,$5,0,\'TEST_AFTER_DELETE\',\'WALLET\',$6,\'must fail\',\'terminal-delete-test\',CURRENT_TIMESTAMP)',
