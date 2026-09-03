@@ -65,8 +65,8 @@ AFTER INSERT OR UPDATE OF "guildId", "nitradoConnId", "kind", "name", "createdBy
 ON "EconomyVirtualAccount"
 FOR EACH ROW EXECUTE FUNCTION "economy_virtual_account_history_identity_sync"();
 
--- Repoint only history/domain reference FKs. The scalar account IDs remain
--- unchanged, so immutable rows are not copied, rewritten or deleted.
+-- Repoint only immutable/history-domain reference FKs. Scalar account IDs remain
+-- unchanged, so historical rows are not copied, rewritten or deleted.
 ALTER TABLE "EconomyVirtualAccountEntry"
   DROP CONSTRAINT IF EXISTS "EconomyVirtualAccountEntry_account_scope_fkey";
 ALTER TABLE "EconomyVirtualAccountEntry"
@@ -106,6 +106,66 @@ ALTER TABLE "EconomyMarketOrder"
   FOREIGN KEY ("vendorAccountId", "guildId", "nitradoConnId")
   REFERENCES "EconomyVirtualAccountHistoryIdentity"("accountId", "guildId", "nitradoConnId")
   ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- Discord projection is live state, not immutable history, but DB-first deletion
+-- needs its artifact IDs to survive long enough for post-commit retirement. Repoint
+-- the FK to history identity as a short-lived retirement bridge. Once all artifact
+-- IDs are cleared for a deleted account, an AFTER trigger removes the bridge row.
+ALTER TABLE "EconomyVirtualAccountProjection"
+  DROP CONSTRAINT IF EXISTS "EconomyVirtualAccountProjection_account_scope_fkey";
+ALTER TABLE "EconomyVirtualAccountProjection"
+  ADD CONSTRAINT "EconomyVirtualAccountProjection_retirement_identity_fkey"
+  FOREIGN KEY ("accountId", "guildId", "nitradoConnId")
+  REFERENCES "EconomyVirtualAccountHistoryIdentity"("accountId", "guildId", "nitradoConnId")
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+CREATE FUNCTION "economy_guard_virtual_account_projection_live_write"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Clearing all Discord artifact IDs is the only write allowed after terminal
+  -- deletion; retireVirtualAccountProjection uses exactly this shape.
+  IF NEW."channelId" IS NULL AND NEW."messageId" IS NULL AND NEW."archiveThreadId" IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  PERFORM 1 FROM "EconomyVirtualAccount"
+  WHERE "id"=NEW."accountId" AND "guildId"=NEW."guildId" AND "nitradoConnId"=NEW."nitradoConnId"
+  FOR KEY SHARE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Discord projection with artifacts requires a live virtual account';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER "EconomyVirtualAccountProjection_require_live_account"
+BEFORE INSERT OR UPDATE ON "EconomyVirtualAccountProjection"
+FOR EACH ROW EXECUTE FUNCTION "economy_guard_virtual_account_projection_live_write"();
+
+CREATE FUNCTION "economy_cleanup_retired_deleted_projection"()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW."channelId" IS NULL AND NEW."messageId" IS NULL AND NEW."archiveThreadId" IS NULL
+     AND EXISTS (
+       SELECT 1 FROM "EconomyVirtualAccountHistoryIdentity"
+       WHERE "accountId"=NEW."accountId"
+         AND "guildId"=NEW."guildId"
+         AND "nitradoConnId"=NEW."nitradoConnId"
+         AND "deletedAt" IS NOT NULL
+     ) THEN
+    DELETE FROM "EconomyVirtualAccountProjection" WHERE "accountId"=NEW."accountId";
+  END IF;
+  RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER "EconomyVirtualAccountProjection_cleanup_after_retirement"
+AFTER INSERT OR UPDATE ON "EconomyVirtualAccountProjection"
+FOR EACH ROW EXECUTE FUNCTION "economy_cleanup_retired_deleted_projection"();
 
 -- Historical FKs intentionally no longer require a live account. New economic
 -- writes and active domain work still must. Each guard takes a KEY SHARE lock on
