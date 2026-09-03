@@ -123,7 +123,7 @@ describe('Gameplay-Feed Embed', () => {
 
     expect(fields).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
-      expect.objectContaining({ name: 'Getroffener Koerperteil', value: 'Head' }),
+      expect.objectContaining({ name: 'Getroffener Körperteil', value: 'Head' }),
       expect.objectContaining({ name: 'Schaden', value: '48,5 (FirearmHit\\_Rifle)' }),
     ]));
   });
@@ -134,5 +134,5 @@ describe('Gameplay-Feed Embed', () => {
     const fields = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().fields ?? [];
 
     expect(fields.find(field => field.name === 'Waffe')?.value).toBe('Rooster');
-    expect(fields.some(field => field.name === 'Getroffener Koerperteil' || field.name === 'Schaden')).toBe(false);
+    expect(fields.some(field => field.name === 'Getroffener Körperteil' || field.name === 'Schaden')).toBe(false);
   });

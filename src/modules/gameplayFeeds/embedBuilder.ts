@@ -138,7 +138,7 @@ function addPvpHitFields(embed: EmbedBuilder, view: GameplayFeedView): void {
   }
   if (isMelee) return;
   embed.addFields(
-    { name: 'Getroffener Koerperteil', value: safeEmbedField(hit.bodyPart, 128), inline: false },
+    { name: 'Getroffener Körperteil', value: safeEmbedField(hit.bodyPart, 128), inline: false },
     { name: 'Schaden', value: `${hit.damage.toLocaleString('de-DE')} (${safeEmbedField(hit.damageType, 128)})`, inline: false },
   );
 }
