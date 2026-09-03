@@ -28,7 +28,7 @@ describe('Economy account capability workspace', () => {
     expect(safety).toContain('managedBy,');
     expect(safety).toContain("canConfigure: isCustom && !hidden && account.status !== 'ARCHIVED'");
     expect(safety).toContain('canDelete: isCustom && !hidden');
-    expect(safety).toContain('canArchive: isCustom && !hidden');
+    expect(safety).toContain('canArchive: false');
     expect(safety).toContain("canPayout: isCustom && !hidden && account.status === 'ACTIVE'");
     expect(safety).toContain("account.kind === 'LOTTERY_POT'");
     expect(safety).toContain("account.kind === 'MARKET_VENDOR'");
@@ -49,13 +49,14 @@ describe('Economy account capability workspace', () => {
   });
 
   test('virtual accounts workspace composes custom, system, lottery and market surfaces', () => {
-    expect(wrapper).toContain('<VirtualAccountsControlPanel guildId={guildId} slot={slot} />');
-    expect(wrapper).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} />');
+    expect(wrapper).toContain('<VirtualAccountsControlPanel');
+    expect(wrapper).toContain('openTreasuryConfiguration={openTreasuryConfiguration}');
+    expect(wrapper).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} onConfigureServerBank={() => setOpenTreasuryConfiguration(true)} />');
     expect(wrapper).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
     expect(wrapper).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
   });
 
-  test('system registry is read-only, resilient and never hides incomplete responses as empty', () => {
+  test('system registry is resilient, never hides incomplete responses and links to serverbank configuration', () => {
     expect(systemUi).toContain('/control/system-accounts?slot=');
     expect(systemUi).toContain('const responseAccounts = query.data?.accounts');
     expect(systemUi).toContain('const hasValidAccounts = Array.isArray(responseAccounts)');
@@ -66,6 +67,8 @@ describe('Economy account capability workspace', () => {
     expect(systemUi).toContain('accounts.map(account =>');
     expect(systemUi).toContain('account.capabilities.managedBy');
     expect(systemUi).toContain('account.capabilities.readOnlyReason');
+    expect(systemUi).toContain("account.capabilities.managedBy === 'SERVER_BANK'");
+    expect(systemUi).toContain('Serverbank konfigurieren');
     expect(systemUi).not.toContain('api.post(');
     expect(systemUi).not.toContain('api.put(');
     expect(systemUi).not.toContain('api.del(');

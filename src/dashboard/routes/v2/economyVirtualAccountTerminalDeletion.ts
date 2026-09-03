@@ -58,6 +58,12 @@ async function rejectDeletedOrDomainOwnedMutation(req: Request, res: Response, n
     return;
   }
   const owner = await domainOwner(scope.guildId, connId, accountId);
+  // Die Serverbank ist ein CUSTOM-Konto mit Fachzweck. Ihre Konfiguration wird
+  // von der nachfolgenden Treasury-Safety-Route autoritativ verarbeitet.
+  if (owner === 'SERVER_BANK' && req.method === 'PUT') {
+    next();
+    return;
+  }
   if (owner && owner !== 'VIRTUAL_ACCOUNTS') {
     const label = owner === 'SERVER_BANK' ? 'Serverbank' : owner === 'LOTTERY' ? 'Lotterie' : 'Schwarzmarkt';
     res.status(400).json({ error: `${label}-Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.` });
@@ -75,7 +81,6 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
     listVirtualAccountManagers(guildId, connId, accountId),
     readProjection(accountId, String(guildId), String(connId)),
   ]);
-  const pocketsEmpty = account.balance === 0n && finance.bankBalance === 0n;
   const managedBy = account.kind === 'LOTTERY_POT'
     ? 'LOTTERY'
     : account.kind === 'MARKET_VENDOR'
@@ -84,6 +89,7 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
         ? 'SERVER_BANK'
         : 'VIRTUAL_ACCOUNTS';
   const genericOwned = managedBy === 'VIRTUAL_ACCOUNTS';
+  const configurable = genericOwned || managedBy === 'SERVER_BANK';
   const readOnlyReason = managedBy === 'LOTTERY'
     ? 'Lotterie-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Lotterie-Funktion.'
     : managedBy === 'BLACK_MARKET'
@@ -119,9 +125,9 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
     projection,
     capabilities: {
       managedBy,
-      canConfigure: genericOwned && account.status !== 'ARCHIVED',
+      canConfigure: configurable && account.status !== 'ARCHIVED',
       canDelete: genericOwned,
-      canArchive: genericOwned && account.status !== 'ARCHIVED' && pocketsEmpty,
+      canArchive: false,
       canPayout: genericOwned && account.status === 'ACTIVE',
       canSyncProjection: genericOwned && account.status !== 'ARCHIVED',
       canRestore: false,
@@ -141,7 +147,7 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuil
     listVirtualAccounts(scope.guildId, connId, true),
     listDeletedVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
   ]);
-  const liveAccounts = accounts.filter(account => !deletedIds.has(account.id));
+  const liveAccounts = accounts.filter(account => !deletedIds.has(account.id) && account.status !== 'ARCHIVED');
   const serialized = await Promise.all(liveAccounts.map(account => serializeAccount(scope.guildId, connId, account.id)));
   res.json({ accounts: serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS') });
 });
@@ -158,7 +164,7 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/system-accounts', requ
     listVirtualAccounts(scope.guildId, connId, true),
     listDeletedVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
   ]);
-  const liveAccounts = accounts.filter(account => !deletedIds.has(account.id));
+  const liveAccounts = accounts.filter(account => !deletedIds.has(account.id) && account.status !== 'ARCHIVED');
   const serialized = await Promise.all(liveAccounts.map(account => serializeAccount(scope.guildId, connId, account.id)));
   res.json({ accounts: serialized.filter(account => account.capabilities.managedBy !== 'VIRTUAL_ACCOUNTS') });
 });
@@ -168,7 +174,6 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/system-accounts', requ
 economyVirtualAccountTerminalDeletionRouter.put('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
 economyVirtualAccountTerminalDeletionRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
 economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/sync', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
-economyVirtualAccountTerminalDeletionRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
 economyVirtualAccountTerminalDeletionRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
 
 economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/restore', requireGuildPermission('economy.manage'), async (req, res) => {

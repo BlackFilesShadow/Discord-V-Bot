@@ -61,7 +61,7 @@ export async function restoreHiddenVirtualAccount(_args: {
  *
  * Safety invariants:
  * - Domain-owned system accounts and the CUSTOM-backed Serverbank are rejected.
- * - Wallet and bank must already be zero; deletion never burns or transfers funds.
+ * - The locked wallet and bank balances are removed with this exact account.
  * - Active lottery/market work blocks generic deletion.
  * - Historical ledger/lottery/market/order rows point to the dedicated immutable
  *   EconomyVirtualAccountHistoryIdentity, never to the live account row.
@@ -102,10 +102,6 @@ export async function deleteUnusedVirtualAccount(args: {
         throw new Error('Serverbank-Konten werden ausschließlich über die Serverbank-Funktion verwaltet und können nicht generisch gelöscht werden.');
       }
 
-      if (account.balance !== 0n || finance.bankBalance !== 0n) {
-        throw new Error('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
-      }
-
       // Serialize terminal deletion against the historical identity before checking
       // active domain dependencies. Database triggers on active domain rows acquire
       // KEY SHARE on the same live account, closing create-vs-delete races.
@@ -144,7 +140,7 @@ export async function deleteUnusedVirtualAccount(args: {
       if (snapshotted !== 1) throw new Error('Historische Kontoidentität wurde parallel verändert; Löschung abgebrochen.');
 
       const deleted = await raw.$executeRawUnsafe(
-        'DELETE FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0',
+        'DELETE FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"',
         args.accountId,
         String(args.guildId),
         String(args.nitradoConnId),
@@ -155,8 +151,8 @@ export async function deleteUnusedVirtualAccount(args: {
         id: account.id,
         name: account.name,
         mode: 'HARD_DELETED',
-        walletRemoved: '0',
-        bankRemoved: '0',
+        walletRemoved: account.balance.toString(),
+        bankRemoved: finance.bankBalance.toString(),
         domainPreserved: true,
       };
     });

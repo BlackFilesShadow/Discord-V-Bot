@@ -3,6 +3,7 @@ import path from 'node:path';
 
 const root = path.resolve(__dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'src/modules/economy/blackMarketOrderInteractionsV2.ts'), 'utf8');
+const market = fs.readFileSync(path.join(root, 'src/modules/economy/blackMarket.ts'), 'utf8');
 const orderService = fs.readFileSync(path.join(root, 'src/modules/economy/blackMarketOrder.ts'), 'utf8');
 const runtime = fs.readFileSync(path.join(root, 'src/modules/economy/marketOrderReadyRuntime.ts'), 'utf8');
 const composite = fs.readFileSync(path.join(root, 'src/events/interactionCreateComposite.ts'), 'utf8');
@@ -30,6 +31,13 @@ test('manager pages over all assigned vendor orders with a scoped SQL count and 
   expect(source).toContain('vacct_mgr_order_page:');
   expect(composite).toContain("i.customId.startsWith('vacct_mgr_order_page:')");
   expect(composite).toContain('handleMarketOrderManagerPageButton');
+});
+
+test('new vendors assign their creator as account manager for the management embed', () => {
+  expect(market).toContain("import { replaceVirtualAccountManagers } from './virtualAccountFinance'");
+  expect(market).toContain('await replaceVirtualAccountManagers({');
+  expect(market).toContain('userDiscordIds: [args.createdByDiscordId]');
+  expect(market).toContain('addedByDiscordId: args.createdByDiscordId');
 });
 
 test('closing an order atomically enqueues exactly one persistent ready intent', () => {

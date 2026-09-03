@@ -12,6 +12,7 @@ import {
   type EconomyPocket,
   type VirtualAccountRawDb,
 } from './virtualAccounts';
+import { replaceVirtualAccountManagers } from './virtualAccountFinance';
 import { systemUserToVirtualAccount, systemVirtualAccountToUser } from './systemVirtualTransfers';
 
 const MAX_PRICE = 1_000_000_000_000_000n;
@@ -255,6 +256,13 @@ export async function createMarketVendor(args: {
     expiresAt: null,
     acceptUserTransfers: false,
     createdByDiscordId: args.createdByDiscordId,
+  });
+  await replaceVirtualAccountManagers({
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    accountId: account.id,
+    userDiscordIds: [args.createdByDiscordId],
+    addedByDiscordId: args.createdByDiscordId,
   });
   logAudit('MARKET_VENDOR_CREATED', 'ECONOMY', {
     guildId: args.guildId, nitradoConnId: args.nitradoConnId, vendorAccountId: account.id,

@@ -8,6 +8,8 @@ import {
   ModalSubmitInteraction,
   StringSelectMenuBuilder,
   StringSelectMenuInteraction,
+  UserSelectMenuBuilder,
+  UserSelectMenuInteraction,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
@@ -57,13 +59,7 @@ function parsePocket(value: string, label: string): EconomyPocket {
   return pocket;
 }
 
-function parseDiscordId(value: string): UserDiscordId {
-  const match = value.match(/\d{17,20}/);
-  if (!match) throw new Error('Empfänger muss eine Discord-ID oder Mention sein.');
-  return asUserDiscordId(match[0]);
-}
-
-async function replyError(interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction, message: string) {
+async function replyError(interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction | UserSelectMenuInteraction, message: string) {
   const payload = { embeds: [vEmbed(0xe74c3c).setTitle('Aktion abgelehnt').setDescription(message)], flags: MessageFlags.Ephemeral } as const;
   if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
   else await interaction.reply(payload);
@@ -75,7 +71,7 @@ async function assertInteractionScope(guildId: string | null, accountId: string)
   return scope;
 }
 
-async function assertManager(interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction, accountId: string) {
+async function assertManager(interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction | UserSelectMenuInteraction, accountId: string) {
   const scope = await assertInteractionScope(interaction.guildId, accountId);
   const allowed = await userManagesVirtualAccount(scope.guildId, scope.connId, accountId, asUserDiscordId(interaction.user.id));
   if (!allowed) throw new Error('Du bist für dieses virtuelle Konto nicht als Kontoverwalter eingetragen.');
@@ -184,22 +180,24 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
   const accountId = interaction.values[0];
   try {
     if (action === 'payout' || action === 'remove') {
-      const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:${action}:${accountId}`).setTitle(action === 'payout' ? 'Auszahlung aus virtuellem Konto' : 'Betrag kontrolliert entfernen');
       if (action === 'payout') {
-        modal.addComponents(
-          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('target').setLabel('Empfänger (Mention oder Discord-ID)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(30)),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('source').setLabel('Quelle: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('targetPocket').setLabel('Ziel beim User: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Grund').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(3).setMaxLength(180)),
-        );
-      } else {
-        modal.addComponents(
-          new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('pocket').setLabel('Pocket: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
-          new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Begründung der Korrektur').setStyle(TextInputStyle.Paragraph).setRequired(true).setMinLength(3).setMaxLength(180)),
-        );
+        const select = new UserSelectMenuBuilder()
+          .setCustomId(`vacct_mgr_user:payout:${accountId}`)
+          .setPlaceholder('Empfänger aus diesem Discord-Server auswählen')
+          .setMinValues(1)
+          .setMaxValues(1);
+        await interaction.update({
+          embeds: [vEmbed(0x5865f2).setTitle('Auszahlung').setDescription('Wähle den Empfänger aus der Mitgliederliste dieses Discord-Servers aus.')],
+          components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(select)],
+        });
+        return;
       }
+      const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:${action}:${accountId}`).setTitle('Betrag kontrolliert entfernen');
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('pocket').setLabel('Pocket: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Begründung der Korrektur').setStyle(TextInputStyle.Paragraph).setRequired(true).setMinLength(3).setMaxLength(180)),
+      );
       await interaction.showModal(modal);
       return;
     }
@@ -229,6 +227,28 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
   }
 }
 
+export async function handleVirtualManagerUserSelect(interaction: UserSelectMenuInteraction): Promise<void> {
+  const [, action, accountId] = interaction.customId.split(':');
+  try {
+    if (action !== 'payout' || !accountId) throw new Error('Manager-Aktion ist ungültig.');
+    await assertManager(interaction, accountId);
+    const selectedUserId = interaction.values[0] ?? '';
+    if (!/^\d{17,20}$/.test(selectedUserId)) throw new Error('Bitte wähle einen gültigen Empfänger aus der Mitgliederliste.');
+    const target = asUserDiscordId(selectedUserId);
+    await ensureHumanGuildMember(interaction, target);
+    const modal = new ModalBuilder().setCustomId(`vacct_mgr_modal:payout:${accountId}:${target}`).setTitle('Auszahlung aus virtuellem Konto');
+    modal.addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput()),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('source').setLabel('Quelle: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('targetPocket').setLabel('Ziel beim User: WALLET oder BANK').setStyle(TextInputStyle.Short).setRequired(true).setValue('WALLET').setMaxLength(6)),
+      new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder().setCustomId('reason').setLabel('Grund').setStyle(TextInputStyle.Short).setRequired(true).setMinLength(3).setMaxLength(180)),
+    );
+    await interaction.showModal(modal);
+  } catch (error) {
+    await replyError(interaction, (error as Error).message);
+  }
+}
+
 export async function handleVirtualManagerMoveButton(interaction: ButtonInteraction): Promise<void> {
   const [, direction, accountId] = interaction.customId.split(':');
   try {
@@ -244,7 +264,7 @@ export async function handleVirtualManagerMoveButton(interaction: ButtonInteract
   }
 }
 
-async function ensureHumanGuildMember(interaction: ModalSubmitInteraction, userId: UserDiscordId): Promise<void> {
+async function ensureHumanGuildMember(interaction: ModalSubmitInteraction | UserSelectMenuInteraction, userId: UserDiscordId): Promise<void> {
   const guild = interaction.guild;
   if (!guild) throw new Error('Discord-Server fehlt.');
   const member = guild.members.cache.get(String(userId)) ?? await guild.members.fetch(String(userId)).catch(() => null);
@@ -252,7 +272,7 @@ async function ensureHumanGuildMember(interaction: ModalSubmitInteraction, userI
 }
 
 export async function handleVirtualManagerModal(interaction: ModalSubmitInteraction): Promise<void> {
-  const [, , operation, accountId] = interaction.customId.split(':');
+  const [, operation, accountId, selectedTarget] = interaction.customId.split(':');
   try {
     const scope = await assertManager(interaction, accountId);
     const account = await getVirtualAccountById(scope.guildId, scope.connId, accountId);
@@ -260,7 +280,8 @@ export async function handleVirtualManagerModal(interaction: ModalSubmitInteract
     if (account.kind !== 'CUSTOM') throw new Error('Lotterie- und Markt-Systemkonten dürfen nicht über generische Manageraktionen manipuliert werden.');
 
     if (operation === 'payout') {
-      const target = parseDiscordId(interaction.fields.getTextInputValue('target'));
+      if (!selectedTarget || !/^\d{17,20}$/.test(selectedTarget)) throw new Error('Bitte wähle einen gültigen Empfänger aus der Mitgliederliste.');
+      const target = asUserDiscordId(selectedTarget);
       await ensureHumanGuildMember(interaction, target);
       const amount = parsePositiveAmount(interaction.fields.getTextInputValue('amount'));
       const sourcePocket = parsePocket(interaction.fields.getTextInputValue('source'), 'Quelle');

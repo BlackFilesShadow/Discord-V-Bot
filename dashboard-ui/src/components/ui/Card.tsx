@@ -28,7 +28,7 @@ export function Card({ className, children, glow = false, interactive = false, .
 }
 
 export function CardHeader({ className, children }: { className?: string; children: ReactNode }) {
-  return <div className={twMerge('mb-4 flex items-center gap-3', className)}>{children}</div>;
+  return <div className={twMerge('mb-4 flex flex-wrap items-center gap-3', className)}>{children}</div>;
 }
 
 function titleText(children: ReactNode): string {
@@ -41,8 +41,8 @@ function titleText(children: ReactNode): string {
 export function CardTitle({ className, children }: { className?: string; children: ReactNode }) {
   const help = functionHelpFor(titleText(children));
   return (
-    <div className="inline-flex min-w-0 items-center gap-2">
-      <h3 className={twMerge('text-base sm:text-lg font-semibold text-white tracking-tight', className)}>{children}</h3>
+    <div className="flex max-w-full min-w-0 items-center gap-2">
+      <h3 className={twMerge('min-w-0 break-words text-base sm:text-lg font-semibold text-white tracking-tight', className)}>{children}</h3>
       <FunctionHelpButton title={help.title} text={help.text} />
     </div>
   );

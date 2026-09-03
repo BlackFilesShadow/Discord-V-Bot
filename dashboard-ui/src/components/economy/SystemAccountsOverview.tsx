@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { api } from '@/lib/api';
 
@@ -40,7 +41,11 @@ function ownerLabel(account: SystemAccountRow): string {
   return 'Fachfunktion';
 }
 
-export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slot: string }) {
+export function SystemAccountsOverview({ guildId, slot, onConfigureServerBank }: {
+  guildId: string;
+  slot: string;
+  onConfigureServerBank: () => void;
+}) {
   const query = useQuery({
     queryKey: ['economy-system-accounts', guildId, slot],
     queryFn: () => api.get<{ accounts: SystemAccountRow[] }>(
@@ -61,7 +66,7 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
         <CardTitle>Systemkonten · Lotterie, Schwarzmarkt & Serverbank</CardTitle>
       </CardHeader>
       <p className="text-xs text-muted mb-4">
-        Diese Konten nutzen dieselbe Economy-Infrastruktur, werden aber ausschließlich von ihrer Fachfunktion verändert. Deshalb gibt es hier bewusst keine generischen Konfigurieren-, Löschen-, Archivieren- oder Auszahlungsaktionen.
+        Lotterie und Schwarzmarkt werden ausschließlich in ihren Fachbereichen verändert. Die Serverbank ist direkt über „Serverbank konfigurieren“ erreichbar; Löschen und Archivieren sind für Systemkonten nicht verfügbar.
       </p>
 
       {query.isLoading && <p className="text-sm text-muted">Lade Systemkonten…</p>}
@@ -97,6 +102,9 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
                   <p className="mt-1 text-[11px] text-warning">{account.capabilities.readOnlyReason}</p>
                 )}
               </div>
+              {account.capabilities.managedBy === 'SERVER_BANK' && account.capabilities.canConfigure && (
+                <Button size="sm" variant="outline" onClick={onConfigureServerBank}>Serverbank konfigurieren</Button>
+              )}
             </div>
           </div>
         ))}

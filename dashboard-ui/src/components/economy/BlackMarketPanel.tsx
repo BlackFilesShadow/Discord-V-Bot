@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { BlackMarketDiscordSettings } from './BlackMarketDiscordSettings';
@@ -76,6 +77,13 @@ interface VendorPayoutDraft {
   targetPocket: 'WALLET' | 'BANK';
 }
 
+interface DiscordMember {
+  discordId: string;
+  username: string;
+  displayName: string;
+  avatar: string | null;
+}
+
 const MAX_MARKET_PRICE = 1_000_000_000_000_000n;
 const MAX_TECHNICAL_QUANTITY = 2_147_483_647;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
@@ -118,6 +126,7 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   const [listing, setListing] = useState({ vendorAccountId: '', name: '', description: '', price: '' });
   const [purchaseDrafts, setPurchaseDrafts] = useState<Record<string, PurchaseDraft>>({});
   const [payoutDrafts, setPayoutDrafts] = useState<Record<string, VendorPayoutDraft>>({});
+  const [payoutMemberQuery, setPayoutMemberQuery] = useState('');
   const [refundReasons, setRefundReasons] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -155,6 +164,21 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     enabled: canManage,
     retry: false,
   });
+  const payoutMembers = useQuery({
+    queryKey: ['economy-black-market-payout-members', guildId, slot, payoutMemberQuery],
+    queryFn: () => api.get<{ members: DiscordMember[] }>(
+      `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/members?slot=${encodeURIComponent(slot)}&limit=20${payoutMemberQuery ? `&q=${encodeURIComponent(payoutMemberQuery)}` : ''}`,
+    ),
+    enabled: canManage,
+    placeholderData: previous => previous,
+    retry: false,
+  });
+  const payoutMemberOptions = useMemo<ComboboxOption[]>(() => (payoutMembers.data?.members ?? []).map(member => ({
+    id: member.discordId,
+    label: member.displayName || member.username,
+    hint: member.username,
+    avatar: member.avatar ? `https://cdn.discordapp.com/avatars/${member.discordId}/${member.avatar}.png?size=64` : undefined,
+  })), [payoutMembers.data?.members]);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['economy-black-market-vendors', guildId, slot] });
@@ -349,7 +373,16 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                     </div>
                     {vendor.status === 'ACTIVE' && (
                       <div className="grid gap-2 2xl:grid-cols-[minmax(0,1fr)_110px_110px_auto_auto] items-end">
-                        <Input aria-label={`Auszahlungsziel ${vendor.name}`} value={draft.targetUserId} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetUserId: e.target.value.trim() } }))} placeholder="Discord User-ID" />
+                        <Combobox
+                          value={draft.targetUserId || null}
+                          onChange={targetUserId => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetUserId: targetUserId ?? '' } }))}
+                          options={payoutMemberOptions}
+                          onSearch={setPayoutMemberQuery}
+                          loading={payoutMembers.isFetching}
+                          placeholder="Discord-Mitglied auswählen…"
+                          emptyText="Kein menschliches Guild-Mitglied gefunden."
+                          disabled={payoutVendor.isPending}
+                        />
                         <Input aria-label={`Auszahlungsbetrag ${vendor.name}`} value={draft.amount} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, amount: e.target.value.trim() } }))} inputMode="numeric" placeholder={`Betrag ${currencyEmoji}`} />
                         <Select aria-label={`Auszahlungszielkonto ${vendor.name}`} value={draft.targetPocket} onChange={e => setPayoutDrafts(current => ({ ...current, [vendor.id]: { ...draft, targetPocket: e.target.value as 'WALLET' | 'BANK' } }))}>
                           <option value="WALLET">Wallet</option><option value="BANK">Bank</option>

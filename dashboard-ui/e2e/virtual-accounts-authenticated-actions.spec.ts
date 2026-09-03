@@ -140,16 +140,17 @@ async function stubEconomy(page: Page, opts: { payoutError?: boolean } = {}) {
         syncWarning: null,
       }, 201);
     }
-    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}` && method === 'DELETE') {
+    if ((path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}`
+      || path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${FUNDED_ACCOUNT}`) && method === 'DELETE') {
       mutations.push({ method, path, query: url.search, body: null });
       return json(route, {
         ok: true,
         deleted: {
-          id: DELETE_ACCOUNT,
-          name: 'Löschbare Kasse',
+          id: path.endsWith(FUNDED_ACCOUNT) ? FUNDED_ACCOUNT : DELETE_ACCOUNT,
+          name: path.endsWith(FUNDED_ACCOUNT) ? 'Eventkasse' : 'Löschbare Kasse',
           mode: 'HARD_DELETED',
-          walletRemoved: '0',
-          bankRemoved: '0',
+          walletRemoved: path.endsWith(FUNDED_ACCOUNT) ? '5000' : '0',
+          bankRemoved: path.endsWith(FUNDED_ACCOUNT) ? '250' : '0',
           domainPreserved: false,
         },
       });
@@ -188,7 +189,7 @@ function mutation(mutations: Mutation[], path: string) {
 
 async function gotoVirtualAccounts(page: Page): Promise<void> {
   await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
-  await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
+  await expect(page.locator('h2').filter({ hasText: 'Virtuelle Konten' })).toBeVisible();
 }
 
 function payoutPanel(page: Page) {
@@ -209,7 +210,7 @@ async function noOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Authenticated virtual-account actions', () => {
-  test('Create, Audit und Archive bleiben exakt Guild+Slot-gescoped und nutzen getrennte Live-/Archivkanaele', async ({ page }) => {
+  test('Create und Audit bleiben exakt Guild+Slot-gescoped und nutzen getrennte Live-/Archivkanaele', async ({ page }) => {
     const mutations = await stubEconomy(page);
     await gotoVirtualAccounts(page);
 
@@ -245,35 +246,31 @@ test.describe('Authenticated virtual-account actions', () => {
     await zeroRow.getByRole('button', { name: 'Audit', exact: true }).click();
     await expect(page.getByText(/Audit Test/)).toBeVisible();
 
-    await zeroRow.getByRole('button', { name: 'Archivieren', exact: true }).click();
-    await expect.poll(() => mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)).toBeTruthy();
-    expect(mutation(mutations, `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/${ZERO_ACCOUNT}/archive`)?.query).toBe(`?slot=${SLOT}`);
+    await expect(zeroRow.getByRole('button', { name: 'Archivieren', exact: true })).toHaveCount(0);
   });
 
-  test('Hard-Delete ist fail-closed, verlangt zwei Klicks und bleibt exakt Guild+Slot-gescoped', async ({ page }) => {
+  test('Hard-Delete löscht ein aktives Konto mit Guthaben nach zwei Klicks und bleibt exakt Guild+Slot-gescoped', async ({ page }) => {
     const mutations = await stubEconomy(page);
     await gotoVirtualAccounts(page);
 
     const fundedRow = page.getByText('Eventkasse', { exact: false })
       .locator('xpath=ancestor::div[contains(@class,"bg-bg-elev/40")][1]');
     const fundedDelete = fundedRow.getByRole('button', { name: 'Löschen', exact: true });
-    await expect(fundedDelete).toBeDisabled();
-    await expect(fundedDelete).toHaveAttribute('title', /Wallet und Bank 0 sind/);
+    await expect(fundedDelete).toBeEnabled();
 
-    const deletePath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}`;
-    const row = page.getByText('Löschbare Kasse', { exact: false })
-      .locator('xpath=ancestor::div[contains(@class,"bg-bg-elev/40")][1]');
+    const deletePath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${FUNDED_ACCOUNT}`;
+    const row = fundedRow;
 
     await row.getByRole('button', { name: 'Löschen', exact: true }).click();
     expect(mutation(mutations, deletePath)).toBeUndefined();
     await expect(row.getByRole('button', { name: 'Wirklich löschen?', exact: true })).toBeVisible();
-    await expect(page.getByText(/Wallet und Bank müssen bereits 0 sein; Guthaben wird niemals verworfen/)).toBeVisible();
+    await expect(page.getByText(/Sein Wallet- und Bankguthaben werden mit diesem Konto gelöscht/)).toBeVisible();
     await expect(page.getByText(/Historische Buchungen und Referenzen bleiben erhalten/)).toBeVisible();
 
     await row.getByRole('button', { name: 'Wirklich löschen?', exact: true }).click();
     await expect.poll(() => mutation(mutations, deletePath)).toBeTruthy();
     expect(mutation(mutations, deletePath)).toMatchObject({ method: 'DELETE', query: `?slot=${SLOT}`, body: null });
-    await expect(page.getByText(/Konto „Löschbare Kasse“ wurde dauerhaft gelöscht/)).toBeVisible();
+    await expect(page.getByText(/Konto „Eventkasse“ wurde dauerhaft gelöscht/)).toBeVisible();
     await expect(page.getByText(/Historische Buchungen und Referenzen bleiben erhalten/)).toBeVisible();
   });
 

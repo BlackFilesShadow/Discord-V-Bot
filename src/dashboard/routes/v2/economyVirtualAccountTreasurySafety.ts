@@ -53,7 +53,6 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
     readProjection(accountId, String(guildId), String(connId)),
   ]);
   const isCustom = account.kind === 'CUSTOM';
-  const pocketsEmpty = account.balance === 0n && finance.bankBalance === 0n;
   const managedBy = account.kind === 'LOTTERY_POT'
     ? 'LOTTERY'
     : account.kind === 'MARKET_VENDOR'
@@ -98,7 +97,7 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
       managedBy,
       canConfigure: isCustom && !hidden && account.status !== 'ARCHIVED',
       canDelete: isCustom && !hidden,
-      canArchive: isCustom && !hidden && account.status !== 'ARCHIVED' && pocketsEmpty,
+      canArchive: false,
       canPayout: isCustom && !hidden && account.status === 'ACTIVE',
       canSyncProjection: isCustom && !hidden && account.status !== 'ARCHIVED',
       canRestore: isCustom && hidden,

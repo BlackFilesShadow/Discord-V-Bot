@@ -67,6 +67,13 @@ describeDb('virtual account terminal deletion history identity', () => {
       createdByDiscordId: actorId,
     });
     await ensureVirtualAccountFinance(guildId, connId, account.id);
+    await prisma.economyVirtualAccount.update({ where: { id: account.id }, data: { balance: 50n } });
+    await prisma.$executeRawUnsafe(
+      'UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=20 WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
+      account.id,
+      String(guildId),
+      String(connId),
+    );
 
     const oldEntryId = randomUUID();
     await prisma.$executeRawUnsafe(
@@ -112,8 +119,8 @@ describeDb('virtual account terminal deletion history identity', () => {
       actorDiscordId: actorId,
     });
     expect(result.mode).toBe('HARD_DELETED');
-    expect(result.walletRemoved).toBe('0');
-    expect(result.bankRemoved).toBe('0');
+    expect(result.walletRemoved).toBe('50');
+    expect(result.bankRemoved).toBe('20');
 
     await expect(prisma.economyVirtualAccount.findUnique({ where: { id: account.id } })).resolves.toBeNull();
     await expect(prisma.economyVirtualAccountEntry.count({ where: { id: oldEntryId } })).resolves.toBe(1);

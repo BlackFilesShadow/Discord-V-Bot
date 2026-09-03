@@ -51,7 +51,7 @@ interface Purchase {
 }
 
 interface Mutation {
-  kind: 'vendor' | 'listing' | 'archive' | 'remove' | 'purchase';
+  kind: 'vendor' | 'listing' | 'archive' | 'remove' | 'purchase' | 'payout';
   path: string;
   query: string;
   body: Record<string, unknown>;
@@ -133,6 +133,9 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
       coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/channels`) return json(route, { channels: [] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/members`) return json(route, {
+      members: [{ discordId: OTHER_USER, username: 'alice', displayName: 'Alice', avatar: null }],
+    });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/current`) return json(route, { round: null });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/lottery/history`) return json(route, { rounds: [] });
 
@@ -170,6 +173,13 @@ async function stubBlackMarket(page: Page, opts: { canManage: boolean; purchaseE
     if (path === `${marketBase}/purchases`) {
       purchaseHistoryReads += 1;
       return json(route, { nitradoConnId: 'conn-market-1', purchases });
+    }
+
+    const vendorPayoutMatch = new RegExp(`^${marketBase}/vendors/([^/]+)/payout$`).exec(path);
+    if (vendorPayoutMatch && method === 'POST') {
+      const body = req.postDataJSON() as Record<string, unknown>;
+      mutations.push({ kind: 'payout', path, query: url.search, body, idempotencyKey: req.headers()['x-idempotency-key'] ?? null });
+      return json(route, { booked: true, vendor: vendors.find(vendor => vendor.id === vendorPayoutMatch[1]), syncWarning: null });
     }
 
     const removeMatch = new RegExp(`^${marketBase}/listings/([^/]+)$`).exec(path);
@@ -232,7 +242,7 @@ test.describe('Black Market authenticated action contract', () => {
     const state = await stubBlackMarket(page, { canManage: false });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
 
-    await expect(page.getByText('Schwarzmarkt')).toBeVisible();
+    await expect(page.getByText('Schwarzmarkt', { exact: true })).toBeVisible();
     await expect(page.getByText('M4 Kit')).toBeVisible();
     await expect(page.getByText('Altes Kit')).toHaveCount(0);
     await expect(page.getByText('Haendler anlegen')).toHaveCount(0);
@@ -297,6 +307,24 @@ test.describe('Black Market authenticated action contract', () => {
     await page.getByRole('button', { name: 'Kaufen', exact: true }).click();
     await expect(page.getByText(/Kauf fehlgeschlagen: Nicht genug Guthaben/)).toBeVisible();
     await expect(page.getByText(/Bestellung .* gebucht:/)).toHaveCount(0);
+  });
+
+  test('Händler-Auszahlung wählt den Empfänger aus Guild-Mitgliedern statt einer freien Discord-ID', async ({ page }) => {
+    const state = await stubBlackMarket(page, { canManage: true });
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+
+    const vendorRow = page.getByText('Nachtmarkt', { exact: true }).locator('xpath=ancestor::div[contains(@class,"border-border/40")][1]');
+    await vendorRow.getByRole('button', { name: 'Discord-Mitglied auswählen…' }).click();
+    await page.getByRole('option', { name: /Alice/ }).click();
+    await vendorRow.getByLabel('Auszahlungsbetrag Nachtmarkt').fill('4000');
+    await vendorRow.getByRole('button', { name: 'Auszahlen', exact: true }).click();
+
+    await expect.poll(() => mutationOf(state, 'payout')).toBeTruthy();
+    expect(mutationOf(state, 'payout')).toMatchObject({
+      path: `/api/v2/guilds/${GUILD_ID}/economy/black-market/vendors/vendor-1/payout`,
+      query: `?slot=${SLOT}`,
+      body: { targetUserId: OTHER_USER, amount: '4000', targetPocket: 'WALLET' },
+    });
   });
 
   for (const width of [320, 360, 375, 390, 430]) {

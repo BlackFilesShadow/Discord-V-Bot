@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Archive,
   Banknote,
   History,
   Landmark,
@@ -443,7 +442,12 @@ function AccountEditor({
   );
 }
 
-export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string; slot: string }) {
+export function VirtualAccountsControlPanel({ guildId, slot, openTreasuryConfiguration = false, onTreasuryConfigurationOpened }: {
+  guildId: string;
+  slot: string;
+  openTreasuryConfiguration?: boolean;
+  onTreasuryConfigurationOpened?: () => void;
+}) {
   const qc = useQueryClient();
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [createDraft, setCreateDraft] = useState<CreateDraft>(emptyDraft);
@@ -488,6 +492,12 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       && account.kind !== 'MARKET_VENDOR'
   )), [rows]);
   const effectiveManagerChannel = managerChannelTouched ? managerChannel : (managerPanel.data?.panel?.channelId ?? '');
+
+  useEffect(() => {
+    if (!openTreasuryConfiguration || !treasury) return;
+    setEditingId(treasury.id);
+    onTreasuryConfigurationOpened?.();
+  }, [onTreasuryConfigurationOpened, openTreasuryConfiguration, treasury]);
 
   const createValidation = useMemo(() => {
     if (!createDraft.name.trim() || createDraft.name.trim().length > 80) return 'Kontoname muss 1..80 Zeichen enthalten.';
@@ -555,20 +565,6 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
-  const archive = useMutation({
-    mutationFn: (accountId: string) => api.post<{ id: string }>(
-      `/api/v2/guilds/${guildId}/economy/virtual-accounts/${accountId}/archive?slot=${encodeURIComponent(slot)}`,
-      {},
-    ),
-    onSuccess: () => {
-      setEditingId(null);
-      setDeleteConfirmId(null);
-      setMessage({ ok: true, text: 'Konto archiviert.' });
-      void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
-    },
-    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
-  });
-
   const remove = useMutation({
     mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: DeletedAccountResponse }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}?slot=${encodeURIComponent(slot)}`,
@@ -611,7 +607,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Dauerhaft löschen lassen sich hier nur leere CUSTOM-Konten. Wallet und Bank müssen vorher 0 sein; Guthaben wird niemals verworfen. Historische Buchungen und Referenzen bleiben über die historische Kontoidentität erhalten.
+        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Löschen entfernt ausschließlich das gewählte CUSTOM-Konto endgültig, einschließlich seines Wallet- und Bankguthabens. Historische Buchungen und Referenzen bleiben über die historische Kontoidentität erhalten.
       </p>
 
       {message && (
@@ -623,8 +619,8 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       <div className="grid gap-4 xl:grid-cols-2 mb-5">
         <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="inline-flex items-center gap-1.5">
-              <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />Serverbank</p>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <p className="min-w-0 break-words text-sm font-medium text-white inline-flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />Serverbank</p>
               <FunctionHelpButton title="Serverbank" text={['Die Serverbank ist das zentrale CUSTOM-Konto dieses Slots.', 'Wallet und Bankreserve werden getrennt geführt. Guthaben wird bei keiner Aktion verworfen.']} />
             </div>
             {treasury && <Badge variant="ok">aktiv</Badge>}
@@ -648,8 +644,8 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
         </div>
 
         <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
-          <div className="inline-flex items-center gap-1.5">
-            <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" />Management-Kanal</p>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="min-w-0 break-words text-sm font-medium text-white inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" />Management-Kanal</p>
             <FunctionHelpButton title="Management-Kanal" text={['Dieser Discord-Kanal enthält das Panel für Kontoverwalter.', 'Nur zugewiesene Verwalter erhalten Zugriff und können ausschließlich ihre Konten bedienen.']} />
           </div>
           <p className="text-xs text-muted">Kein Rollen-Zwang: V-Bot gibt nur den aktuell zugewiesenen Kontoverwaltern Zugriff und stellt vorbestehende User-Rechte beim Entfernen wieder her.</p>
@@ -669,8 +665,8 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       </div>
 
       <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3 mb-5">
-        <div className="inline-flex items-center gap-1.5">
-          <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" />Neues Konto</p>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <p className="min-w-0 break-words text-sm font-medium text-white inline-flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" />Neues Konto</p>
           <FunctionHelpButton title="Neues Konto" text={['Erstellt ein getrenntes CUSTOM-Konto für diesen Slot.', 'Der Ersteller bleibt automatisch Kontoverwalter; weitere Verwalter können vor dem Speichern ergänzt werden.']} />
         </div>
         <div className="grid gap-3 md:grid-cols-2">
@@ -704,9 +700,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       <div className="space-y-3">
         {listRows.length === 0 && !accounts.isLoading && <p className="text-muted text-sm">Noch keine virtuellen Konten.</p>}
         {listRows.map(account => {
-          const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
-          const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
-          const canDelete = account.kind === 'CUSTOM' && pocketsEmpty;
+          const canDelete = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED';
           const deleteArmed = deleteConfirmId === account.id;
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
@@ -747,7 +741,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                     <Button
                       size="sm"
                       variant="danger"
-                      disabled={!canDelete || remove.isPending || archive.isPending}
+                      disabled={!canDelete || remove.isPending}
                       onClick={() => {
                         if (!deleteArmed) {
                           setDeleteConfirmId(account.id);
@@ -756,21 +750,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                         remove.mutate(account.id);
                       }}
                       title={canDelete
-                        ? 'Leeres CUSTOM-Konto dauerhaft löschen. Historische Buchungen und Referenzen bleiben erhalten.'
-                        : 'Löschen ist erst möglich, wenn Wallet und Bank 0 sind. Guthaben wird niemals verworfen.'}
+                        ? 'Dieses CUSTOM-Konto einschließlich Wallet und Bank dauerhaft löschen. Historische Buchungen und Referenzen bleiben erhalten.'
+                        : 'Archivierte Konten können nicht gelöscht werden.'}
                     >
                       <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
-                    </Button>
-                  )}
-                  {account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && (
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={!canArchive || archive.isPending || remove.isPending}
-                      onClick={() => { setDeleteConfirmId(null); archive.mutate(account.id); }}
-                      title={canArchive ? 'Konto archivieren' : 'Archivieren erst bei Wallet=0 und Bank=0 möglich.'}
-                    >
-                      <Archive className="h-3.5 w-3.5 mr-1" />Archivieren
                     </Button>
                   )}
                 </div>
@@ -778,7 +761,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
 
               {deleteArmed && (
                 <p className="mt-2 text-[11px] text-danger">
-                  Nur dieses leere CUSTOM-Konto wird dauerhaft aus dem aktiven Kontobestand gelöscht. Wallet und Bank müssen bereits 0 sein; Guthaben wird niemals verworfen. Historische Buchungen und Referenzen bleiben erhalten. Klicke „Wirklich löschen?“ erneut zur Bestätigung.
+                  Nur dieses CUSTOM-Konto wird dauerhaft aus dem aktiven Kontobestand gelöscht. Sein Wallet- und Bankguthaben werden mit diesem Konto gelöscht. Historische Buchungen und Referenzen bleiben erhalten. Klicke „Wirklich löschen?“ erneut zur Bestätigung.
                 </p>
               )}
 
@@ -874,8 +857,8 @@ function LegacyAdminPayout({
 
   return (
     <div className="mt-5 rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
-      <div className="inline-flex items-center gap-1.5">
-        <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Admin-Auszahlung</p>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <p className="min-w-0 break-words text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Admin-Auszahlung</p>
         <FunctionHelpButton title="Admin-Auszahlung" text={['Bucht Guthaben atomar aus einem CUSTOM-Konto auf das Konto eines Discord-Mitglieds.', 'Quelle, Ziel und Betrag werden vor der Buchung geprüft; jede Auszahlung ist gegen Doppelausführung geschützt.']} />
       </div>
       <p className="text-xs text-muted">Einmalige zentrale Admin-Auszahlung. Der Discord-User wird per Dropdown gewählt; intern wird die zugehörige User-GUID an den vorhandenen sicheren Buchungspfad übergeben. Die Begründung ist optional.</p>

@@ -248,8 +248,8 @@ export default function ServerSlot() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-2 border-b border-border/60 pb-3">
-          <h2 className="text-base font-semibold text-white">{SLOT_HELP[tab].title}</h2>
+        <div className="flex min-w-0 items-center gap-2 border-b border-border/60 pb-3">
+          <h2 className="min-w-0 break-words text-base font-semibold text-white">{SLOT_HELP[tab].title}</h2>
           <FunctionHelpButton title={SLOT_HELP[tab].title} text={SLOT_HELP[tab].text} />
         </div>
 
@@ -271,7 +271,7 @@ export default function ServerSlot() {
               <div className="space-y-4">
                 <Switch checked={settings.data.whitelistActive} onChange={v => updateSettings.mutate({ whitelistActive: v })} label="Whitelist aktiv" disabled={updateSettings.isPending} />
                 <Switch checked={settings.data.economyActive} onChange={v => updateSettings.mutate({ economyActive: v })} label="Economy aktiv" disabled={updateSettings.isPending} />
-                <div className="inline-flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Switch checked={settings.data.permaOnly} onChange={v => updateSettings.mutate({ permaOnly: v })} label="Perma-Only Modus" disabled={updateSettings.isPending} />
                   <FunctionHelpButton title="Perma-Only Modus" text={['V-Bot prüft diesen aktiven Nitrado-Server regelmäßig.', 'Ist der Server gestoppt, wird ein kontrollierter Neustart geplant. Gesperrte Server werden nicht automatisch gestartet.']} />
                 </div>

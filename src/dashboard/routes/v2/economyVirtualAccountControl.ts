@@ -5,7 +5,7 @@ import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { asUserDiscordId, type UserDiscordId } from '../../../types/scope';
-import { archiveVirtualAccount, getVirtualAccountById, listVirtualAccounts, type VirtualAccountRawDb } from '../../../modules/economy/virtualAccounts';
+import { getVirtualAccountById, listVirtualAccounts, type VirtualAccountRawDb } from '../../../modules/economy/virtualAccounts';
 import { getVirtualAccountMetadata } from '../../../modules/economy/virtualAccountMetadata';
 import {
   createConfiguredCustomVirtualAccount,
@@ -352,22 +352,6 @@ economyVirtualAccountControlRouter.get('/control/members', memberSearchLimiter, 
       avatar: member.user.avatar ?? null,
     })) });
   } catch (error) { res.status(502).json({ error: 'Discord-Member-Suche fehlgeschlagen.', detail: (error as Error).message }); }
-});
-
-// Safety override fuer den bisherigen Archiv-Endpunkt: Wallet UND Bank muessen 0 sein.
-economyVirtualAccountControlRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), async (req, res) => {
-  const { scope, connId } = scoped(req);
-  const accountId = String(req.params.accountId);
-  const account = await getVirtualAccountById(scope.guildId, connId, accountId);
-  if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
-  if (account.kind !== 'CUSTOM') { res.status(400).json({ error: 'Systemkonten werden ausschliesslich durch ihre Fachfunktion verwaltet.' }); return; }
-  const finance = await ensureVirtualAccountFinance(scope.guildId, connId, accountId);
-  if (account.balance !== 0n || finance.bankBalance !== 0n) { res.status(400).json({ error: 'Archivieren ist nur bei Wallet=0 und Bank=0 erlaubt.' }); return; }
-  try {
-    const archived = await archiveVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId, actorDiscordId: asUserDiscordId(scope.actorDiscordId) });
-    await bestEffortProjection(req, accountId);
-    res.json({ ...archived, balance: archived.balance.toString(), bankBalance: finance.bankBalance.toString() });
-  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
 // Safety override fuer den bisherigen Dashboard-Payout. User-GUID bleibt fuer

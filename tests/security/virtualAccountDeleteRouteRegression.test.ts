@@ -24,16 +24,17 @@ describe('Virtual account delete route regression', () => {
     expect(service).toContain('return await prisma.$transaction(async tx =>');
   });
 
-  it('never burns funds and physically deletes only zero-balance CUSTOM live rows', () => {
+  it('physically deletes the selected CUSTOM live row together with its balances', () => {
     expect(service).toContain('FOR UPDATE');
-    expect(service).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
-    expect(service).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+    expect(service).not.toContain('account.balance !== 0n || finance.bankBalance !== 0n');
     expect(service).not.toContain('CONTROL_DELETE_RESET');
     expect(service).not.toContain('SET "bankBalance"=0');
     expect(service).not.toContain('SET "balance"=0');
     expect(service).toContain('EconomyVirtualAccountHistoryIdentity');
     expect(service).toContain('DELETE FROM "EconomyVirtualAccount"');
-    expect(service).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
+    expect(service).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"`);
+    expect(service).toContain('walletRemoved: account.balance.toString()');
+    expect(service).toContain('bankRemoved: finance.bankBalance.toString()');
     expect(service).toContain("mode: 'HARD_DELETED'");
     expect(service).not.toContain('retainZeroBalanceCustomHistory');
   });

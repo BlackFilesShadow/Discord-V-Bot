@@ -156,7 +156,7 @@ function findMutation(mutations: Mutation[], path: string, method?: string): Mut
 
 async function openWorkspace(page: Page): Promise<void> {
   await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
-  await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
+  await expect(page.locator('h2').filter({ hasText: 'Virtuelle Konten' })).toBeVisible();
 }
 
 test.describe('Virtual account treasury + manager authenticated contracts', () => {
@@ -172,7 +172,8 @@ test.describe('Virtual account treasury + manager authenticated contracts', () =
     });
     await expect(page.getByText('Serverbank „Serverbank“ ist bereit.')).toBeVisible();
 
-    const managerBlock = page.getByText('Management-Kanal', { exact: true }).locator('..');
+    const managerBlock = page.getByText('Management-Kanal', { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
     const managerSelect = managerBlock.locator('select');
     await expect(managerSelect.locator('option')).toHaveCount(3); // Placeholder + zwei Textkanaele; Kategorie bleibt ausgeschlossen.
     await managerSelect.selectOption(LIVE_CHANNEL_ID);

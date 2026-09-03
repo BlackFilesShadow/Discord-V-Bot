@@ -13,22 +13,23 @@ describe('virtual account system hard-delete gate', () => {
     expect(source).toContain('Serverbank-Konten werden ausschließlich über die Serverbank-Funktion verwaltet und können nicht generisch gelöscht werden.');
     expect(normalizedSource).toContain('DELETE FROM "EconomyVirtualAccount"');
     expect(normalizedSource).toContain('AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"');
-    expect(normalizedSource).toContain('AND "balance"=0');
+    expect(normalizedSource).not.toContain('AND "balance"=0');
     expect(source).not.toContain('hideDomainOwnedAccount');
     expect(source).not.toContain('DELETE FROM "LotteryRound"');
     expect(source).not.toContain('DELETE FROM "EconomyMarketPurchase"');
     expect(source).not.toContain('DELETE FROM "EconomyMarketOrder"');
   });
 
-  it('never burns funds and always removes a successful generic CUSTOM delete from live storage', () => {
-    expect(source).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
-    expect(source).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+  it('removes balances only with the successful selected generic CUSTOM delete from live storage', () => {
+    expect(source).not.toContain('account.balance !== 0n || finance.bankBalance !== 0n');
     expect(source).not.toContain('CONTROL_DELETE_RESET');
     expect(source).not.toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
     expect(source).not.toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
     expect(source).not.toContain('writeDeletedMarker');
     expect(source).toContain('EconomyVirtualAccountHistoryIdentity');
     expect(source).toContain('DELETE FROM "EconomyVirtualAccount"');
+    expect(source).toContain('walletRemoved: account.balance.toString()');
+    expect(source).toContain('bankRemoved: finance.bankBalance.toString()');
     expect(source).toContain("mode: 'HARD_DELETED'");
     expect(source).not.toContain("mode: 'HISTORY_RETAINED'");
   });

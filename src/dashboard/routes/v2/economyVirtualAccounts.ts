@@ -3,7 +3,6 @@ import rateLimit from 'express-rate-limit';
 import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import {
-  archiveVirtualAccount,
   getVirtualAccountById,
   listVirtualAccountEntries,
   listVirtualAccounts,
@@ -272,27 +271,6 @@ economyVirtualAccountsRouter.get('/:accountId/entries', requireGuildPermission('
     res.json({ nitradoConnId: connId, entries: entries.map(serializeEntry) });
   } catch (error) {
     res.status(404).json({ error: (error as Error).message });
-  }
-});
-
-economyVirtualAccountsRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), async (req, res) => {
-  const { scope, connId } = scoped(req);
-  try {
-    await requireCustomAccount(scope.guildId, connId, String(req.params.accountId));
-    const account = await archiveVirtualAccount({
-      guildId: scope.guildId,
-      nitradoConnId: connId,
-      accountId: String(req.params.accountId),
-      actorDiscordId: asUserDiscordId(scope.actorDiscordId),
-    });
-    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_ARCHIVED', 'ECONOMY', {
-      actorUserId: req.auth!.userId,
-      guildId: scope.guildId,
-      details: { nitradoConnId: connId, accountId: account.id, name: account.name },
-    });
-    res.json(serializeAccount(account, await metadataFor(account)));
-  } catch (error) {
-    res.status(400).json({ error: (error as Error).message });
   }
 });
 

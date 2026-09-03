@@ -10,6 +10,7 @@ import {
   handleVirtualManagerModal,
   handleVirtualManagerMoveButton,
   handleVirtualManagerSelect,
+  handleVirtualManagerUserSelect,
 } from '../modules/economy/virtualAccountInteractions';
 import { handleMarketDirectBuyButton, handleMarketDirectBuyModal } from '../modules/economy/blackMarketInteractions';
 import { handleMarketVendorCatalogPageButton } from '../modules/economy/blackMarketDiscord';
@@ -65,6 +66,9 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
       || i.customId.startsWith('marketorder:qty:')
       || i.customId.startsWith('marketorder:select:');
   }
+  if (i.isUserSelectMenu()) {
+    return i.customId.startsWith('vacct_mgr_user:');
+  }
   return false;
 }
 
@@ -75,6 +79,9 @@ const interactionCreateComposite: BotEvent = {
     if (!isCompositeOwnedComponent(i)) {
       await legacyInteractionCreate.execute(interaction);
       return;
+    }
+    if (i.isUserSelectMenu()) {
+      if (i.customId.startsWith('vacct_mgr_user:')) return handleVirtualManagerUserSelect(i);
     }
     if (!checkComponentRateLimit(i.user.id)) {
       rateLimitedCounter.inc({ kind: 'component' });
