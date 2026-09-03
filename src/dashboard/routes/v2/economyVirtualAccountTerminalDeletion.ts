@@ -31,7 +31,7 @@ async function readProjection(accountId: string, guildId: string, connId: string
 
 async function isTerminallyDeleted(guildId: GuildId, connId: NitradoConnId, accountId: string): Promise<boolean> {
   const rows = await rawDb().$queryRawUnsafe<Array<{ deleted: boolean }>>(
-    'SELECT EXISTS(SELECT 1 FROM "EconomyVirtualAccountDeleted" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3) AS deleted',
+    'SELECT EXISTS(SELECT 1 FROM "EconomyVirtualAccountHistoryIdentity" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "deletedAt" IS NOT NULL) AS deleted',
     accountId,
     String(guildId),
     String(connId),
@@ -100,9 +100,8 @@ async function serializeCustomAccount(guildId: GuildId, connId: NitradoConnId, a
   };
 }
 
-// Terminal-deletion list override. It intentionally runs before the Phase-2
-// capability router: deleted CUSTOM rows may remain in PostgreSQL for immutable
-// FK history, but they are no longer active entities and never reappear here.
+// The active list comes exclusively from live EconomyVirtualAccount storage.
+// Historical identities are consulted only as a defensive terminal-deletion guard.
 economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuildPermission('economy.view'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId;
@@ -118,26 +117,28 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuil
   });
 });
 
-// Every mutating compatibility path must fail closed for an internally retained
-// history row. Without these guards a caller who kept the old account ID could
-// otherwise attempt to reconfigure, sync, archive or pay out from a deleted row.
+// Old IDs remain terminal through the historical identity even though the live
+// account row is physically absent.
 economyVirtualAccountTerminalDeletionRouter.put('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedMutation);
 economyVirtualAccountTerminalDeletionRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedMutation);
 economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/sync', requireGuildPermission('economy.manage'), rejectDeletedMutation);
 economyVirtualAccountTerminalDeletionRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), rejectDeletedMutation);
 economyVirtualAccountTerminalDeletionRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), rejectDeletedMutation);
 
-// A delete is final from the control surface. Historical rows can remain only as
-// immutable FK targets; they cannot be turned back into active user accounts.
 economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/restore', requireGuildPermission('economy.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId;
   if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
-  const account = await getVirtualAccountById(scope.guildId, connId, String(req.params.accountId));
+  const accountId = String(req.params.accountId);
+  if (await isTerminallyDeleted(scope.guildId, connId, accountId)) {
+    res.status(410).json({ error: 'Gelöschte Konten können nicht wiederhergestellt werden.' });
+    return;
+  }
+  const account = await getVirtualAccountById(scope.guildId, connId, accountId);
   if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
   if (account.kind !== 'CUSTOM') {
     res.status(400).json({ error: 'Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.' });
     return;
   }
-  res.status(410).json({ error: 'Gelöschte Konten können nicht wiederhergestellt werden.' });
+  res.status(400).json({ error: 'Dieses Konto ist nicht gelöscht.' });
 });
