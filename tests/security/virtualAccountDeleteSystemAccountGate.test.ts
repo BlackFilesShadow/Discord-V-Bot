@@ -4,6 +4,7 @@ import path from 'node:path';
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src/modules/economy/virtualAccountDeletion.ts'), 'utf8');
 
 describe('virtual account system hard-delete gate', () => {
+  // Serverbank is CUSTOM-backed, so its BANK_TREASURY finance purpose is part of the hard-delete boundary.
   it('rejects all domain-owned accounts and keeps physical delete restricted to generic CUSTOM', () => {
     expect(source).toContain("if (account.kind !== 'CUSTOM')");
     expect(source).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
