@@ -33,6 +33,8 @@ describe('virtuelle Konten — Surface-Sicherheit', () => {
     expect(panel).not.toMatch(/api\.del\([^\n]*virtual-accounts/);
     expect(panel).toContain("account.kind !== 'LOTTERY_POT'");
     expect(panel).toContain("account.kind !== 'MARKET_VENDOR'");
+    expect(panel).toContain('editingId === treasury.id');
+    expect(panel).toContain('<AccountEditor account={treasury}');
   });
 
   it('Dashboard erhaelt die kontrollierte Admin-Auszahlung und expliziten Pocket-Kontext', () => {

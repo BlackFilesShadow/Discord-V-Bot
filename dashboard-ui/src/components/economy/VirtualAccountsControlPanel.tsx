@@ -627,10 +627,15 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
           </div>
           <p className="text-xs text-muted">Die Serverbank ist ein CUSTOM-Treasury-Konto mit eigenem Wallet + Bankreserve. Wird sie gelöscht, kann unmittelbar eine neue Serverbank angelegt werden; historische Buchungen bleiben erhalten.</p>
           {treasury ? (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm text-white">{treasury.accountEmoji} {treasury.name} · {fmtBig(treasury.totalBalance)} {treasury.currencyEmoji}</span>
-              <Button size="sm" variant="outline" onClick={() => setEditingId(treasury.id)}>Konfigurieren</Button>
-            </div>
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm text-white">{treasury.accountEmoji} {treasury.name} · {fmtBig(treasury.totalBalance)} {treasury.currencyEmoji}</span>
+                <Button size="sm" variant="outline" onClick={() => setEditingId(editingId === treasury.id ? null : treasury.id)}>Konfigurieren</Button>
+              </div>
+              {editingId === treasury.id && (
+                <AccountEditor account={treasury} guildId={guildId} slot={slot} channels={textChannels} onDone={setMessage} />
+              )}
+            </>
           ) : (
             <Button size="sm" disabled={ensureTreasury.isPending || accounts.isError} onClick={() => ensureTreasury.mutate()}>
               <Landmark className="h-3.5 w-3.5 mr-1" />{ensureTreasury.isPending ? 'Erstelle…' : 'Serverbank anlegen'}
