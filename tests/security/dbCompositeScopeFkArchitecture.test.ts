@@ -27,6 +27,13 @@ const protectedConstraints = [
   'TicketInstance_template_guild_fkey',
 ];
 
+const scopedReplacementConstraints: Record<string, RegExp> = {
+  EconomyVirtualAccountEntry_account_scope_fkey:
+    /ADD\s+CONSTRAINT\s+"EconomyVirtualAccountEntry_history_identity_fkey"\s+FOREIGN KEY \("virtualAccountId", "guildId", "nitradoConnId"\)\s+REFERENCES "EconomyVirtualAccountHistoryIdentity"\("accountId", "guildId", "nitradoConnId"\)/im,
+  LotteryRound_pot_scope_fkey:
+    /ADD\s+CONSTRAINT\s+"LotteryRound_pot_history_identity_fkey"\s+FOREIGN KEY \("potAccountId", "guildId", "nitradoConnId"\)\s+REFERENCES "EconomyVirtualAccountHistoryIdentity"\("accountId", "guildId", "nitradoConnId"\)/im,
+};
+
 describe('DB-2 composite tenant foreign-key invariants', () => {
   test('fails closed on existing inconsistent data before changing foreign keys', () => {
     const preflight = sql.indexOf('DO $$');
@@ -129,8 +136,19 @@ describe('DB-2 composite tenant foreign-key invariants', () => {
     for (const constraint of protectedConstraints) {
       const escaped = constraint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const drop = new RegExp(`DROP\\s+CONSTRAINT(?:\\s+IF\\s+EXISTS)?\\s+"${escaped}"`, 'i');
+      if (!drop.test(laterSql)) continue;
+
+      const scopedReplacement = scopedReplacementConstraints[constraint];
+      if (scopedReplacement) {
+        expect(laterSql).toMatch(scopedReplacement);
+        expect(laterSql).toMatch(
+          /CREATE UNIQUE INDEX "EconomyVirtualAccountHistoryIdentity_scope_key"\s+ON "EconomyVirtualAccountHistoryIdentity"\("accountId", "guildId", "nitradoConnId"\)/im,
+        );
+        continue;
+      }
+
       const reAdd = new RegExp(`ADD\\s+CONSTRAINT\\s+"${escaped}"`, 'i');
-      if (drop.test(laterSql)) expect(reAdd.test(laterSql)).toBe(true);
+      expect(reAdd.test(laterSql)).toBe(true);
     }
   });
 });
