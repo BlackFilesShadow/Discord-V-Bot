@@ -10,7 +10,7 @@ describe('virtual account system hard-delete gate', () => {
     expect(source).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(source).toContain("finance.accountPurpose === 'BANK_TREASURY'");
     expect(source).toContain('Serverbank-Konten werden ausschließlich über die Serverbank-Funktion verwaltet und können nicht generisch gelöscht werden.');
-    expect(source).toContain(String.raw`AND \"kind\"=\'CUSTOM\'::\"EconomyVirtualAccountKind\" AND \"balance\"=0`);
+    expect(source).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
     expect(source).not.toContain('hideDomainOwnedAccount');
     expect(source).not.toContain('DELETE FROM "LotteryRound"');
     expect(source).not.toContain('DELETE FROM "EconomyMarketPurchase"');
