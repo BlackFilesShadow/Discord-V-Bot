@@ -128,6 +128,21 @@ function addWeaponField(embed: EmbedBuilder, view: GameplayFeedView): void {
   });
 }
 
+function addPvpHitFields(embed: EmbedBuilder, view: GameplayFeedView): void {
+  const hit = view.pvpHit;
+  if (!hit) return;
+  const weapon = hit.weapon ?? view.toolOrWeapon;
+  const isMelee = /^Melee/i.test(hit.damageType);
+  if (weapon && view.showTool !== false) {
+    embed.addFields({ name: 'Waffe', value: safeEmbedField(weapon, 256), inline: false });
+  }
+  if (isMelee) return;
+  embed.addFields(
+    { name: 'Getroffener Koerperteil', value: safeEmbedField(hit.bodyPart, 128), inline: false },
+    { name: 'Schaden', value: `${hit.damage.toLocaleString('de-DE')} (${safeEmbedField(hit.damageType, 128)})`, inline: false },
+  );
+}
+
 function humanizePlacementClass(value: string): string {
   const raw = value.trim();
   if (!raw) return 'Objekt';
@@ -197,7 +212,8 @@ export function buildGameplayFeedEmbed(
       value: personWithPosition(view.actorName, view.actorPosition),
       inline: false,
     });
-    addWeaponField(embed, view);
+    if (view.pvpHit?.weapon) addPvpHitFields(embed, view);
+    else addWeaponField(embed, view);
     if (typeof view.distanceMeters === 'number' && Number.isFinite(view.distanceMeters)) {
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
     }

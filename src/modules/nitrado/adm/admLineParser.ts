@@ -51,12 +51,20 @@ export interface AdmDateContext {
   timeZone: string | null;
 }
 
+export interface PvpHitDetails {
+  bodyPart: string;
+  damage: number;
+  damageType: string;
+  weapon: string | null;
+}
+
 const HEADER_DATE_RE = /AdminLog started on (\d{4})-(\d{2})-(\d{2})/;
 const TIME_RE = /^(\d{2}):(\d{2}):(\d{2})/;
 const NAME_RE = /"([^"]+)"/;
 const ID_RE = /id=([^\s,)]+)/;
 const POS_RE = /pos=<([^>]+)>/;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
+const PVP_HIT_DETAILS_RE = /\bhit by\s+(.+?)\s+into\s+([A-Za-z]+)\(\d+\)\s+for\s+([\d.]+)\s+damage\s+\(([^)]+)\)(?:\s+with\s+(.+?))?\s*\.?\s*$/i;
 const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+TerritoryFlag\s+at\s+<([^>]+)>\s*\.?\s*$/i;
 const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
 
@@ -232,6 +240,21 @@ function extractVehicleCause(segment: string): string | null {
   return cause || null;
 }
 
+/** Liest nur Werte aus einem vollstaendigen, von ADM bezeugten PvP-Treffer. */
+export function parsePvpHitDetails(rawLine: string): PvpHitDetails | null {
+  const match = PVP_HIT_DETAILS_RE.exec(rawLine);
+  if (!match) return null;
+  const damage = Number(match[3]);
+  if (!Number.isFinite(damage)) return null;
+  const weapon = match[5]?.trim().replace(/[.\s]+$/, '') || null;
+  return {
+    bodyPart: match[2],
+    damage,
+    damageType: match[4].trim(),
+    weapon,
+  };
+}
+
 function isBarePlayerPosition(content: string): boolean {
   const stripped = content
     .replace(/Player\s*/i, '')
@@ -331,6 +354,17 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
       && (/\[vehicle\]/i.test(content) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(content));
     const event = fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content));
     if (fatalVehicle) event.targetName = extractVehicleCause(content);
+    if (!fatalVehicle) {
+      const details = parsePvpHitDetails(content);
+      if (details) {
+        const killerSegment = content.slice(content.search(/\bhit by\b/i) + 'hit by'.length);
+        const killer = extractActor(killerSegment);
+        event.targetName = killer.name;
+        event.targetGameId = killer.id;
+        event.targetPosition = killer.pos;
+        event.toolOrWeapon = details.weapon;
+      }
+    }
     return finalize(event);
   }
 

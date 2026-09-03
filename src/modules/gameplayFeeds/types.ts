@@ -60,6 +60,12 @@ export interface GameplayFeedView {
    */
   showTool?: boolean;
   distanceMeters: number | null;
+  pvpHit?: {
+    bodyPart: string;
+    damage: number;
+    damageType: string;
+    weapon: string | null;
+  } | null;
   actorPosition: string | null;
   targetPosition: string | null;
 }
@@ -114,6 +120,7 @@ export function deriveGameplayFeedView(
     toolOrWeapon: toggles.showTool ? event.toolOrWeapon?.trim() || null : null,
     showTool: toggles.showTool,
     distanceMeters: toggles.showDistance ? event.distanceMeters : null,
+    pvpHit: null,
     actorPosition: toggles.showActorCoords ? event.actorPosition : null,
     targetPosition: toggles.showTargetCoords ? event.targetPosition : null,
   };

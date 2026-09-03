@@ -15,9 +15,41 @@ import { useToast } from '@/lib/toast';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
+import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
 import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair } from 'lucide-react';
 
 type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed';
+
+const SLOT_HELP: Record<Tab, { title: string; text: string[] }> = {
+  settings: {
+    title: 'Server-Einstellungen',
+    text: ['Hier schaltest du Funktionen für diesen Gameserver ein oder aus.', 'Whitelist und Economy wirken nur auf diesen Slot. Perma-Only begrenzt die Nutzung auf dauerhafte Zugänge.'],
+  },
+  whitelist: {
+    title: 'Whitelist',
+    text: ['Die Whitelist bestimmt, wer diesen Gameserver betreten darf. Jeder Name gilt nur für diesen Slot.', 'Unter „Offene Anfragen“ nimmst du Anträge an oder lehnst sie ab. Die Synchronisation zeigt Unterschiede zu Nitrado, bevor du etwas änderst.'],
+  },
+  economy: {
+    title: 'Economy',
+    text: ['Hier legst du Währung, Startguthaben und Regeln für diesen Gameserver fest.', 'Änderungen gelten nur für neue Vorgänge. Bestehende Guthaben bleiben erhalten.'],
+  },
+  links: {
+    title: 'Economy-Links',
+    text: ['Ein Link verbindet einen Discord-Account mit einem DayZ-Spieler auf diesem Gameserver.', 'So ordnet V-Bot Guthaben und Spielvorgänge dem richtigen Konto zu. Die GUID findet V-Bot selbst in den Serverdaten.'],
+  },
+  'virtual-accounts': {
+    title: 'Virtuelle Konten',
+    text: ['Hier verwaltest du getrennte Konten für Gruppen, Projekte und Systemfunktionen dieses Gameservers.', 'Geldbewegungen werden protokolliert. Systemkonten für Lotterie und Schwarzmarkt werden über ihre jeweiligen Bereiche gesteuert.'],
+  },
+  'bank-casino': {
+    title: 'Bank und Casino',
+    text: ['Hier richtest du die Bank, Zinsen und die Casino-Spiele für diesen Gameserver ein.', 'Spieler nutzen dafür ihr Guthaben. Änderungen gelten innerhalb dieses Slots.'],
+  },
+  killfeed: {
+    title: 'Killfeed und ADM',
+    text: ['Hier richtest du Meldungen aus den DayZ-Serverprotokollen ein.', 'Wähle, welche Ereignisse in Discord erscheinen sollen und in welchen Kanal sie gesendet werden.'],
+  },
+};
 
 interface ServerSettingsState {
   whitelistActive: boolean;
@@ -215,6 +247,11 @@ export default function ServerSlot() {
             </button>
           ))}
         </nav>
+
+        <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+          <h2 className="text-base font-semibold text-white">{SLOT_HELP[tab].title}</h2>
+          <FunctionHelpButton title={SLOT_HELP[tab].title} text={SLOT_HELP[tab].text} />
+        </div>
 
         {tab === 'settings' && (
           <Card>

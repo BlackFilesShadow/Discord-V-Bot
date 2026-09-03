@@ -1,7 +1,7 @@
 /**
  * Golden-Tests fuer den kanonischen ADM-Zeilenparser.
  */
-import { parseAdmLine, newDateContext, resolveBaseDate, ADM_PARSER_VERSION } from '../../src/modules/nitrado/adm/admLineParser';
+import { parseAdmLine, newDateContext, parsePvpHitDetails, resolveBaseDate, ADM_PARSER_VERSION } from '../../src/modules/nitrado/adm/admLineParser';
 
 function ctxWithDate() {
   return newDateContext(new Date(Date.UTC(2026, 6, 1)));
@@ -134,3 +134,11 @@ describe('admLineParser — Golden', () => {
     expect(resolveBaseDate('no header', 'nofile.ADM')).toBeNull();
   });
 });
+
+  it('verknuepft vollstaendige ADM-PvP-Treffer mit Opfer, Taeter und exakten Details', () => {
+    const line = '18:11:00 | Player "Echo" (id=victim pos=<8,9,10>)[HP: 90] hit by Player "Alpha" (id=killer pos=<1,2,3>) into Head(0) for 12.5 damage (FirearmHit_Rifle) with M4-A1';
+    const event = parseAdmLine(line, ctxWithDate());
+
+    expect(event).toMatchObject({ eventType: 'PLAYER_HIT', actorGameId: 'victim', targetGameId: 'killer', toolOrWeapon: 'M4-A1' });
+    expect(parsePvpHitDetails(line)).toEqual({ bodyPart: 'Head', damage: 12.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' });
+  });

@@ -192,6 +192,9 @@ export async function createConfiguredCustomVirtualAccount(args: {
     acceptUserTransfers: args.acceptUserTransfers === undefined ? true : args.acceptUserTransfers,
     managers: args.managers,
   });
+  // Ein unverwaltbares Konto waere im rollenlosen Discord-Panel unsichtbar.
+  // Ohne explizite Auswahl bleibt deshalb mindestens der Ersteller berechtigt.
+  const managers = prepared.managers.length > 0 ? prepared.managers : [args.createdByDiscordId];
   const accountId = randomUUID();
 
   try {
@@ -239,7 +242,7 @@ export async function createConfiguredCustomVirtualAccount(args: {
         accountId,
         guildId: args.guildId,
         connId: args.nitradoConnId,
-        managers: prepared.managers,
+        managers,
         actor: args.createdByDiscordId,
       });
     });
@@ -314,6 +317,9 @@ export async function updateConfiguredVirtualAccount(args: {
       acceptUserTransfers: args.acceptUserTransfers === undefined ? account.acceptUserTransfers : args.acceptUserTransfers,
       managers: args.managers,
     });
+    // Auch nach einer Bearbeitung darf ein aktives CUSTOM-Konto nicht aus dem
+    // einzigen rollenlosen Verwaltungsweg ausgesperrt werden.
+    const managers = prepared.managers.length > 0 ? prepared.managers : [args.updatedByDiscordId];
 
     const funded = account.balance + currentFinance.bankBalance > 0n;
     const currencyChanged = currencyKey(prepared.currencyName) !== currencyKey(currentFinance.currencyName);
@@ -363,7 +369,7 @@ export async function updateConfiguredVirtualAccount(args: {
       accountId: args.accountId,
       guildId: args.guildId,
       connId: args.nitradoConnId,
-      managers: prepared.managers,
+      managers,
       actor: args.updatedByDiscordId,
     });
   });

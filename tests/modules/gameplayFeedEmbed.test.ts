@@ -13,6 +13,7 @@ function suicideView(): GameplayFeedView {
     objectType: null,
     toolOrWeapon: null,
     distanceMeters: null,
+    pvpHit: null,
     actorPosition: '3005, 13205, 211.6',
     targetPosition: null,
   };
@@ -114,3 +115,24 @@ describe('Gameplay-Feed Embed', () => {
     expect(embed.timestamp).toBeUndefined();
   });
 });
+
+  it('zeigt nur durch ADM belegte Fernkampf-Trefferdetails auf Deutsch', () => {
+    const view = pvpView();
+    view.pvpHit = { bodyPart: 'Head', damage: 48.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' };
+    const fields = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().fields ?? [];
+
+    expect(fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
+      expect.objectContaining({ name: 'Getroffener Koerperteil', value: 'Head' }),
+      expect.objectContaining({ name: 'Schaden', value: '48,5 (FirearmHit\\_Rifle)' }),
+    ]));
+  });
+
+  it('zeigt bei Nahkampf ausschliesslich die Waffe', () => {
+    const view = pvpView();
+    view.pvpHit = { bodyPart: 'LeftArm', damage: 2.85, damageType: 'MeleeSoft', weapon: 'Rooster' };
+    const fields = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().fields ?? [];
+
+    expect(fields.find(field => field.name === 'Waffe')?.value).toBe('Rooster');
+    expect(fields.some(field => field.name === 'Getroffener Koerperteil' || field.name === 'Schaden')).toBe(false);
+  });

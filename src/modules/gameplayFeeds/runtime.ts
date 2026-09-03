@@ -36,6 +36,7 @@ import {
   deriveGameplayFeedView,
   type GameplayAdmEvent,
 } from './types';
+import { parsePvpHitDetails } from '../nitrado/adm/admLineParser';
 import {
   buildPlayerListEmbeds,
   playerListStateHash,
@@ -335,6 +336,23 @@ async function loadDeliveryEvent(config: GameplayFeedConfig, eventId: string): P
   }) as Promise<GameplayAdmEvent | null>;
 }
 
+async function loadPvpHitDetails(config: GameplayFeedConfig, event: GameplayAdmEvent) {
+  if (event.eventType !== 'PLAYER_KILLED' || !event.occurredAt || !event.actorGameId || !event.targetGameId) return null;
+  const hit = await prisma.admEvent.findFirst({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      eventType: 'PLAYER_HIT',
+      actorGameId: event.actorGameId,
+      targetGameId: event.targetGameId,
+      occurredAt: { gte: new Date(event.occurredAt.getTime() - 5_000), lte: event.occurredAt },
+    },
+    select: { rawLine: true },
+    orderBy: { occurredAt: 'desc' },
+  });
+  return hit ? parsePvpHitDetails(hit.rawLine) : null;
+}
+
 async function deliverOne(
   config: GameplayFeedConfig,
   delivery: GameplayFeedDelivery,
@@ -422,6 +440,7 @@ async function deliverOne(
       showDistance: config.showDistance,
     });
     if (!view) throw new Error(`Nicht unterstuetzter Gameplay-Eventtyp: ${event.eventType}`);
+  view.pvpHit = await loadPvpHitDetails(config, event);
 
     const components = view.kind === 'FLAG'
       ? [new ActionRowBuilder<ButtonBuilder>().addComponents(
