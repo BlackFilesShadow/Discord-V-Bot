@@ -36,7 +36,14 @@ test('custom account deletion is terminal while immutable history stays referent
   expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
   expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter'))
     .toBeLessThan(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'));
+
+  expect(ui).toContain("const canDelete = account.kind === 'CUSTOM' && pocketsEmpty;");
+  expect(ui).toContain('Guthaben wird niemals verworfen.');
   expect(ui).toContain("{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}");
+  expect(ui).not.toContain('CONTROL_HIDDEN');
+  expect(ui).not.toContain('kontrolliert auf 0 gesetzt');
+  expect(ui).not.toContain('restore.mutate');
+
   expect(route.indexOf('deleteUnusedVirtualAccount')).toBeLessThan(route.indexOf('retireVirtualAccountProjection', route.indexOf("delete('/control/accounts/:accountId'")));
 });
 
