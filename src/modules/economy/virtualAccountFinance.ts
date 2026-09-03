@@ -243,7 +243,7 @@ export async function listManagedVirtualAccounts(guildId: GuildId, connId: Nitra
   const accounts: VirtualAccountRow[] = [];
   for (const row of rows) {
     const account = await getVirtualAccountById(guildId, connId, row.accountId);
-    if (account && account.status !== 'ARCHIVED') accounts.push(account);
+    if (account && account.status === 'ACTIVE') accounts.push(account);
   }
   return accounts;
 }

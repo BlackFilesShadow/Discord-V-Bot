@@ -14,3 +14,12 @@ test('Discord virtual-account interaction lookup is guild-scoped before account 
   expect(source).toContain('await interaction.deferUpdate()');
   expect(source).toContain('await interaction.editReply({ embeds: [embed], components });');
 });
+
+test('generic manager workflows expose and mutate active accounts only', () => {
+  const finance = read('src/modules/economy/virtualAccountFinance.ts');
+  const safety = read('src/modules/economy/virtualAccountMoneySafety.ts');
+
+  expect(finance).toContain("if (account && account.status === 'ACTIVE') accounts.push(account);");
+  expect(safety).toContain("if (!account || account.status !== 'ACTIVE') throw new Error('Virtuelles Konto ist nicht aktiv.')");
+  expect(safety).toContain("if (account.status !== 'ACTIVE') throw new Error('Virtuelles Konto ist nicht aktiv.')");
+});

@@ -465,7 +465,7 @@ export async function safeTransferVirtualPocket(args: {
       String(args.nitradoConnId),
     );
     const account = accountRows[0];
-    if (!account || account.status === 'ARCHIVED') throw new Error('Virtuelles Konto ist nicht verfuegbar.');
+    if (!account || account.status !== 'ACTIVE') throw new Error('Virtuelles Konto ist nicht aktiv.');
 
     const financeRows = await raw.$queryRawUnsafe<Array<{ bankBalance: bigint }>>(
       'SELECT "bankBalance" FROM "EconomyVirtualAccountFinance" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
@@ -619,7 +619,7 @@ export async function safePayoutVirtualAccountToUser(args: {
       return { booked: false, playerAmount };
     }
 
-    if (account.status === 'ARCHIVED') throw new Error('Archiviertes Konto kann nicht mehr buchen.');
+    if (account.status !== 'ACTIVE') throw new Error('Virtuelles Konto ist nicht aktiv.');
 
     const configRows = await raw.$queryRawUnsafe<Array<{ currencyName: string }>>(
       'SELECT "currencyName" FROM "EconomyConfig" WHERE "guildId"=$1 AND "nitradoConnId"=$2 LIMIT 1 FOR SHARE',
