@@ -30,4 +30,22 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'warn',
     },
   },
+  {
+    // Diese Module exportieren bewusst jeweils Provider und zugehoerigen Hook.
+    // Eine Aufteilung wuerde die Context-Implementierung lediglich strecken.
+    files: [
+      'src/components/ui/Toast.tsx',
+      'src/lib/auth.tsx',
+      'src/lib/botAdminSession.tsx',
+      'src/lib/density.tsx',
+      'src/lib/devSession.tsx',
+      'src/lib/pinnedTools.tsx',
+      'src/lib/recentActions.tsx',
+      'src/lib/theme.tsx',
+      'src/lib/toast.tsx',
+    ],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 );

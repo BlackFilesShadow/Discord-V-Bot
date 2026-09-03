@@ -76,7 +76,6 @@ const SecureDevExport = lazyPage(() => import('./pages/dev/SecureDevExport'));
 
 const _missing = DEV_TOOL_SLUGS.filter((slug) => !DEV_PAGES[slug]);
 if (_missing.length > 0) {
-  // eslint-disable-next-line no-console
   console.error('[DEV] DEV_TOOL_SLUGS ohne Page-Mapping:', _missing);
 }
 

@@ -7,7 +7,7 @@
  *   ContentEditable ist (verhindert Keystroke-Konflikte beim Tippen).
  *   Ausnahme: Esc und Cmd+K (Palette darf ueberall geoeffnet werden).
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 type Combo = string;
 
@@ -37,19 +37,20 @@ function isEditable(t: EventTarget | null): boolean {
 export function useHotkey(
   combo: Combo,
   handler: (e: KeyboardEvent) => void,
-  opts: { allowInInputs?: boolean; deps?: ReadonlyArray<unknown> } = {},
+  opts: { allowInInputs?: boolean } = {},
 ): void {
   const target = normalizeCombo(combo);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (eventCombo(e) !== target) return;
       if (!opts.allowInInputs && isEditable(e.target)) return;
-      handler(e);
+      handlerRef.current(e);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [target, opts.allowInInputs, ...(opts.deps ?? [])]);
+  }, [target, opts.allowInInputs]);
 }
 
 export const MOD_LABEL = isMac ? '⌘' : 'Ctrl';
