@@ -3,6 +3,7 @@
  * PENDING/SENDING werden mit kurzer Lease verarbeitet; Fehler landen mit
  * Backoff wieder in PENDING. SENT-Nachrichten werden nach einer Minute geloescht.
  */
+import { createHash } from 'node:crypto';
 import { ChannelType, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { asGuildId, asNitradoConnId } from '../../types/scope';
@@ -44,6 +45,13 @@ function retryAt(now: Date, attempts: number): Date {
 
 function readyMarker(noticeId: string): string {
   return `Outbox:${noticeId}`;
+}
+
+function readyNonce(noticeId: string): string {
+  return createHash('sha256')
+    .update(`market-ready\u0000${noticeId}`)
+    .digest('hex')
+    .slice(0, 25);
 }
 
 async function claimReadyNotice(now: Date): Promise<ReadyNoticeRow | null> {
@@ -110,7 +118,8 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
 
   // Reconcile a Discord send that succeeded before its DB acknowledgement.
   // The persisted messageId is preferred; otherwise the unique outbox marker
-  // prevents a retry from creating a second mention.
+  // is a second recovery path. The deterministic Discord nonce below is the
+  // primary send-side dedupe and prevents a retry from creating a second mention.
   let messageId = notice.messageId;
   if (messageId) {
     const existing = await channel.messages.fetch(messageId).catch(error => {
@@ -145,6 +154,8 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
       content: `<@${notice.userDiscordId}>`,
       embeds: [embed],
       allowedMentions: { users: [notice.userDiscordId] },
+      nonce: readyNonce(notice.id),
+      enforceNonce: true,
     });
     messageId = sent.id;
   }
