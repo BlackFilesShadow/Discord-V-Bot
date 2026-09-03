@@ -16,7 +16,7 @@ interface SystemAccountCapabilities {
 
 interface SystemAccountRow {
   id: string;
-  kind: 'LOTTERY_POT' | 'MARKET_VENDOR';
+  kind: 'CUSTOM' | 'LOTTERY_POT' | 'MARKET_VENDOR';
   name: string;
   hidden: boolean;
   walletBalance: string;
@@ -36,6 +36,7 @@ function fmtBig(value: string): string {
 function ownerLabel(account: SystemAccountRow): string {
   if (account.capabilities.managedBy === 'LOTTERY') return 'Lotterie';
   if (account.capabilities.managedBy === 'BLACK_MARKET') return 'Schwarzmarkt';
+  if (account.capabilities.managedBy === 'SERVER_BANK') return 'Serverbank';
   return 'Fachfunktion';
 }
 
@@ -57,7 +58,7 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Systemkonten · Lotterie & Schwarzmarkt</CardTitle>
+        <CardTitle>Systemkonten · Lotterie, Schwarzmarkt & Serverbank</CardTitle>
       </CardHeader>
       <p className="text-xs text-muted mb-4">
         Diese Konten nutzen dieselbe Economy-Infrastruktur, werden aber ausschließlich von ihrer Fachfunktion verändert. Deshalb gibt es hier bewusst keine generischen Konfigurieren-, Löschen-, Archivieren- oder Auszahlungsaktionen.
@@ -69,7 +70,7 @@ export function SystemAccountsOverview({ guildId, slot }: { guildId: string; slo
         <p className="text-sm text-warning">Systemkonto-Antwort ist unvollständig. Die übrige Kontenverwaltung bleibt verfügbar; bitte Seite aktualisieren.</p>
       )}
       {!query.isLoading && !query.isError && hasValidAccounts && accounts.length === 0 && (
-        <p className="text-sm text-muted">Aktuell existieren keine Lotterie- oder Schwarzmarkt-Systemkonten.</p>
+        <p className="text-sm text-muted">Aktuell existieren keine Lotterie-, Schwarzmarkt- oder Serverbank-Systemkonten.</p>
       )}
 
       <div className="space-y-3">
