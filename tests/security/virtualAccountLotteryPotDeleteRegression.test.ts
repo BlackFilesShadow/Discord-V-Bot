@@ -19,14 +19,14 @@ describe('virtual account terminal removal regression', () => {
     expect(deletion).not.toContain('hideDomainOwnedAccount');
   });
 
-  it('zeroes non-empty CUSTOM pockets atomically with audit entries and frees deleted treasury identity', () => {
-    expect(deletion).toContain('CONTROL_DELETE_RESET');
-    expect(deletion).toContain('args.account.balance > 0n');
-    expect(deletion).toContain('args.finance.bankBalance > 0n');
-    expect(deletion).toContain('SET "bankBalance"=0');
-    expect(deletion).toContain('SET "balance"=0');
+  it('fails closed on non-empty CUSTOM pockets and frees treasury identity only after balances are zero', () => {
+    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+    expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+    expect(deletion).not.toContain('CONTROL_DELETE_RESET');
+    expect(deletion).not.toContain('SET "bankBalance"=0');
+    expect(deletion).not.toContain('SET "balance"=0');
     expect(deletion).toMatch(/accountPurpose[^\n]*BANK_TREASURY[^\n]*GENERAL/);
-    expect(deletion).toContain('const mustPreserveRow = hasMoney');
+    expect(deletion).toContain('const mustPreserveRow = Boolean(entries[0]?.exists) || Boolean(protectedRefs[0]?.protected);');
   });
 
   it('never destroys lottery, market, order or ledger history to make a CUSTOM account disappear', () => {
