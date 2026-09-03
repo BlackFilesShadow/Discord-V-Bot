@@ -2158,6 +2158,24 @@ model ServerBanEntry {
   @@index([guildId, nitradoConnId, active])
 }
 
+// Genau eine offene Discord-Entscheidung pro beobachteter externer Abweichung.
+// Die Zeile wird geloescht, sobald Nitrado wieder dem V-Bot-Zustand entspricht
+// oder eine berechtigte Person die Abweichung explizit entscheidet.
+model NitradoDriftNotice {
+  id            String   @id @default(cuid())
+  guildId       String
+  nitradoConnId String
+  kind          String   @db.VarChar(16)
+  subjectKey    String   @db.VarChar(128)
+  channelId     String
+  messageId     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId, kind, subjectKey])
+  @@index([guildId, nitradoConnId])
+}
+
 enum CasinoGameType {
   SLOT
   COINFLIP

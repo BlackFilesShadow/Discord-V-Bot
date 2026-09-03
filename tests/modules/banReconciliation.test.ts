@@ -3,6 +3,8 @@ const mockTryLock = jest.fn();
 const mockEnqueueAdd = jest.fn();
 const mockEnqueueRemove = jest.fn();
 const mockLogAudit = jest.fn();
+const mockNotifyDrift = jest.fn();
+const mockClearDrift = jest.fn();
 
 jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
   NitradoClient: jest.fn().mockImplementation(() => ({ getBanlist: mockGetBanlist })),
@@ -16,6 +18,11 @@ jest.mock('../../src/modules/bans/banOutbox', () => ({
   enqueueServerBanAdd: (...args: unknown[]) => mockEnqueueAdd(...args),
   enqueueServerBanRemove: (...args: unknown[]) => mockEnqueueRemove(...args),
   SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS: 60 * 60 * 1000,
+}));
+
+jest.mock('../../src/modules/nitrado/driftDiscord', () => ({
+  notifyNitradoBanDrift: (...args: unknown[]) => mockNotifyDrift(...args),
+  clearNitradoDriftNotice: (...args: unknown[]) => mockClearDrift(...args),
 }));
 
 jest.mock('../../src/utils/logger', () => ({

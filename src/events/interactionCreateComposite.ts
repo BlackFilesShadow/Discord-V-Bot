@@ -30,6 +30,7 @@ import {
 import { handleWhitelistApprovalButton } from '../modules/whitelist/whitelistApprovalButton';
 import { handleFlagActivityButton } from '../modules/gameplayFeeds/flagActivity';
 import { handleServerListCatalogButton, handleServerListCatalogSearch } from '../modules/nitrado/serverListCatalog';
+import { handleNitradoDriftButton } from '../modules/nitrado/driftDiscord';
 
 function isCompositeOwnedComponent(i: Interaction): boolean {
   if (i.isButton()) {
@@ -47,6 +48,7 @@ function isCompositeOwnedComponent(i: Interaction): boolean {
       || i.customId.startsWith('marketorder:confirm:')
       || i.customId.startsWith('marketorder:cancel:')
       || i.customId.startsWith('listcat:')
+      || i.customId.startsWith('ndrift:')
       || i.customId.startsWith('wlreq:u:')
       || i.customId.startsWith('flagshort:v1:');
   }
@@ -91,6 +93,7 @@ const interactionCreateComposite: BotEvent = {
       if (i.customId.startsWith('marketorder:confirm:')) return handleLegacyMarketOrderConfirmButton(i);
       if (i.customId.startsWith('marketorder:cancel:')) return handleMarketOrderCancelButton(i);
       if (i.customId.startsWith('listcat:')) return handleServerListCatalogButton(i);
+      if (i.customId.startsWith('ndrift:')) return handleNitradoDriftButton(i);
       if (i.customId.startsWith('vacct:deposit:')) return handleVirtualAccountDepositButton(i);
       if (i.customId.startsWith('vacct_mgr_move:')) return handleVirtualManagerMoveButton(i);
       if (i.customId.startsWith('vacct_mgr_order_page:')) return handleMarketOrderManagerPageButton(i);

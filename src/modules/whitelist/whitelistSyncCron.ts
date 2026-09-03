@@ -38,6 +38,8 @@ import {
   enqueueWhitelistRemove,
   type WhitelistOutboxClient,
 } from './whitelistOutbox';
+import { clearNitradoDriftNotice, notifyNitradoWhitelistDrift } from '../nitrado/driftDiscord';
+import type { Client } from 'discord.js';
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 let timer: NodeJS.Timeout | null = null;
@@ -74,7 +76,7 @@ function jobKey(operation: string, gameId: string): string {
  * Aufrufer haelt fuer die gesamte Funktion den kanonischen NITR-Connection-
  * Lock. `conn` ist bereits NACH Lockgewinn frisch aus der DB gelesen.
  */
-async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise<void> {
+async function reconcileLockedConnection(conn: WhitelistSyncConnection, client?: Client): Promise<void> {
   if (!conn.nitradoServerId) return;
 
   const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
@@ -137,6 +139,7 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
         where: { id: entry.id, guildId: conn.guildId, nitradoConnId: conn.id },
         data: { syncState: 'SYNCED', lastSyncedAt: now },
       });
+      await clearNitradoDriftNotice(client, conn.guildId, conn.id, 'WHITELIST', entry.gameId);
     }
   }
 
@@ -178,6 +181,12 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
     queued.add(key);
   }
 
+  if (client) {
+    for (const gameId of manualRemoteMissing) {
+      await notifyNitradoWhitelistDrift(client, { guildId: conn.guildId, nitradoConnId: conn.id, gameId });
+    }
+  }
+
   if (
     enqueued > 0
     || diff.synced.length > 0
@@ -206,7 +215,7 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection): Promise
  * fuer exakt id+guild erneut gelesen. Busy bedeutet bewusst skip bis zum
  * naechsten Poll; Lock-/DB-/Remote-Fehler werden vom aeusseren Loop isoliert.
  */
-async function reconcileConnection(candidate: { id: string; guildId: string }): Promise<void> {
+async function reconcileConnection(candidate: { id: string; guildId: string }, client?: Client): Promise<void> {
   const lock = await tryAcquireNitradoConfigMutationLock(candidate.id);
   if (!lock) {
     logger.debug(`Whitelist-Reconciliation fuer ${candidate.id} uebersprungen: Connection ist gerade busy.`);
@@ -231,13 +240,13 @@ async function reconcileConnection(candidate: { id: string; guildId: string }): 
     });
     if (!fresh) return;
 
-    await reconcileLockedConnection(fresh);
+    await reconcileLockedConnection(fresh, client);
   } finally {
     await lock.release();
   }
 }
 
-export async function runWhitelistSyncOnce(): Promise<void> {
+export async function runWhitelistSyncOnce(client?: Client): Promise<void> {
   if (running) return;
   running = true;
   try {
@@ -259,7 +268,7 @@ export async function runWhitelistSyncOnce(): Promise<void> {
 
     for (const conn of conns) {
       try {
-        await reconcileConnection(conn);
+        await reconcileConnection(conn, client);
       } catch (error) {
         logger.warn(`Whitelist-Reconciliation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
       }
@@ -269,10 +278,10 @@ export async function runWhitelistSyncOnce(): Promise<void> {
   }
 }
 
-export function startWhitelistSyncCron(): void {
+export function startWhitelistSyncCron(client?: Client): void {
   if (timer) return;
   logger.info(`Whitelist-V2-Reconciliation gestartet (${SYNC_INTERVAL_MS / 60_000}min).`);
-  timer = setInterval(() => { void runWhitelistSyncOnce(); }, SYNC_INTERVAL_MS);
+  timer = setInterval(() => { void runWhitelistSyncOnce(client); }, SYNC_INTERVAL_MS);
   timer.unref?.();
 }
 

@@ -23,12 +23,12 @@ export interface NitradoRuntimeHandle {
 export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startNitradoJobWorker();
   startBanExpiryRuntime();
-  startBanReconciliationCron();
+  startBanReconciliationCron(client);
   startMarketOrderReadyRuntime();
   startServerListCatalogSync(client);
   startTokenValidationCron(client);
   startPermaOnlyCron();
-  startWhitelistSyncCron();
+  startWhitelistSyncCron(client);
 
   // ADM-V2 ist die einzige Datei-Quelle. Der Live-Ingest und der persistente
   // Gameplay-Feed-Worker laufen immer. Ob tatsaechlich etwas nach Discord

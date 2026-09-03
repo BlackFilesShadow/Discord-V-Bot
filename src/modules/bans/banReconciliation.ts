@@ -12,6 +12,8 @@ import {
   SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS,
   type BanOutboxClient,
 } from './banOutbox';
+import { clearNitradoDriftNotice, notifyNitradoBanDrift } from '../nitrado/driftDiscord';
+import type { Client } from 'discord.js';
 
 const RECONCILE_INTERVAL_MS = 60_000;
 const BAN_BATCH = 500;
@@ -39,7 +41,7 @@ function safeError(error: unknown): string {
     .slice(0, 800);
 }
 
-async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date): Promise<void> {
+async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date, client?: Client): Promise<void> {
   if (!conn.nitradoServerId) return;
 
   // Erst lokale, exakt gescoppte Kandidaten feststellen. Connections ohne
@@ -101,6 +103,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
 
     if (locallyActive) {
       if (remoteIdentifier) {
+        await clearNitradoDriftNotice(client, conn.guildId, conn.id, 'BAN', ban.id);
         if (!ban.appliedRemotely) {
           const updated = await prisma.serverBanEntry.updateMany({
             where: {
@@ -136,6 +139,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       // autorisierte lokale Loeschung interpretiert werden.
       if (ban.appliedRemotely) {
         manualRemoteMissing++;
+        if (client) await notifyNitradoBanDrift(client, { guildId: conn.guildId, nitradoConnId: conn.id, banId: ban.id });
         continue;
       }
 
@@ -255,7 +259,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
   }
 }
 
-async function reconcileConnection(candidate: { id: string; guildId: string }, now: Date): Promise<void> {
+async function reconcileConnection(candidate: { id: string; guildId: string }, now: Date, client?: Client): Promise<void> {
   const lock = await tryAcquireNitradoConfigMutationLock(candidate.id);
   if (!lock) {
     logger.debug(`Server-Ban-Reconciliation fuer ${candidate.id} uebersprungen: Connection ist busy.`);
@@ -280,13 +284,13 @@ async function reconcileConnection(candidate: { id: string; guildId: string }, n
       },
     });
     if (!fresh) return;
-    await reconcileLockedConnection(fresh, now);
+    await reconcileLockedConnection(fresh, now, client);
   } finally {
     await lock.release();
   }
 }
 
-export async function runBanReconciliationOnce(now = new Date()): Promise<void> {
+export async function runBanReconciliationOnce(now = new Date(), client?: Client): Promise<void> {
   if (running) return;
   running = true;
   try {
@@ -305,7 +309,7 @@ export async function runBanReconciliationOnce(now = new Date()): Promise<void> 
 
     for (const conn of conns) {
       try {
-        await reconcileConnection(conn, now);
+        await reconcileConnection(conn, now, client);
       } catch (error) {
         logger.warn(`Server-Ban-Reconciliation fehlgeschlagen fuer ${conn.id}: ${safeError(error)}`);
       }
@@ -315,12 +319,12 @@ export async function runBanReconciliationOnce(now = new Date()): Promise<void> 
   }
 }
 
-export function startBanReconciliationCron(): void {
+export function startBanReconciliationCron(client?: Client): void {
   if (timer) return;
   logger.info(`Server-Ban-Reconciliation gestartet (${RECONCILE_INTERVAL_MS / 1000}s).`);
-  timer = setInterval(() => { void runBanReconciliationOnce(); }, RECONCILE_INTERVAL_MS);
+  timer = setInterval(() => { void runBanReconciliationOnce(new Date(), client); }, RECONCILE_INTERVAL_MS);
   timer.unref?.();
-  void runBanReconciliationOnce();
+  void runBanReconciliationOnce(new Date(), client);
 }
 
 export function stopBanReconciliationCron(): void {
