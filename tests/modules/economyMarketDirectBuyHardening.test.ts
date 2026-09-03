@@ -20,7 +20,7 @@ describe('market direct-buy hardening', () => {
     expect(marketDirectBuyVersion({ ...base, updatedAt: new Date('2026-08-31T12:00:01.000Z') })).not.toBe(version);
   });
 
-  test('direct buy is bound to exact managed message and rechecked under the purchase lock', () => {
+  test('legacy direct buy remains hardened but is no longer projected as separate messages', () => {
     const contract = read('src/modules/economy/marketDirectBuyContract.ts');
     const interactions = read('src/modules/economy/blackMarketInteractions.ts');
     const purchase = read('src/modules/economy/blackMarketInventoryless.ts');
@@ -51,7 +51,10 @@ describe('market direct-buy hardening', () => {
     expect(purchase).not.toContain('args.quantity > listing.maxPerPurchase');
     expect(purchase).not.toContain('listing.stock');
 
-    expect(projection).toContain('marketDirectBuyVersion(listing)');
+    expect(projection).toContain("row.kind === 'DIRECT_BUY'");
+    expect(projection).toContain('await removeProjectionMessage(args.client, row)');
+    expect(projection).not.toContain('marketDirectBuyVersion(listing)');
+    expect(projection).not.toContain('function directBuyEmbed');
     expect(projection).toContain('fetchManagedMessage');
     expect(projection).toContain('isUnknownDiscordResource(error, 10008)');
     expect(projection).not.toContain('Max. pro Kauf');

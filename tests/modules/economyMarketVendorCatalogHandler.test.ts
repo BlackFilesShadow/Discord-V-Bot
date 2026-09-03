@@ -103,7 +103,13 @@ beforeEach(() => {
   jest.clearAllMocks();
   vendorCatalogFindUniqueMock.mockResolvedValue(persistedCatalog);
   vendorCatalogUpdateManyMock.mockResolvedValue({ count: 1 });
-  marketProjectionFindFirstMock.mockResolvedValue({ id: PROJECTION, catalogChannelId: CHANNEL });
+  marketProjectionFindFirstMock.mockResolvedValue({
+    id: PROJECTION,
+    catalogChannelId: CHANNEL,
+    directBuyEnabled: true,
+    orderChannelId: '723456789012345678',
+    orderReadyChannelId: '823456789012345678',
+  });
   virtualAccountFindFirstMock.mockResolvedValue({ id: VENDOR_A, name: 'Vendor A' });
   getConfigMock.mockResolvedValue({ currencyName: 'Mäuse', emoji: '🐭' });
   listMarketListingsMock.mockResolvedValue([
@@ -128,6 +134,8 @@ test('real catalog handler renders only the persisted vendor page and saves that
   const rendered = JSON.stringify(edit.mock.calls[0][0]);
   expect(rendered).toContain('A 6');
   expect(rendered).not.toContain('B 1');
+  expect(rendered).toContain('Bestellung');
+  expect(rendered).toContain(`marketorder:open:v1:${CATALOG}`);
   expect(vendorCatalogUpdateManyMock).toHaveBeenCalledWith(expect.objectContaining({ data: { currentPage: 1 } }));
 });
 

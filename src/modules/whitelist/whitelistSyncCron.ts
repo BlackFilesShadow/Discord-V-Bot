@@ -15,9 +15,10 @@
  *   kann ein alter Token/Service-Snapshot niemals Jobs fuer ein inzwischen
  *   anderes Remote-Ziel erzeugen.
  * - LOCAL_ONLY bedeutet weiterhin: V-Bot will den Namen remote hinzufuegen.
- * - SYNCED + remote fehlend ist dagegen eine MANUELLE REMOTE-ABWEICHUNG. Dieser
- *   Zustand wird bewusst nicht automatisch in LOCAL_ONLY umgeschrieben und
- *   erzeugt keinen Re-Add. Ein Admin muss die Abweichung explizit aufloesen.
+ * - SYNCED + remote fehlend ist eine beobachtete Remote-Abweichung. Der lokale
+ *   aktive Spiegel wird niemals automatisch entfernt; ein Admin entscheidet
+ *   explizit ueber die weitere Behandlung. LOCAL_ONLY wird ebenfalls nie
+ *   verworfen.
  * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
  *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
  * - Remote-only Eintraege sind Fremdwahrheit und werden vom Hintergrund-Cron

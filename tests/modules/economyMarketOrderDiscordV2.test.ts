@@ -22,7 +22,7 @@ test('vendor order anchor is strict, persisted and binds the cart before item se
   expect(interactions).toContain("parts.length !== 4");
   expect(interactions).toContain("parts[2] !== 'v1'");
   expect(interactions).toContain('EconomyMarketVendorCatalogProjection');
-  expect(interactions).toContain('c."orderButtonMessageId"=$4');
+  expect(interactions).toContain('c."catalogMessageId"=$4');
   expect(interactions).toContain('p."catalogChannelId"=c."channelId"');
   expect(interactions).toContain("v.\"kind\"='MARKET_VENDOR'");
   expect(interactions).toContain("v.\"status\"='ACTIVE'");
@@ -107,5 +107,5 @@ test('vendor catalog renders compact article, price and currency without N+1 ven
   expect(projection).toContain('safeEmbedField(args.currencyName, 120)');
   expect(loader).toContain('economyVirtualAccount.findMany');
   expect(loader).not.toContain('getVirtualAccountById');
-  expect(projection).toContain('**Wallet oder Bank**');
+  expect(projection).toContain("setLabel('Bestellung')");
 });

@@ -116,6 +116,16 @@ describe('Nitrado-1B whitelist intent reconciliation architecture gate', () => {
     expect(syncRoute).not.toContain('enqueueWhitelistRemove(');
   });
 
+  it('hides explicitly removed entries from the active dashboard whitelist', () => {
+    const start = dashboardWhitelist.indexOf("whitelistRouter.get('/',");
+    const end = dashboardWhitelist.indexOf("whitelistRouter.post('/',", start);
+    const listRoute = dashboardWhitelist.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(listRoute).toContain("syncState: { not: 'PENDING_REMOVE' }");
+  });
+
   it('keeps server-ban local whitelist intent at PENDING_REMOVE before its remote ban outbox is queued', () => {
     const tx = serverBan.indexOf('const stored = await prisma.$transaction(async tx => {');
     const pendingRemove = serverBan.indexOf("syncState: 'PENDING_REMOVE'", tx);

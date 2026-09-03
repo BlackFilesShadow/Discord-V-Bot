@@ -139,7 +139,7 @@ async function resolveOrderButtonContext(args: {
        ON p."id"=c."projectionId" AND p."guildId"=c."guildId" AND p."nitradoConnId"=c."nitradoConnId"
      JOIN "EconomyVirtualAccount" v
        ON v."id"=c."vendorAccountId" AND v."guildId"=c."guildId" AND v."nitradoConnId"=c."nitradoConnId"
-     WHERE c."id"=$1 AND c."guildId"=$2 AND c."channelId"=$3 AND c."orderButtonMessageId"=$4
+     WHERE c."id"=$1 AND c."guildId"=$2 AND c."channelId"=$3 AND c."catalogMessageId"=$4
        AND p."catalogChannelId"=c."channelId"
        AND p."directBuyEnabled"=TRUE AND p."orderChannelId" IS NOT NULL AND p."orderReadyChannelId" IS NOT NULL
        AND v."kind"='MARKET_VENDOR' AND v."status"='ACTIVE'

@@ -140,6 +140,17 @@ it('behaelt einen remote-only Eintrag fail-closed und queued keinen REMOVE-Job',
   expect(transaction).not.toHaveBeenCalled();
 });
 
+it('behaelt bestaetigte Eintraege bei externer Abweichung und queued keinen Re-Add', async () => {
+  const imported = { id: 'wl-imported', gameId: 'ImportedPlayer', syncState: 'SYNCED' as const };
+  whitelistFindMany.mockResolvedValue([imported]);
+  getWhitelist.mockResolvedValue([]);
+
+  await runWhitelistSyncOnce();
+
+  expect(whitelistDeleteMany).not.toHaveBeenCalled();
+  expect(jobCreate).not.toHaveBeenCalled();
+});
+
 it('Produktionsregression: 0 lokale + 373 remote-only Eintraege erzeugen exakt 0 Loeschjobs', async () => {
   whitelistFindMany.mockResolvedValue([]);
   getWhitelist.mockResolvedValue(

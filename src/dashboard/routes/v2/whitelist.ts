@@ -60,7 +60,7 @@ whitelistRouter.get('/', requireGuildPermission('whitelist.view'), async (req, r
   // Stage 28: hard-cap with limit+1 probe; stable approvedAt + gameId order.
   const limit = 1000;
   const rows = await prisma.whitelistEntry.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId },
+    where: { guildId: scope.guildId, nitradoConnId: connId, syncState: { not: 'PENDING_REMOVE' } },
     orderBy: [{ approvedAt: 'desc' }, { gameId: 'asc' }],
     take: limit + 1,
   });
@@ -350,7 +350,8 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_SYNC_PUSH', danger: false })) return;
   }
 
-  let dbInserted = 0, dbDeleted = 0, jobsCreated = 0;
+  let dbInserted = 0, jobsCreated = 0;
+  const dbDeleted = 0;
   try {
     await withFreshAdmBinding(binding, async () => {
       // Alle Sync-Modi sind additiv:
@@ -366,6 +367,7 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
               data: {
                 guildId: scope.guildId, nitradoConnId: connId, gameId: name,
                 source: 'IMPORT', approvedByDiscordId: scope.actorDiscordId,
+                syncState: 'SYNCED', lastSyncedAt: new Date(),
               },
             });
             dbInserted++;

@@ -16,16 +16,17 @@ test('market vendor catalogs are fixed per vendor, paged and serialized', () => 
   expect(projectionFlat).toContain('economyMarketVendorCatalogProjection');
   expect(compact(prismaModel)).toContain('model EconomyMarketVendorCatalogProjection');
   expect(compact(prismaModel)).toContain('@@unique([projectionId, vendorAccountId]');
-  expect(projectionFlat).toContain('marketcat:v1:page:${catalogProjectionId}');
-  expect(projectionFlat).toContain('marketorder:open:v1:${catalogProjectionId}');
+  expect(projectionFlat).toContain('marketcat:v1:page:${args.catalogProjectionId}');
+  expect(projectionFlat).toContain('marketorder:open:v1:${args.catalogProjectionId}');
   expect(projectionFlat).toContain('const syncInFlight = new Map');
   expect(projectionFlat).toContain('previous.catch(() => null).then(() => syncUnsafe');
   expect(compact(composite)).toContain("i.customId.startsWith('marketcat:v1:')");
   expect(compact(composite)).toContain('handleMarketVendorCatalogPageButton');
 
-  // Direct Buy bleibt bewusst auf dem bestehenden, listing-gebundenen Vertrag.
-  expect(projectionFlat).toContain("kind: 'DIRECT_BUY'");
-  expect(projectionFlat).toContain('listingId: listing.id');
+  expect(projectionFlat).toContain("row.kind === 'DIRECT_BUY'");
+  expect(projectionFlat).toContain('await removeProjectionMessage(args.client, row)');
+  expect(projectionFlat).not.toContain('function directBuyEmbed');
+  expect(projectionFlat).not.toContain('function directBuyComponents');
   expect(compact(interactions)).toContain('buyInventorylessMarketListing');
   expect(compact(interactions)).toContain('syncMarketDiscordProjection');
   expect(compact(composite)).toContain("i.customId.startsWith('marketbuy:')");
@@ -50,7 +51,7 @@ test('vendor loading is batched and 300 listings remain safely navigable', () =>
   expect(projectionFlat).toContain('if (parsed.page >= pages.length)');
 });
 
-test('market order channels are required and each vendor gets its own persisted order anchor', () => {
+test('market order channels are required and each vendor catalog carries its order button', () => {
   const projection = read('src/modules/economy/blackMarketDiscord.ts');
   const projectionFlat = compact(projection);
   expect(projectionFlat).toContain('orderChannelId: string | null');
@@ -58,8 +59,9 @@ test('market order channels are required and each vendor gets its own persisted 
   expect(projectionFlat).toContain('args.directBuyEnabled && (!args.orderChannelId || !args.orderReadyChannelId)');
   expect(projectionFlat).toContain("'Bestellungs-Kanal'");
   expect(projectionFlat).toContain("'Bestellung-bereit-Kanal'");
-  expect(projectionFlat).toContain('orderButtonMessageId: orderMessage?.id ?? null');
-  expect(projectionFlat).toContain('marketorder:open:v1:${catalogProjectionId}');
+  expect(projectionFlat).toContain('orderButtonMessageId: null');
+  expect(projectionFlat).toContain('marketorder:open:v1:${args.catalogProjectionId}');
+  expect(projectionFlat).toContain("setLabel('Bestellung')");
   expect(projectionFlat).toContain('removeLegacyCatalogMessages(client, projection.id)');
   expect(projectionFlat).not.toContain("new ButtonBuilder().setCustomId('marketorder:open:0')");
 });

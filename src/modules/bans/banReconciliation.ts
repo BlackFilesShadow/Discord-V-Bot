@@ -131,11 +131,9 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       }
 
       // Wurde dieser aktive Ban zuvor bereits remote bestaetigt und fehlt jetzt
-      // ploetzlich, ist das keine automatische Reparaturfreigabe mehr. Das ist
-      // eine manuelle/extern verursachte Remote-Abweichung. `appliedRemotely`
-      // bleibt als letzte bestaetigte Provenienz TRUE und der Cron schreibt den
-      // Ban NICHT zurueck. Ein Admin entscheidet explizit zwischen Nitrado-Zustand
-      // uebernehmen und V-Bot-Zustand wiederherstellen.
+      // ploetzlich, ist das eine beobachtete Remote-Abweichung. Der lokale Ban
+      // bleibt unveraendert; eine externe Aufhebung darf nicht automatisch als
+      // autorisierte lokale Loeschung interpretiert werden.
       if (ban.appliedRemotely) {
         manualRemoteMissing++;
         continue;
