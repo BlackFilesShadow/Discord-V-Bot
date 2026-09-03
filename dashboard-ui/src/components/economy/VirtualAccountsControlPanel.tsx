@@ -36,7 +36,6 @@ interface VirtualAccountControl {
   id: string;
   kind: 'CUSTOM' | 'LOTTERY_POT' | 'MARKET_VENDOR';
   name: string;
-  hidden: boolean;
   walletBalance: string;
   bankBalance: string;
   totalBalance: string;
@@ -109,10 +108,10 @@ interface AccountMutationResponse {
 interface DeletedAccountResponse {
   id: string;
   name: string;
-  mode: 'HARD_DELETED' | 'CONTROL_HIDDEN';
+  mode: 'HARD_DELETED';
   walletRemoved: string;
   bankRemoved: string;
-  domainPreserved: boolean;
+  domainPreserved: false;
 }
 
 interface AccountDraft {
@@ -562,18 +561,6 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
     onError: (error: Error) => setMessage({ ok: false, text: error.message }),
   });
 
-  const restore = useMutation({
-    mutationFn: (accountId: string) => api.post<AccountMutationResponse>(
-      `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}/restore?slot=${encodeURIComponent(slot)}`,
-      {},
-    ),
-    onSuccess: result => {
-      setMessage({ ok: true, text: `Konto „${result.account.name}“ ist wieder in den virtuellen Konten sichtbar.` });
-      void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
-    },
-    onError: (error: Error) => setMessage({ ok: false, text: error.message }),
-  });
-
   const remove = useMutation({
     mutationFn: (accountId: string) => api.del<{ ok: boolean; deleted: DeletedAccountResponse }>(
       `/api/v2/guilds/${guildId}/economy/virtual-accounts/control/accounts/${accountId}?slot=${encodeURIComponent(slot)}`,
@@ -582,15 +569,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       setEditingId(null);
       setAuditAccountId('');
       setDeleteConfirmId(null);
-      const removedMoney = BigInt(result.deleted.walletRemoved) > 0n || BigInt(result.deleted.bankRemoved) > 0n;
-      const detail = result.deleted.domainPreserved
-        ? 'Das Fachsystem und seine Historie bleiben unverändert erhalten.'
-        : removedMoney
-          ? `Wallet ${fmtBig(result.deleted.walletRemoved)} und Bank ${fmtBig(result.deleted.bankRemoved)} wurden kontrolliert auf 0 gesetzt; Audit-Historie bleibt erhalten.`
-          : result.deleted.mode === 'HARD_DELETED'
-            ? 'Das leere Konto wurde dauerhaft gelöscht.'
-            : 'Historie und Audit bleiben erhalten.';
-      setMessage({ ok: true, text: `Konto „${result.deleted.name}“ wurde aus den virtuellen Konten entfernt. ${detail}` });
+      setMessage({
+        ok: true,
+        text: `Konto „${result.deleted.name}“ wurde dauerhaft gelöscht. Historische Buchungen und Referenzen bleiben erhalten.`,
+      });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['economy-virtual-manager-panel', guildId, slot] });
     },
@@ -621,7 +603,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       </CardHeader>
 
       <p className="text-xs text-muted mb-4">
-        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Löschen steht bei aktiven, abgelaufenen und archivierten Konten zur Verfügung. Historische oder fachlich gebundene Konten werden sicher aus dieser Verwaltung ausgeblendet statt Referenzen zu zerstören.
+        Jedes Konto besitzt ein eigenes Wallet und Bankkonto, eigene Währung/Emojis und optional ein Discord-Live-Embed. Dauerhaft löschen lassen sich hier nur leere CUSTOM-Konten. Wallet und Bank müssen vorher 0 sein; Guthaben wird niemals verworfen. Historische Buchungen und Referenzen bleiben über die historische Kontoidentität erhalten.
       </p>
 
       {message && (
@@ -702,28 +684,8 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
         {rows.map(account => {
           const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
           const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
+          const canDelete = account.kind === 'CUSTOM' && pocketsEmpty;
           const deleteArmed = deleteConfirmId === account.id;
-          if (account.hidden) {
-            return (
-              <div key={account.id} className="rounded-lg border border-border/40 bg-bg-elev/20 p-3 opacity-70">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium text-white truncate">{account.accountEmoji} {account.name}</p>
-                      <Badge variant="neutral">{account.accountPurpose === 'BANK_TREASURY' ? 'SERVERBANK' : account.kind}</Badge>
-                      <Badge variant="neutral">Ausgeblendet</Badge>
-                    </div>
-                    <p className="text-[11px] text-muted mt-1">
-                      Aus den virtuellen Konten entfernt. Fachlogik und Historie (z. B. Schwarzmarkt/Lotterie) laufen unveraendert weiter.
-                    </p>
-                  </div>
-                  <Button size="sm" variant="outline" disabled={restore.isPending} onClick={() => restore.mutate(account.id)}>
-                    <RefreshCw className="h-3.5 w-3.5 mr-1" />Wiederherstellen
-                  </Button>
-                </div>
-              </div>
-            );
-          }
           return (
             <div key={account.id} className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -759,21 +721,25 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
                   <Button size="sm" variant="ghost" onClick={() => { setDeleteConfirmId(null); setAuditAccountId(auditAccountId === account.id ? '' : account.id); }}>
                     <History className="h-3.5 w-3.5 mr-1" />Audit
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    disabled={remove.isPending || archive.isPending}
-                    onClick={() => {
-                      if (!deleteArmed) {
-                        setDeleteConfirmId(account.id);
-                        return;
-                      }
-                      remove.mutate(account.id);
-                    }}
-                    title="Konto unabhängig von Status und Kontostand aus den virtuellen Konten entfernen. Historische bzw. fachlich gebundene Daten bleiben geschützt."
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
-                  </Button>
+                  {account.kind === 'CUSTOM' && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={!canDelete || remove.isPending || archive.isPending}
+                      onClick={() => {
+                        if (!deleteArmed) {
+                          setDeleteConfirmId(account.id);
+                          return;
+                        }
+                        remove.mutate(account.id);
+                      }}
+                      title={canDelete
+                        ? 'Leeres CUSTOM-Konto dauerhaft löschen. Historische Buchungen und Referenzen bleiben erhalten.'
+                        : 'Löschen ist erst möglich, wenn Wallet und Bank 0 sind. Guthaben wird niemals verworfen.'}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 mr-1" />{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}
+                    </Button>
+                  )}
                   {account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && (
                     <Button
                       size="sm"
@@ -790,7 +756,7 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
 
               {deleteArmed && (
                 <p className="mt-2 text-[11px] text-danger">
-                  Das Konto wird aus diesem Bereich entfernt. Bei CUSTOM-Konten werden vorhandenes Wallet-/Bankguthaben kontrolliert auf 0 gesetzt und historisch protokolliert. Lotterie-/Markt-Systemkonten behalten ihre Fachlogik und Historie unverändert. Klicke „Wirklich löschen?“ erneut zur Bestätigung.
+                  Nur dieses leere CUSTOM-Konto wird dauerhaft aus dem aktiven Kontobestand gelöscht. Wallet und Bank müssen bereits 0 sein; Guthaben wird niemals verworfen. Historische Buchungen und Referenzen bleiben erhalten. Klicke „Wirklich löschen?“ erneut zur Bestätigung.
                 </p>
               )}
 
