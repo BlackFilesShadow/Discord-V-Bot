@@ -4,67 +4,91 @@ import path from 'node:path';
 const ROOT = path.join(__dirname, '..', '..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-describe('virtual account removal regression', () => {
+describe('virtual account terminal removal regression', () => {
   const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
-  const control = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
-  const ui = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
-  const migration = read('prisma/migrations/20260829095500_virtual_account_control_hidden/migration.sql');
+  const terminal = read('src/dashboard/routes/v2/economyVirtualAccountTerminalDeletion.ts');
+  const safety = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
+  const v2 = read('src/dashboard/routes/v2.ts');
+  const migration = read('prisma/migrations/20260903010000_virtual_account_terminal_deletion/migration.sql');
 
-  it('allows every visible state to be removed without destroying domain-owned accounts', () => {
-    expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
-    expect(deletion).toContain('return hideDomainOwnedAccount');
+  it('keeps system accounts out of generic deletion and leaves their owning domains authoritative', () => {
     expect(deletion).toContain("account.kind !== 'CUSTOM'");
-    expect(deletion).toContain("mode: 'CONTROL_HIDDEN'");
+    expect(deletion).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
+    expect(safety).toContain('requireCustomControlAccount');
+    expect(terminal).toContain("account.kind !== 'CUSTOM'");
+    expect(deletion).not.toContain('hideDomainOwnedAccount');
+  });
+
+  it('fails closed on non-empty CUSTOM pockets and never rewrites balances during delete', () => {
+    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+    expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+    expect(deletion).not.toContain('CONTROL_DELETE_RESET');
+    expect(deletion).not.toContain('SET "bankBalance"=0');
+    expect(deletion).not.toContain('SET "balance"=0');
+    expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
     expect(deletion).toContain("mode: 'HARD_DELETED'");
-    expect(deletion).not.toContain("account.status !== 'ARCHIVED'");
   });
 
-  it('zeroes non-empty CUSTOM pockets atomically with audit entries and frees deleted treasury identity', () => {
-    expect(deletion).toContain('CONTROL_DELETE_RESET');
-    expect(deletion).toContain('args.account.balance > 0n');
-    expect(deletion).toContain('args.finance.bankBalance > 0n');
-    expect(deletion).toContain('SET "bankBalance"=0');
-    expect(deletion).toContain('SET "balance"=0');
-    expect(deletion).toMatch(/accountPurpose[^\n]*BANK_TREASURY[^\n]*GENERAL/);
-    expect(deletion).toContain('const mustPreserveRow = hasMoney');
-  });
-
-  it('never destroys lottery, market or ledger history to make an account disappear', () => {
-    expect(deletion).toContain('"LotteryRound"');
-    expect(deletion).toContain('"EconomyMarketListing"');
-    expect(deletion).toContain('"EconomyMarketPurchase"');
-    expect(deletion).toContain('"EconomyVirtualAccountControlHidden"');
+  it('preserves immutable history through a dedicated scoped identity, not a retained live row', () => {
+    expect(migration).toContain('CREATE TABLE "EconomyVirtualAccountHistoryIdentity"');
+    expect(migration).toContain('EconomyVirtualAccountEntry_history_identity_fkey');
+    expect(migration).toContain('LotteryRound_pot_history_identity_fkey');
+    expect(migration).toContain('EconomyMarketListing_vendor_history_identity_fkey');
+    expect(migration).toContain('EconomyMarketPurchase_vendor_history_identity_fkey');
+    expect(migration).toContain('EconomyMarketOrder_vendor_history_identity_fkey');
+    expect(deletion).not.toContain("mode: 'HISTORY_RETAINED'");
+    expect(deletion).not.toContain('EconomyVirtualAccountDeleted');
     expect(deletion).not.toContain('DELETE FROM "LotteryRound"');
     expect(deletion).not.toContain('DELETE FROM "EconomyVirtualAccountEntry"');
     expect(deletion).not.toContain('DELETE FROM "EconomyMarketPurchase"');
+    expect(deletion).not.toContain('DELETE FROM "EconomyMarketOrder"');
   });
 
-  it('stores a scoped tombstone with account FK and marks it hidden-but-restorable in the control list', () => {
-    expect(migration).toContain('CREATE TABLE "EconomyVirtualAccountControlHidden"');
-    expect(migration).toContain('FOREIGN KEY ("accountId") REFERENCES "EconomyVirtualAccount"("id")');
-    expect(migration).toContain('ON DELETE CASCADE ON UPDATE CASCADE');
-    expect(control).toContain('listHiddenVirtualAccountIds');
-    expect(control).toContain('hiddenIds.has(account.id)');
-    expect(control).toContain('restoreHiddenVirtualAccount');
-    expect(control).toContain("'/control/accounts/:accountId/restore'");
+  it('migrates old CUSTOM hidden state fail-closed and removes CONTROL_HIDDEN storage', () => {
+    expect(migration).toContain('terminal deletion migration blocked: hidden CUSTOM account has funds or missing finance');
+    expect(migration).toContain('terminal deletion migration blocked: hidden CUSTOM account still owns active domain work');
+    expect(migration).toContain('UPDATE "EconomyVirtualAccountHistoryIdentity" history');
+    expect(migration).toContain('DELETE FROM "EconomyVirtualAccount" account');
+    expect(migration).toContain('DROP TABLE "EconomyVirtualAccountControlHidden"');
+    expect(migration).not.toContain('RENAME TO "EconomyVirtualAccountDeleted"');
   });
 
-  it('restores a hidden account strictly scoped to guild+connection', () => {
-    expect(deletion).toContain('export async function restoreHiddenVirtualAccount');
-    expect(deletion).toContain('DELETE FROM "EconomyVirtualAccountControlHidden" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3');
-    expect(control).toContain("requireGuildPermission('economy.manage')");
-    const restoreStart = control.indexOf("post('/control/accounts/:accountId/restore'");
-    const restoreHandler = control.slice(restoreStart, control.indexOf("post('/control/accounts',", restoreStart));
-    expect(restoreHandler).toContain('getVirtualAccountById(scope.guildId, connId, accountId)');
-    expect(restoreHandler).toContain('restoreHiddenVirtualAccount({ guildId: scope.guildId, nitradoConnId: connId, accountId })');
+  it('serializes new economic writes and active domain work against terminal live deletion', () => {
+    expect(migration).toContain('FOR KEY SHARE');
+    expect(migration).toContain('EconomyVirtualAccountEntry_require_live_account');
+    expect(migration).toContain('LotteryRound_require_live_pot');
+    expect(migration).toContain('EconomyMarketListing_require_live_vendor');
+    expect(migration).toContain('EconomyMarketPurchase_require_live_vendor');
+    expect(migration).toContain('EconomyMarketOrder_require_live_vendor');
+    expect(migration).toContain('new virtual-account ledger entry requires a live account');
+    expect(migration).toContain('new market purchase requires a live vendor account');
+    expect(deletion).toContain('FOR UPDATE');
+    expect(deletion).toContain('aktiven Fachvorgang');
   });
 
-  it('shows one two-click delete action next to Audit for all account kinds/statuses/balances', () => {
-    expect(ui).toContain('<History className="h-3.5 w-3.5 mr-1" />Audit');
-    expect(ui).toContain("'Wirklich löschen?' : 'Löschen'");
-    expect(ui).toContain('disabled={remove.isPending || archive.isPending}');
-    expect(ui).not.toContain('const deleteSupported =');
-    expect(ui).not.toContain('const canDelete =');
-    expect(ui).toContain('unabhängig von Status und Kontostand');
+  it('never lists terminally deleted CUSTOM accounts and permanently rejects restore', () => {
+    expect(terminal).toContain('listDeletedVirtualAccountIds');
+    expect(terminal).toContain("account.kind === 'CUSTOM' && !deletedIds.has(account.id)");
+    expect(terminal).toContain("post('/control/accounts/:accountId/restore'");
+    expect(terminal).toContain('res.status(410)');
+    expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
+    expect(deletion).toContain('return false;');
+  });
+
+  it('blocks direct mutations against terminally deleted account IDs', () => {
+    expect(terminal).toContain('async function rejectDeletedMutation');
+    expect(terminal).toContain('Dieses Konto wurde dauerhaft gelöscht und kann nicht mehr verändert werden.');
+    expect(terminal).toContain("put('/control/accounts/:accountId'");
+    expect(terminal).toContain("delete('/control/accounts/:accountId'");
+    expect(terminal).toContain("post('/control/accounts/:accountId/sync'");
+    expect(terminal).toContain("post('/:accountId/archive'");
+    expect(terminal).toContain("post('/:accountId/payout'");
+  });
+
+  it('runs terminal deletion before the Phase-2 capability and compatibility routers', () => {
+    expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter'))
+      .toBeLessThan(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'));
+    expect(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'))
+      .toBeLessThan(v2.indexOf('economyVirtualAccountControlRouter'));
   });
 });

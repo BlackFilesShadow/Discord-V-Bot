@@ -31,6 +31,7 @@ import { nitradoRouter } from './v2/nitrado';
 import { nitradoDriftRouter } from './v2/nitradoDrift';
 import { admSourceRouter } from './v2/admSource';
 import { economyRouter } from './v2/economy';
+import { economyVirtualAccountTerminalDeletionRouter } from './v2/economyVirtualAccountTerminalDeletion';
 import { economyVirtualAccountTreasurySafetyRouter } from './v2/economyVirtualAccountTreasurySafety';
 import { economyVirtualAccountControlRouter } from './v2/economyVirtualAccountControl';
 import { economyVirtualAccountsRouter } from './v2/economyVirtualAccounts';
@@ -99,12 +100,14 @@ v2Router.use('/guilds/:guildId/factions', requireFactionsDashboardAccess, factio
 v2Router.use('/guilds/:guildId/factions', factionApiErrorBoundary);
 
 v2Router.use('/guilds/:guildId/economy-scope', economyScopeRouter);
-// Safety-Layer zuerst: die transaktional serialisierte Serverbank muss den
-// gleichnamigen Kompatibilitaetspfad des allgemeinen Control-Routers abfangen.
+// Safety layers first: terminal deletion hides immutable-history CUSTOM rows and
+// blocks restore; the Phase-2 capability/treasury safety then owns all remaining
+// account capabilities before compatibility routes are allowed to run.
 v2Router.use(
   '/guilds/:guildId/economy/virtual-accounts',
   requireEconomyDashboardAccess,
   requireSafeDashboardEconomyScope,
+  economyVirtualAccountTerminalDeletionRouter,
   economyVirtualAccountTreasurySafetyRouter,
   economyVirtualAccountControlRouter,
   economyVirtualAccountsRouter,

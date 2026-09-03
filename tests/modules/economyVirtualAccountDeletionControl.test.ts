@@ -4,18 +4,46 @@ import path from 'node:path';
 const root = path.resolve(__dirname, '../..');
 const read = (file: string) => fs.readFileSync(path.join(root, file), 'utf8');
 
-test('virtual account removal is balance/status independent while preserving domain history', () => {
+test('custom account deletion is terminal while immutable history stays referentially valid', () => {
   const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
   const route = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
+  const terminal = read('src/dashboard/routes/v2/economyVirtualAccountTerminalDeletion.ts');
+  const migration = read('prisma/migrations/20260903010000_virtual_account_terminal_deletion/migration.sql');
+  const v2 = read('src/dashboard/routes/v2.ts');
   const ui = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
 
-  expect(deletion).toContain('status- and balance-independent');
-  expect(deletion).toContain('SET "bankBalance"=0');
-  expect(deletion).toContain('SET "balance"=0');
-  expect(deletion).toContain('EconomyVirtualAccountControlHidden');
-  expect(deletion).toContain('CONTROL_DELETE_RESET');
-  expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
+  expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+  expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+  expect(deletion).not.toContain('SET "bankBalance"=0');
+  expect(deletion).not.toContain('SET "balance"=0');
+  expect(deletion).not.toContain('CONTROL_DELETE_RESET');
+  expect(deletion).toContain('EconomyVirtualAccountHistoryIdentity');
+  expect(deletion).toContain("mode: 'HARD_DELETED'");
+  expect(deletion).not.toContain("mode: 'HISTORY_RETAINED'");
+  expect(deletion).not.toContain('EconomyVirtualAccountDeleted');
+  expect(deletion).toContain("account.kind !== 'CUSTOM'");
+  expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
+
+  expect(migration).toContain('CREATE TABLE "EconomyVirtualAccountHistoryIdentity"');
+  expect(migration).toContain('EconomyVirtualAccountEntry_history_identity_fkey');
+  expect(migration).toContain('LotteryRound_pot_history_identity_fkey');
+  expect(migration).toContain('EconomyMarketListing_vendor_history_identity_fkey');
+  expect(migration).toContain('EconomyMarketPurchase_vendor_history_identity_fkey');
+  expect(migration).toContain('EconomyMarketOrder_vendor_history_identity_fkey');
+  expect(migration).toContain('DROP TABLE "EconomyVirtualAccountControlHidden"');
+
+  expect(terminal).toContain('!deletedIds.has(account.id)');
+  expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
+  expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter'))
+    .toBeLessThan(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'));
+
+  expect(ui).toContain("const canDelete = account.kind === 'CUSTOM' && pocketsEmpty;");
+  expect(ui).toContain('Guthaben wird niemals verworfen.');
   expect(ui).toContain("{deleteArmed ? 'Wirklich löschen?' : 'Löschen'}");
+  expect(ui).not.toContain('CONTROL_HIDDEN');
+  expect(ui).not.toContain('kontrolliert auf 0 gesetzt');
+  expect(ui).not.toContain('restore.mutate');
+
   expect(route.indexOf('deleteUnusedVirtualAccount')).toBeLessThan(route.indexOf('retireVirtualAccountProjection', route.indexOf("delete('/control/accounts/:accountId'")));
 });
 

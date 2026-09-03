@@ -8,6 +8,7 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
   const schema = read('prisma/schema.prisma');
   const migration = read('prisma/migrations/20260816124500_economy_virtual_accounts/migration.sql');
   const extensionMigration = read('prisma/migrations/20260826190000_virtual_account_wallet_bank_currency_projection/migration.sql');
+  const terminalMigration = read('prisma/migrations/20260903010000_virtual_account_terminal_deletion/migration.sql');
   const permissionMigration = read('prisma/migrations/20260826193000_virtual_manager_permission_restore/migration.sql');
   const completionMigration = read('prisma/migrations/20260828214500_admin_force_link_virtual_archive_channel/migration.sql');
   const service = read('src/modules/economy/virtualAccounts.ts');
@@ -52,10 +53,12 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
   it('mountet Safety-, Control- und Legacy-Router in dieser Reihenfolge vor dem allgemeinen Economy-Router', () => {
     const mountStart = "'/guilds/:guildId/economy/virtual-accounts'";
     const genericMount = "v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);";
+    expect(v2).toContain('economyVirtualAccountTerminalDeletionRouter');
     expect(v2).toContain('economyVirtualAccountTreasurySafetyRouter');
     expect(v2).toContain('economyVirtualAccountControlRouter');
     expect(v2).toContain('economyVirtualAccountsRouter');
     expect(v2.indexOf(mountStart)).toBeLessThan(v2.indexOf(genericMount));
+    expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter')).toBeLessThan(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'));
     expect(v2.indexOf('economyVirtualAccountTreasurySafetyRouter')).toBeLessThan(v2.indexOf('economyVirtualAccountControlRouter'));
     expect(controlSafety).toContain("post('/control/accounts'");
     expect(controlSafety).toContain("put('/control/accounts/:accountId'");
@@ -65,29 +68,30 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(routes).toContain("requireGuildPermission('economy.manage')");
   });
 
-  it('entfernt jede sichtbare Kontoart status- und saldounabhaengig ohne Fachhistorie zu zerstoeren', () => {
+  it('loescht nur leere CUSTOM-Livekonten und erhaelt Historie ueber eine getrennte Identity', () => {
     expect(control).toContain("delete('/control/accounts/:accountId'");
     expect(control).toContain("requireGuildPermission('economy.manage')");
     expect(control).toContain('deleteUnusedVirtualAccount');
-    expect(deletion).toContain("account.kind === 'LOTTERY_POT' || account.kind === 'MARKET_VENDOR'");
-    expect(deletion).toContain('return hideDomainOwnedAccount');
     expect(deletion).toContain("account.kind !== 'CUSTOM'");
+    expect(deletion).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(deletion).toContain('FOR UPDATE');
-    expect(deletion).toContain('CONTROL_DELETE_RESET');
-    expect(deletion).toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
-    expect(deletion).toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
-    expect(deletion).toContain('BANK_TREASURY');
-    expect(deletion).toContain('GENERAL');
-    expect(deletion).toContain('"EconomyVirtualAccountEntry"');
-    expect(deletion).toContain('"LotteryRound"');
-    expect(deletion).toContain('"EconomyMarketListing"');
-    expect(deletion).toContain('"EconomyMarketPurchase"');
-    expect(deletion).toContain('const hasMoney = account.balance !== 0n || finance.bankBalance !== 0n;');
-    expect(deletion).toContain('const mustPreserveRow = hasMoney');
+    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
+    expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+    expect(deletion).not.toContain('CONTROL_DELETE_RESET');
+    expect(deletion).not.toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
+    expect(deletion).not.toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
+    expect(deletion).toContain('EconomyVirtualAccountHistoryIdentity');
     expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
     expect(deletion).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
     expect(deletion).toContain("candidate.code === '23503'");
-    expect(migration).toContain('ON DELETE RESTRICT ON UPDATE CASCADE');
+    expect(deletion).not.toContain('retainZeroBalanceCustomHistory');
+    expect(terminalMigration).toContain('EconomyVirtualAccountEntry_history_identity_fkey');
+    expect(terminalMigration).toContain('LotteryRound_pot_history_identity_fkey');
+    expect(terminalMigration).toContain('EconomyMarketListing_vendor_history_identity_fkey');
+    expect(terminalMigration).toContain('EconomyMarketPurchase_vendor_history_identity_fkey');
+    expect(terminalMigration).toContain('EconomyMarketOrder_vendor_history_identity_fkey');
+    expect(terminalMigration).toContain('FOR KEY SHARE');
+    expect(terminalMigration).toContain('DROP TABLE "EconomyVirtualAccountControlHidden"');
   });
 
   it('verbietet weiterhin Archivierung mit Restguthaben und schuetzt Systemkonten in der Archiv-Fachfunktion', () => {
