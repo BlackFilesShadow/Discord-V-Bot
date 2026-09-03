@@ -255,14 +255,14 @@ test.describe('Authenticated virtual-account actions', () => {
     await gotoVirtualAccounts(page);
 
     const fundedRow = page.getByText('Eventkasse', { exact: false })
-      .locator('xpath=ancestor::div[.//button[normalize-space()="Löschen"]][1]');
+      .locator('xpath=ancestor::div[contains(@class,"bg-bg-elev/40")][1]');
     const fundedDelete = fundedRow.getByRole('button', { name: 'Löschen', exact: true });
     await expect(fundedDelete).toBeDisabled();
     await expect(fundedDelete).toHaveAttribute('title', /Wallet und Bank 0 sind/);
 
     const deletePath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${DELETE_ACCOUNT}`;
     const row = page.getByText('Löschbare Kasse', { exact: false })
-      .locator('xpath=ancestor::div[.//button[normalize-space()="Löschen"]][1]');
+      .locator('xpath=ancestor::div[contains(@class,"bg-bg-elev/40")][1]');
 
     await row.getByRole('button', { name: 'Löschen', exact: true }).click();
     expect(mutation(mutations, deletePath)).toBeUndefined();
