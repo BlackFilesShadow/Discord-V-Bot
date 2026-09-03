@@ -4,9 +4,13 @@ import path from 'node:path';
 const ROOT = path.join(__dirname, '..', '..');
 const source = fs.readFileSync(path.join(ROOT, 'src/modules/economy/virtualAccountDeletion.ts'), 'utf8');
 const migration = fs.readFileSync(path.join(ROOT, 'prisma/migrations/20260903010000_virtual_account_terminal_deletion/migration.sql'), 'utf8');
+const identityModel = fs.readFileSync(path.join(ROOT, 'prisma/economy_virtual_account_history_identity.prisma'), 'utf8');
 
 describe('virtual account delete FK gate', () => {
   it('moves immutable history FKs to the scoped identity and keeps them RESTRICT', () => {
+    expect(identityModel).toContain('model EconomyVirtualAccountHistoryIdentity');
+    expect(identityModel).toContain('@@unique([accountId, guildId, nitradoConnId]');
+    expect(identityModel).toContain('@@index([guildId, nitradoConnId, deletedAt]');
     expect(migration).toContain('CREATE TABLE "EconomyVirtualAccountHistoryIdentity"');
     for (const constraint of [
       'EconomyVirtualAccountEntry_history_identity_fkey',
