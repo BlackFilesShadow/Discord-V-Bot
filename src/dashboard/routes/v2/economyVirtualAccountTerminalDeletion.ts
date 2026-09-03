@@ -39,20 +39,36 @@ async function isTerminallyDeleted(guildId: GuildId, connId: NitradoConnId, acco
   return Boolean(rows[0]?.deleted);
 }
 
-async function rejectDeletedMutation(req: Request, res: Response, next: NextFunction): Promise<void> {
+async function domainOwner(guildId: GuildId, connId: NitradoConnId, accountId: string): Promise<'LOTTERY' | 'BLACK_MARKET' | 'SERVER_BANK' | 'VIRTUAL_ACCOUNTS' | null> {
+  const account = await getVirtualAccountById(guildId, connId, accountId);
+  if (!account) return null;
+  if (account.kind === 'LOTTERY_POT') return 'LOTTERY';
+  if (account.kind === 'MARKET_VENDOR') return 'BLACK_MARKET';
+  const finance = await ensureVirtualAccountFinance(guildId, connId, accountId);
+  return finance.accountPurpose === 'BANK_TREASURY' ? 'SERVER_BANK' : 'VIRTUAL_ACCOUNTS';
+}
+
+async function rejectDeletedOrDomainOwnedMutation(req: Request, res: Response, next: NextFunction): Promise<void> {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId;
   if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
-  if (await isTerminallyDeleted(scope.guildId, connId, String(req.params.accountId))) {
+  const accountId = String(req.params.accountId);
+  if (await isTerminallyDeleted(scope.guildId, connId, accountId)) {
     res.status(410).json({ error: 'Dieses Konto wurde dauerhaft gelöscht und kann nicht mehr verändert werden.' });
+    return;
+  }
+  const owner = await domainOwner(scope.guildId, connId, accountId);
+  if (owner && owner !== 'VIRTUAL_ACCOUNTS') {
+    const label = owner === 'SERVER_BANK' ? 'Serverbank' : owner === 'LOTTERY' ? 'Lotterie' : 'Schwarzmarkt';
+    res.status(400).json({ error: `${label}-Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.` });
     return;
   }
   next();
 }
 
-async function serializeCustomAccount(guildId: GuildId, connId: NitradoConnId, accountId: string) {
+async function serializeAccount(guildId: GuildId, connId: NitradoConnId, accountId: string) {
   const account = await getVirtualAccountById(guildId, connId, accountId);
-  if (!account || account.kind !== 'CUSTOM') throw new Error('CUSTOM-Konto nicht gefunden.');
+  if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
   const [finance, metadata, managers, projection] = await Promise.all([
     ensureVirtualAccountFinance(guildId, connId, accountId),
     getVirtualAccountMetadata(guildId, connId, accountId),
@@ -60,7 +76,21 @@ async function serializeCustomAccount(guildId: GuildId, connId: NitradoConnId, a
     readProjection(accountId, String(guildId), String(connId)),
   ]);
   const pocketsEmpty = account.balance === 0n && finance.bankBalance === 0n;
-  const managedBy = finance.accountPurpose === 'BANK_TREASURY' ? 'SERVER_BANK' : 'VIRTUAL_ACCOUNTS';
+  const managedBy = account.kind === 'LOTTERY_POT'
+    ? 'LOTTERY'
+    : account.kind === 'MARKET_VENDOR'
+      ? 'BLACK_MARKET'
+      : finance.accountPurpose === 'BANK_TREASURY'
+        ? 'SERVER_BANK'
+        : 'VIRTUAL_ACCOUNTS';
+  const genericOwned = managedBy === 'VIRTUAL_ACCOUNTS';
+  const readOnlyReason = managedBy === 'LOTTERY'
+    ? 'Lotterie-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Lotterie-Funktion.'
+    : managedBy === 'BLACK_MARKET'
+      ? 'Schwarzmarkt-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Schwarzmarkt-Funktion.'
+      : managedBy === 'SERVER_BANK'
+        ? 'Serverbank-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Serverbank-Funktion.'
+        : null;
   return {
     id: account.id,
     kind: account.kind,
@@ -89,19 +119,19 @@ async function serializeCustomAccount(guildId: GuildId, connId: NitradoConnId, a
     projection,
     capabilities: {
       managedBy,
-      canConfigure: account.status !== 'ARCHIVED',
-      canDelete: true,
-      canArchive: account.status !== 'ARCHIVED' && pocketsEmpty,
-      canPayout: account.status === 'ACTIVE',
-      canSyncProjection: account.status !== 'ARCHIVED',
+      canConfigure: genericOwned && account.status !== 'ARCHIVED',
+      canDelete: genericOwned,
+      canArchive: genericOwned && account.status !== 'ARCHIVED' && pocketsEmpty,
+      canPayout: genericOwned && account.status === 'ACTIVE',
+      canSyncProjection: genericOwned && account.status !== 'ARCHIVED',
       canRestore: false,
-      readOnlyReason: null,
+      readOnlyReason,
     },
   };
 }
 
-// The active list comes exclusively from live EconomyVirtualAccount storage.
-// Historical identities are consulted only as a defensive terminal-deletion guard.
+// Generic control list contains only accounts owned by the generic virtual-account
+// feature. The Serverbank is CUSTOM-backed but domain-owned and therefore excluded.
 economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuildPermission('economy.view'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId;
@@ -111,19 +141,35 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuil
     listVirtualAccounts(scope.guildId, connId, true),
     listDeletedVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
   ]);
-  const activeCustom = accounts.filter(account => account.kind === 'CUSTOM' && !deletedIds.has(account.id));
-  res.json({
-    accounts: await Promise.all(activeCustom.map(account => serializeCustomAccount(scope.guildId, connId, account.id))),
-  });
+  const liveAccounts = accounts.filter(account => !deletedIds.has(account.id));
+  const serialized = await Promise.all(liveAccounts.map(account => serializeAccount(scope.guildId, connId, account.id)));
+  res.json({ accounts: serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS') });
+});
+
+// Read-only registry includes every domain-owned account, including the CUSTOM-
+// backed Serverbank, so domain ownership is visible instead of silently falling
+// into the generic CUSTOM workspace.
+economyVirtualAccountTerminalDeletionRouter.get('/control/system-accounts', requireGuildPermission('economy.view'), async (req, res) => {
+  const scope = req.guildScope!;
+  const connId = scope.nitradoConnId;
+  if (!connId) { res.status(400).json({ error: 'Economy-Gameserver-Scope fehlt.' }); return; }
+
+  const [accounts, deletedIds] = await Promise.all([
+    listVirtualAccounts(scope.guildId, connId, true),
+    listDeletedVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
+  ]);
+  const liveAccounts = accounts.filter(account => !deletedIds.has(account.id));
+  const serialized = await Promise.all(liveAccounts.map(account => serializeAccount(scope.guildId, connId, account.id)));
+  res.json({ accounts: serialized.filter(account => account.capabilities.managedBy !== 'VIRTUAL_ACCOUNTS') });
 });
 
 // Old IDs remain terminal through the historical identity even though the live
-// account row is physically absent.
-economyVirtualAccountTerminalDeletionRouter.put('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedMutation);
-economyVirtualAccountTerminalDeletionRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedMutation);
-economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/sync', requireGuildPermission('economy.manage'), rejectDeletedMutation);
-economyVirtualAccountTerminalDeletionRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), rejectDeletedMutation);
-economyVirtualAccountTerminalDeletionRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), rejectDeletedMutation);
+// account row is physically absent. Domain-owned live accounts fail closed too.
+economyVirtualAccountTerminalDeletionRouter.put('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
+economyVirtualAccountTerminalDeletionRouter.delete('/control/accounts/:accountId', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
+economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/sync', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
+economyVirtualAccountTerminalDeletionRouter.post('/:accountId/archive', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
+economyVirtualAccountTerminalDeletionRouter.post('/:accountId/payout', requireGuildPermission('economy.manage'), rejectDeletedOrDomainOwnedMutation);
 
 economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/restore', requireGuildPermission('economy.manage'), async (req, res) => {
   const scope = req.guildScope!;
@@ -134,10 +180,11 @@ economyVirtualAccountTerminalDeletionRouter.post('/control/accounts/:accountId/r
     res.status(410).json({ error: 'Gelöschte Konten können nicht wiederhergestellt werden.' });
     return;
   }
-  const account = await getVirtualAccountById(scope.guildId, connId, accountId);
-  if (!account) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
-  if (account.kind !== 'CUSTOM') {
-    res.status(400).json({ error: 'Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.' });
+  const owner = await domainOwner(scope.guildId, connId, accountId);
+  if (!owner) { res.status(404).json({ error: 'Virtuelles Konto nicht gefunden.' }); return; }
+  if (owner !== 'VIRTUAL_ACCOUNTS') {
+    const label = owner === 'SERVER_BANK' ? 'Serverbank' : owner === 'LOTTERY' ? 'Lotterie' : 'Schwarzmarkt';
+    res.status(400).json({ error: `${label}-Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.` });
     return;
   }
   res.status(400).json({ error: 'Dieses Konto ist nicht gelöscht.' });
