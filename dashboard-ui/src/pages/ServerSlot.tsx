@@ -23,7 +23,7 @@ type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' |
 const SLOT_HELP: Record<Tab, { title: string; text: string[] }> = {
   settings: {
     title: 'Server-Einstellungen',
-    text: ['Hier schaltest du Funktionen für diesen Gameserver ein oder aus.', 'Whitelist und Economy wirken nur auf diesen Slot. Perma-Only begrenzt die Nutzung auf dauerhafte Zugänge.'],
+    text: ['Hier schaltest du Funktionen für diesen Gameserver ein oder aus.', 'Whitelist und Economy wirken nur auf diesen Slot. Perma-Only hält den Nitrado-Server bei einem Stopp automatisch online.'],
   },
   whitelist: {
     title: 'Whitelist',
@@ -271,7 +271,10 @@ export default function ServerSlot() {
               <div className="space-y-4">
                 <Switch checked={settings.data.whitelistActive} onChange={v => updateSettings.mutate({ whitelistActive: v })} label="Whitelist aktiv" disabled={updateSettings.isPending} />
                 <Switch checked={settings.data.economyActive} onChange={v => updateSettings.mutate({ economyActive: v })} label="Economy aktiv" disabled={updateSettings.isPending} />
-                <Switch checked={settings.data.permaOnly} onChange={v => updateSettings.mutate({ permaOnly: v })} label="Perma-Only Modus" disabled={updateSettings.isPending} />
+                <div className="inline-flex items-center gap-1.5">
+                  <Switch checked={settings.data.permaOnly} onChange={v => updateSettings.mutate({ permaOnly: v })} label="Perma-Only Modus" disabled={updateSettings.isPending} />
+                  <FunctionHelpButton title="Perma-Only Modus" text={['V-Bot prüft diesen aktiven Nitrado-Server regelmäßig.', 'Ist der Server gestoppt, wird ein kontrollierter Neustart geplant. Gesperrte Server werden nicht automatisch gestartet.']} />
+                </div>
               </div>
             )}
           </Card>

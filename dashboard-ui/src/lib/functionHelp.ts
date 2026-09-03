@@ -5,6 +5,7 @@ export interface FunctionHelp {
 
 const HELP: Record<string, string[]> = {
   'Virtuelle Konten': ['Verwalte getrennte Konten für diesen Gameserver.', 'Guthaben, Verwalter und Discord-Anzeige bleiben pro Konto getrennt.'],
+  'Server-Toggles': ['Schaltet Whitelist, Economy und Perma-Only für diesen Gameserver.', 'Jeder Schalter wird sofort separat gespeichert.'],
   Serverbank: ['Die Serverbank ist das zentrale Konto dieses Gameservers.', 'Wallet und Bankreserve werden getrennt geführt.'],
   'Management-Kanal': ['Hier liegt das Discord-Panel für Kontoverwalter.', 'Nur zugewiesene Personen können ihre freigegebenen Konten bedienen.'],
   'Admin-Auszahlung': ['Zahlt Guthaben aus einem CUSTOM-Konto an ein Discord-Mitglied aus.', 'Betrag, Ziel und Buchung werden vor der Auszahlung geprüft.'],
@@ -42,8 +43,8 @@ export function functionHelpFor(title: string): FunctionHelp {
   return {
     title: normalized || 'Bereichshilfe',
     text: HELP[normalized] ?? [
-      `Hier verwaltest du ${normalized || 'diesen Bereich'}.`,
-      'Änderungen werden erst nach der jeweiligen Aktion übernommen.',
+      `Dieser Bereich bündelt Informationen und Einstellungen zu ${normalized || 'dieser Funktion'}.`,
+      'Änderungen werden nur durch eine passende Aktion übernommen.',
     ],
   };
 }

@@ -28,6 +28,8 @@ import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
+import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
+import { functionHelpFor } from '@/lib/functionHelp';
 
 type SectionKey =
   | 'overview' | 'appeals' | 'feedback' | 'broadcast' | 'upload' | 'export' | 'validate'
@@ -144,10 +146,14 @@ export function BotAdminTab() {
 
 // ── gemeinsame Helfer ───────────────────────────────────────────────────────
 function SectionHeader({ title, desc, onRefresh, loading, action }: { title: string; desc?: string; onRefresh?: () => void; loading?: boolean; action?: ReactNode }) {
+  const help = functionHelpFor(title);
   return (
     <div className="flex items-start justify-between gap-3 mb-4">
       <div>
-        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        <div className="inline-flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-white">{title}</h2>
+          <FunctionHelpButton title={help.title} text={help.text} />
+        </div>
         {desc && <p className="text-muted text-sm mt-0.5">{desc}</p>}
       </div>
       <div className="flex items-center gap-2 shrink-0">

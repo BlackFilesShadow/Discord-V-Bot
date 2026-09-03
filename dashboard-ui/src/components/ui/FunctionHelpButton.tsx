@@ -16,10 +16,10 @@ export function FunctionHelpButton({ title, text }: FunctionHelpButtonProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-warn/70 bg-warn/10 text-warn hover:border-warn hover:bg-warn/20 focus-ring"
+        className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-muted/80 hover:text-accent focus-ring"
         aria-label={`Hilfe zu ${title}`}
       >
-        <CircleAlert className="h-4 w-4" aria-hidden="true" />
+        <CircleAlert className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
     </Tooltip>
     <Modal open={open} onClose={() => setOpen(false)} title={title} desc="Kurz erklärt">
