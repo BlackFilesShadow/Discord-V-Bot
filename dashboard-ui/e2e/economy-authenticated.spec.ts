@@ -93,15 +93,18 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
 }
 
 test.describe('Economy authenticated E2E', () => {
-  test('Page 1 Economy behaelt Core-Funktionen, aber nicht die separierten Page-2-Flächen', async ({ page }) => {
+  test('Page 1 Economy behaelt Scope/Uebersicht/Konfiguration, aber keine virtuellen Konto-Flaechen', async ({ page }) => {
     const writes = await stubAuthenticatedEconomy(page);
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Wirtschaft-Status')).toBeVisible();
     await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
-    await expect(page.getByText('Schwarzmarkt')).toBeVisible();
-    await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
+    // Lotterie-Pots und Schwarzmarkt-Haendler sind virtuelle Konten und duerfen
+    // nicht mehr zusaetzlich im Economy-Bereich doppelt auftauchen.
+    await expect(page.getByRole('heading', { name: 'Schwarzmarkt' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Lotterie' })).toHaveCount(0);
+    await expect(page.getByText('Bestellungen & Auslieferung')).toHaveCount(0);
     await expect(page.getByText('Admin-Auszahlung', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Bank' })).toHaveCount(0);
@@ -114,7 +117,7 @@ test.describe('Economy authenticated E2E', () => {
     expect(writes.configWrite()).toMatchObject({ currencyName: 'Chaoten-Dollar', enabled: true, startBalance: 500, playtimeRewardPercent: 2 });
   });
 
-  test('Page 2 trennt Virtuelle Konten und Bank/Casino, Killfeed bleibt erhalten', async ({ page }) => {
+  test('Page 2 buendelt Virtuelle Konten inklusive Lotterie und Schwarzmarkt, Bank/Casino bleibt getrennt', async ({ page }) => {
     await stubAuthenticatedEconomy(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
 
@@ -125,6 +128,11 @@ test.describe('Economy authenticated E2E', () => {
     await expect(page.getByText('🏦 Eventkasse', { exact: true })).toBeVisible();
     await expect(page.getByText('Discord-User / GUID')).toBeVisible();
     await expect(page.getByText('Grund (optional)')).toBeVisible();
+    // Systemkonten-Oberflaechen leben im selben Bereich wie ihre Konten.
+    await expect(page.getByRole('heading', { name: 'Lotterie' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Schwarzmarkt' })).toBeVisible();
+    await expect(page.getByText('Nachtmarkt')).toBeVisible();
+    await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
 
     await page.getByRole('button', { name: 'Bank und Casino Funktionen', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Bank' })).toBeVisible();
@@ -132,10 +140,10 @@ test.describe('Economy authenticated E2E', () => {
     await expect(page.getByText('Admin-Auszahlung', { exact: true })).toHaveCount(0);
   });
 
-  test('zeigt den echten Kaufhistorie-Fehlerzustand im authentifizierten Economy-Scope', async ({ page }) => {
+  test('zeigt den echten Kaufhistorie-Fehlerzustand im authentifizierten Virtual-Konten-Scope', async ({ page }) => {
     await stubAuthenticatedEconomy(page, { purchaseError: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
-    await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await expect(page.getByRole('heading', { name: 'Virtuelle Konten' })).toBeVisible();
     await expect(page.getByText(/Kaufhistorie konnte nicht geladen werden:/)).toBeVisible();
     await expect(page.getByText(/Guild-Scope fehlt nach Auth-Middleware/)).toBeVisible();
   });

@@ -13,7 +13,7 @@ import {
   createConfiguredCustomVirtualAccount,
   updateConfiguredVirtualAccount,
 } from '../../../modules/economy/virtualAccountConfiguration';
-import { syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
+import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
 import {
   configureVirtualManagerPanelSafe,
   getVirtualManagerPanelSafe,
@@ -181,7 +181,7 @@ async function syncConfiguration(guildId: GuildId, connId: NitradoConnId, accoun
   if (!client) return 'Bot ist nicht bereit; Discord-Projektion wurde noch nicht synchronisiert.';
   const warnings: string[] = [];
   try {
-    await syncVirtualAccountProjection(client, guildId, connId, accountId);
+    await syncVirtualAccountProjectionLive(client, guildId, connId, accountId);
   } catch (error) {
     warnings.push(`Konto-Embed: ${(error as Error).message}`);
   }
@@ -419,7 +419,7 @@ economyVirtualAccountTreasurySafetyRouter.post('/:accountId/payout', requireGuil
 
     let syncWarning: string | null = null;
     try {
-      await syncVirtualAccountProjection(client, scope.guildId, connId, accountId);
+      await syncVirtualAccountProjectionLive(client, scope.guildId, connId, accountId);
     } catch (error) {
       syncWarning = (error as Error).message;
     }

@@ -181,7 +181,7 @@ export function LotteryPanel({ guildId, slot }: { guildId: string; slot: string 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['economy-lottery-current', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-lottery-history', guildId, slot] });
-    void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
+    void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-overview', guildId, slot] });
   };
 

@@ -162,7 +162,6 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
     void qc.invalidateQueries({ queryKey: ['economy-black-market-purchases', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-black-market-discord', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-virtual-control', guildId, slot] });
-    void qc.invalidateQueries({ queryKey: ['economy-virtual-accounts', guildId, slot] });
     void qc.invalidateQueries({ queryKey: ['economy-overview', guildId, slot] });
   };
 

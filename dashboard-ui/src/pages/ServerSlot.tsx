@@ -153,8 +153,11 @@ export default function ServerSlot() {
   );
   const currentKillfeedSlots = (dashboardMeta.data?.slots ?? []).filter(row => String(row.slot) === slot);
 
-  // Page 1 bleibt absichtlich unverändert. Die beiden neuen Einträge trennen nur
-  // die bisher im Economy-Panel eingebetteten Oberflächen auf Page 2 auf.
+  // Page 1 bleibt absichtlich schlank: Economy behaelt nur Scope, Uebersicht und
+  // Basis-Konfiguration. Saemtliche Oberflaechen rund um virtuelle Konten — die
+  // Konten selbst, Lotterie-Pots und Schwarzmarkt-Haendler — sind auf Page 2
+  // unter „Virtuelle Konten“ konsolidiert, damit kein Konto in zwei Bereichen
+  // doppelt auftaucht.
   const pageOneTabs = [
     ['settings', 'Settings', Settings],
     ['whitelist', 'Whitelist', Shield],
@@ -257,7 +260,11 @@ export default function ServerSlot() {
         {tab === 'links' && guildId && slot && <EconomyLinksPanel guildId={guildId} slot={slot} />}
 
         {tab === 'virtual-accounts' && guildId && slot && (
-          <VirtualAccountsPanel guildId={guildId} slot={slot} />
+          <div className="space-y-6">
+            <VirtualAccountsPanel guildId={guildId} slot={slot} />
+            <LotteryPanel guildId={guildId} slot={slot} />
+            <BlackMarketPanel guildId={guildId} slot={slot} />
+          </div>
         )}
 
         {tab === 'bank-casino' && guildId && slot && (
@@ -877,9 +884,6 @@ function EconomyTab({
         {error && <p className="text-danger text-sm">Economy-Konfiguration konnte nicht geladen werden: {error}</p>}
         {data && <EconomyForm value={data} onSave={onSave} pending={pending} />}
       </Card>
-
-      <LotteryPanel guildId={guildId} slot={slot} />
-      <BlackMarketPanel guildId={guildId} slot={slot} />
     </div>
   );
 }

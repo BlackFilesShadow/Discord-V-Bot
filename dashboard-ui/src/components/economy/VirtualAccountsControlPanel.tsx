@@ -479,6 +479,13 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
   const channelNames = useMemo(() => new Map(textChannels.map(channel => [channel.id, channel.name] as const)), [textChannels]);
   const rows = useMemo(() => accounts.data?.accounts ?? [], [accounts.data?.accounts]);
   const treasury = rows.find(account => account.accountPurpose === 'BANK_TREASURY') ?? null;
+  // Domain-eigene Systemkonten werden in ihren Fachpanels dargestellt. Die
+  // generische Kontenliste darf sie nicht ein zweites Mal anzeigen.
+  const listRows = useMemo(() => rows.filter(account => (
+    account.accountPurpose !== 'BANK_TREASURY'
+      && account.kind !== 'LOTTERY_POT'
+      && account.kind !== 'MARKET_VENDOR'
+  )), [rows]);
   const effectiveManagerChannel = managerChannelTouched ? managerChannel : (managerPanel.data?.panel?.channelId ?? '');
 
   const createValidation = useMemo(() => {
@@ -680,8 +687,8 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       {accounts.isLoading && <p className="text-muted text-sm">Lade Konten…</p>}
       {accounts.isError && <p className="text-danger text-sm">Virtuelle Konten konnten nicht geladen werden: {(accounts.error as Error).message}</p>}
       <div className="space-y-3">
-        {rows.length === 0 && !accounts.isLoading && <p className="text-muted text-sm">Noch keine virtuellen Konten.</p>}
-        {rows.map(account => {
+        {listRows.length === 0 && !accounts.isLoading && <p className="text-muted text-sm">Noch keine virtuellen Konten.</p>}
+        {listRows.map(account => {
           const pocketsEmpty = BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n;
           const canArchive = account.kind === 'CUSTOM' && account.status !== 'ARCHIVED' && pocketsEmpty;
           const canDelete = account.kind === 'CUSTOM' && pocketsEmpty;

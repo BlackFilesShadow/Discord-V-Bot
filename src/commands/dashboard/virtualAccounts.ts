@@ -13,12 +13,9 @@ import {
   type EconomyPocket,
   type VirtualAccountStatus,
 } from '../../modules/economy/virtualAccounts';
-import { ensureVirtualAccountFinance } from '../../modules/economy/virtualAccountFinance';
+import { ensureVirtualAccountFinance, listVirtualAccountFinanceMap } from '../../modules/economy/virtualAccountFinance';
 import { safeDepositUserIntoVirtualAccount } from '../../modules/economy/virtualAccountMoneySafety';
-import {
-  postVirtualAccountArchive,
-  syncVirtualAccountProjection,
-} from '../../modules/economy/virtualAccountDiscord';
+import { publishVirtualAccountActivityLive } from '../../modules/economy/virtualAccountLiveUpdates';
 import { getConfig } from '../../modules/economy/repository';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import { logAudit, logger } from '../../utils/logger';
@@ -84,9 +81,10 @@ export const virtualAccountCommand: Command = {
       if (visible.length === 0) {
         embed.setDescription('Auf diesem Gameserver sind keine virtuellen Konten verfuegbar.');
       } else {
+        const financeMap = await listVirtualAccountFinanceMap(scope.guildId, connId);
         const fields = [];
         for (const account of visible) {
-          const finance = await ensureVirtualAccountFinance(scope.guildId, connId, account.id);
+          const finance = financeMap.get(account.id) ?? await ensureVirtualAccountFinance(scope.guildId, connId, account.id);
           fields.push({
             name: `${statusLabel(account.status)} · ${finance.accountEmoji} ${account.name}`,
             value: [
@@ -188,12 +186,10 @@ export const virtualAccountCommand: Command = {
         await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         if (result.booked) {
           try {
-            await postVirtualAccountArchive(i.client, {
-              guildId: scope.guildId, nitradoConnId: connId, accountId: account.id,
+            await publishVirtualAccountActivityLive(i.client, scope.guildId, connId, account.id, {
               title: '💰 Einzahlung eingegangen', actorDiscordId: scope.actorDiscordId,
               amount: result.accountCredited, pocket: 'WALLET', status: '✅ Akzeptiert', reason,
             });
-            await syncVirtualAccountProjection(i.client, scope.guildId, connId, account.id);
           } catch (syncError) {
             logger.error(`Virtual-Account Discord-Sync nach /virtual-account pay fehlgeschlagen (${account.id}):`, syncError as Error);
             await i.followUp({ content: 'Die Geldbuchung ist erfolgreich gespeichert. Discord-Archiv/Live-Sync konnte noch nicht aktualisiert werden.', flags: MessageFlags.Ephemeral }).catch(() => undefined);

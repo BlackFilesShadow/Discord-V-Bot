@@ -230,7 +230,7 @@ async function noPageOverflow(page: Page): Promise<void> {
 test.describe('Black Market authenticated action contract', () => {
   test('economy.view kauft limitfrei im exakten Slot-Scope ueber den zentralen Idempotency-Key', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: false });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
 
     await expect(page.getByText('Schwarzmarkt')).toBeVisible();
     await expect(page.getByText('M4 Kit')).toBeVisible();
@@ -257,7 +257,7 @@ test.describe('Black Market authenticated action contract', () => {
 
   test('economy.manage erstellt Angebote ohne stock/max und kann aktive sowie archivierte Angebote entfernen', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
 
     await expect(page.getByText('Haendler anlegen')).toBeVisible();
     await expect(page.getByText('Angebot anlegen')).toBeVisible();
@@ -293,7 +293,7 @@ test.describe('Black Market authenticated action contract', () => {
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {
     await stubBlackMarket(page, { canManage: false, purchaseError: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
     await page.getByRole('button', { name: 'Kaufen', exact: true }).click();
     await expect(page.getByText(/Kauf fehlgeschlagen: Nicht genug Guthaben/)).toBeVisible();
     await expect(page.getByText(/Bestellung .* gebucht:/)).toHaveCount(0);
@@ -303,7 +303,7 @@ test.describe('Black Market authenticated action contract', () => {
     test(`Buyer-UI bleibt bei ${width}px ohne Seiten-Overflow`, async ({ page }) => {
       await stubBlackMarket(page, { canManage: false });
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+      await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
       await expect(page.getByText('M4 Kit')).toBeVisible();
       await expect(page.getByRole('button', { name: 'Kaufen', exact: true })).toBeVisible();
       await noPageOverflow(page);

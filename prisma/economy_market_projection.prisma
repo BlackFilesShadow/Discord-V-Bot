@@ -27,6 +27,7 @@ model EconomyMarketDiscordMessage {
   kind          String   @db.VarChar(20)
   pageIndex     Int?
   listingId     String?
+  vendorAccountId String?
   channelId     String
   messageId     String   @unique
   createdAt     DateTime @default(now())
@@ -34,7 +35,7 @@ model EconomyMarketDiscordMessage {
 
   projection EconomyMarketDiscordProjection @relation(fields: [projectionId], references: [id], onDelete: Cascade)
 
-  @@unique([projectionId, kind, pageIndex])
+  @@unique([projectionId, kind, vendorAccountId, pageIndex])
   @@unique([projectionId, kind, listingId])
   @@index([guildId, nitradoConnId, kind])
   @@index([listingId])

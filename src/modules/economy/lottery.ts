@@ -20,6 +20,7 @@ import { assertEconomyScopeReady } from './scopeMigration';
 import { archiveVirtualAccount, type VirtualAccountRawDb } from './virtualAccounts';
 import { getConfig } from './repository';
 import { systemUserToVirtualAccount, systemVirtualAccountToUser } from './systemVirtualTransfers';
+import { publishVirtualAccountActivityLive } from './virtualAccountLiveUpdates';
 
 let lotterySchedulerTimer: NodeJS.Timeout | null = null;
 let lotterySchedulerBusy = false;
@@ -507,7 +508,7 @@ async function prepareSettlement(roundId: string): Promise<LotteryStatus | null>
   });
 }
 
-async function completeWinnerPayout(round: LotteryRoundView): Promise<void> {
+async function completeWinnerPayout(client: Client, round: LotteryRoundView): Promise<void> {
   if (!round.winnerDiscordId || !round.finalPot || round.finalPot <= 0n) throw new Error('Ziehungsdaten unvollstaendig.');
   await systemVirtualAccountToUser({
     idempotencyKey: `lottery-payout:${round.id}`,
@@ -534,9 +535,18 @@ async function completeWinnerPayout(round: LotteryRoundView): Promise<void> {
       return true;
     },
   });
+  await publishVirtualAccountActivityLive(client, asGuildId(round.guildId), asNitradoConnId(round.nitradoConnId), round.potAccountId, {
+    title: '🎉 Lotterie-Gewinn ausgezahlt',
+    actorDiscordId: null,
+    targetDiscordId: asUserDiscordId(round.winnerDiscordId),
+    amount: round.finalPot,
+    pocket: 'WALLET',
+    status: '✅ Ausgezahlt',
+    reason: 'Lotterie-Gewinn',
+  });
 }
 
-async function processRefunds(round: LotteryRoundView): Promise<boolean> {
+async function processRefunds(client: Client, round: LotteryRoundView): Promise<boolean> {
   const entries = await prisma.lotteryEntry.findMany({
     where: { roundId: round.id, refundedAt: null },
     orderBy: { userDiscordId: 'asc' },
@@ -568,6 +578,15 @@ async function processRefunds(round: LotteryRoundView): Promise<boolean> {
         if (changed !== 1) throw new Error('Refund-Eintrag konnte nicht finalisiert werden.');
         return true;
       },
+    });
+    await publishVirtualAccountActivityLive(client, asGuildId(round.guildId), asNitradoConnId(round.nitradoConnId), round.potAccountId, {
+      title: '↩️ Lotterie-Refund ausgezahlt',
+      actorDiscordId: null,
+      targetDiscordId: asUserDiscordId(entry.userDiscordId),
+      amount: entry.totalPaid,
+      pocket: 'WALLET',
+      status: '✅ Erstattet',
+      reason: 'Lotterie-Refund: Mindestteilnehmer nicht erreicht',
     });
   }
 
@@ -630,10 +649,10 @@ export async function settleLotteryRound(client: Client, roundId: string): Promi
   let round = await fetchRoundViewById(roundId);
   if (!round) return null;
   if (round.status === 'DRAWING') {
-    await completeWinnerPayout(round);
+    await completeWinnerPayout(client, round);
     round = (await fetchRoundViewById(roundId))!;
   } else if (round.status === 'REFUNDING') {
-    await processRefunds(round);
+    await processRefunds(client, round);
     round = (await fetchRoundViewById(roundId))!;
   }
   if (round.status === 'FINISHED' || round.status === 'REFUNDED') {

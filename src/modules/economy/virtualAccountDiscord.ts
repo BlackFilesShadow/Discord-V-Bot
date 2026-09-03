@@ -143,8 +143,12 @@ async function writeProjection(args: {
   archiveThreadId: string | null;
   error?: string | null;
 }): Promise<void> {
+  // Bei einem Sync-Fehler bleibt der letzte erfolgreiche Sync-Zeitpunkt
+  // erhalten: Nur ein fehlerfreier Lauf setzt lastSyncedAt neu, ein Fehler
+  // ueberschreibt ausschliesslich lastSyncError. Sonst ginge die operative
+  // Information verloren, wann die Projektion zuletzt konsistent war.
   await rawDb().$executeRawUnsafe(
-    'INSERT INTO "EconomyVirtualAccountProjection" ("accountId", "guildId", "nitradoConnId", "channelId", "messageId", "archiveThreadId", "lastSyncedAt", "lastSyncError", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "archiveThreadId"=EXCLUDED."archiveThreadId", "lastSyncedAt"=EXCLUDED."lastSyncedAt", "lastSyncError"=EXCLUDED."lastSyncError", "updatedAt"=CURRENT_TIMESTAMP',
+    'INSERT INTO "EconomyVirtualAccountProjection" ("accountId", "guildId", "nitradoConnId", "channelId", "messageId", "archiveThreadId", "lastSyncedAt", "lastSyncError", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT ("accountId") DO UPDATE SET "channelId"=EXCLUDED."channelId", "messageId"=EXCLUDED."messageId", "archiveThreadId"=EXCLUDED."archiveThreadId", "lastSyncedAt"=CASE WHEN EXCLUDED."lastSyncError" IS NULL THEN EXCLUDED."lastSyncedAt" ELSE "EconomyVirtualAccountProjection"."lastSyncedAt" END, "lastSyncError"=EXCLUDED."lastSyncError", "updatedAt"=CURRENT_TIMESTAMP',
     args.accountId,
     String(args.guildId),
     String(args.connId),
@@ -322,7 +326,7 @@ export async function retireVirtualAccountProjection(client: Client, guildId: Gu
   }
 }
 
-export async function postVirtualAccountArchive(client: Client, args: {
+export interface VirtualAccountArchiveEvent {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   accountId: string;
@@ -333,7 +337,15 @@ export async function postVirtualAccountArchive(client: Client, args: {
   pocket?: EconomyPocket | null;
   status?: string;
   reason?: string | null;
-}): Promise<void> {
+}
+
+export async function postVirtualAccountArchive(client: Client, args: VirtualAccountArchiveEvent): Promise<void> {
+  // Konten ohne Discord-Integration besitzen bewusst kein Transaktionsarchiv.
+  // Die Buchung ist bereits atomar in der Datenbank commitet; das fehlende
+  // Archiv ist kein Fehler und darf weder geloggt noch dem User gemeldet werden.
+  const metadata = await getVirtualAccountMetadata(args.guildId, args.nitradoConnId, args.accountId);
+  if (!metadata?.channelId || !metadata.archiveChannelId) return;
+
   let projection = await readProjection(args.guildId, args.nitradoConnId, args.accountId);
   let thread = projection?.archiveThreadId
     ? await client.channels.fetch(projection.archiveThreadId).catch(() => null)
@@ -477,7 +489,7 @@ export async function configureVirtualManagerPanel(client: Client, args: {
 
   const previous = await readManagerPanel(args.guildId, args.nitradoConnId);
   let tracked = await readManagerAccess(args.guildId, args.nitradoConnId);
-  let previousEveryoneView = previous?.channelId === channel.id
+  const previousEveryoneView = previous?.channelId === channel.id
     ? previous.previousEveryoneView
     : stateOf(channel.permissionOverwrites.cache.get(guild.roles.everyone.id), PermissionFlagsBits.ViewChannel);
 

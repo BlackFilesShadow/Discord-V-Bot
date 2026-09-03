@@ -178,6 +178,21 @@ export async function updateVirtualAccountFinance(args: {
   return toFinance(rows[0]);
 }
 
+/**
+ * Gebuendelter Finance-Read fuer Listen (z. B. /virtual-account list und das
+ * Manager-Panel). Bestehende Profile kommen aus einer einzigen Query statt aus
+ * N Einzelreads; Konten ohne Profil (frische Lotterie-/Markt-Systemkonten)
+ * faellt der Aufrufer ueber ensureVirtualAccountFinance lazily nach.
+ */
+export async function listVirtualAccountFinanceMap(guildId: GuildId, connId: NitradoConnId): Promise<Map<string, VirtualAccountFinance>> {
+  await assertEconomyScopeReady(guildId, connId);
+  const rows = await rawDb().$queryRawUnsafe<DbFinance[]>(
+    'SELECT "accountId", "guildId", "nitradoConnId", "bankBalance", "currencyName", "currencyEmoji", "accountEmoji", "bannerUrl", "textStyle", "exchangePlayerUnits", "exchangeAccountUnits", "accountPurpose", "createdAt", "updatedAt" FROM "EconomyVirtualAccountFinance" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
+    String(guildId), String(connId),
+  );
+  return new Map(rows.map(row => [row.accountId, toFinance(row)]));
+}
+
 export async function listVirtualAccountManagers(guildId: GuildId, connId: NitradoConnId, accountId?: string): Promise<VirtualAccountManager[]> {
   await assertEconomyScopeReady(guildId, connId);
   const rows = accountId

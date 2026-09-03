@@ -19,6 +19,7 @@ import { getVirtualAccountById, type EconomyPocket, type VirtualAccountRawDb } f
 import {
   ensureVirtualAccountFinance,
   listManagedVirtualAccounts,
+  listVirtualAccountFinanceMap,
   userManagesVirtualAccount,
 } from './virtualAccountFinance';
 import {
@@ -27,7 +28,7 @@ import {
   safeRemoveVirtualAccountAmount,
   safeTransferVirtualPocket,
 } from './virtualAccountMoneySafety';
-import { postVirtualAccountArchive, syncVirtualAccountProjection } from './virtualAccountDiscord';
+import { publishVirtualAccountActivityLive } from './virtualAccountLiveUpdates';
 import { getConfig } from './repository';
 
 interface ScopeRow { guildId: string; nitradoConnId: string }
@@ -36,8 +37,8 @@ function rawDb(): VirtualAccountRawDb {
   return prisma as unknown as VirtualAccountRawDb;
 }
 
-async function resolveAccountScope(accountId: string): Promise<{ guildId: GuildId; connId: NitradoConnId }> {
-  const rows = await rawDb().$queryRawUnsafe<ScopeRow[]>('SELECT "guildId", "nitradoConnId" FROM "EconomyVirtualAccount" WHERE "id"=$1 LIMIT 1', accountId);
+async function resolveAccountScope(guildId: string, accountId: string): Promise<{ guildId: GuildId; connId: NitradoConnId }> {
+  const rows = await rawDb().$queryRawUnsafe<ScopeRow[]>('SELECT "guildId", "nitradoConnId" FROM "EconomyVirtualAccount" WHERE "id"=$1 AND "guildId"=$2 LIMIT 1', accountId, guildId);
   if (!rows[0]) throw new Error('Virtuelles Konto nicht gefunden.');
   return { guildId: asGuildId(rows[0].guildId), connId: asNitradoConnId(rows[0].nitradoConnId) };
 }
@@ -70,8 +71,7 @@ async function replyError(interaction: ButtonInteraction | ModalSubmitInteractio
 
 async function assertInteractionScope(guildId: string | null, accountId: string) {
   if (!guildId) throw new Error('Diese Aktion ist nur in einem Discord-Server verfügbar.');
-  const scope = await resolveAccountScope(accountId);
-  if (String(scope.guildId) !== guildId) throw new Error('Konto gehört nicht zu diesem Discord-Server.');
+  const scope = await resolveAccountScope(guildId, accountId);
   return scope;
 }
 
@@ -130,13 +130,11 @@ export async function handleVirtualAccountDepositModal(interaction: ModalSubmitI
     });
     if (result.booked) {
       try {
-        await postVirtualAccountArchive(interaction.client, {
-          guildId: scope.guildId, nitradoConnId: scope.connId, accountId,
+        await publishVirtualAccountActivityLive(interaction.client, scope.guildId, scope.connId, accountId, {
           title: '💰 Einzahlung eingegangen', actorDiscordId: asUserDiscordId(interaction.user.id),
           amount: result.accountCredited, pocket: 'WALLET', status: '✅ Akzeptiert',
           reason: result.playerDebited === result.accountCredited ? null : `Spielerabbuchung: ${result.playerDebited.toLocaleString('de-DE')} ${cfg.emoji}`,
         });
-        await syncVirtualAccountProjection(interaction.client, scope.guildId, scope.connId, accountId);
       } catch (syncError) {
         logger.error(`Virtual-Account Discord-Sync nach Einzahlung fehlgeschlagen (${accountId}):`, syncError as Error);
         await interaction.followUp({ content: 'Die Geldbuchung ist erfolgreich und sicher gespeichert. Die Discord-Anzeige konnte noch nicht synchronisiert werden und kann erneut aufgebaut werden.', flags: MessageFlags.Ephemeral }).catch(() => undefined);
@@ -161,9 +159,10 @@ export async function handleVirtualManagerButton(interaction: ButtonInteraction)
     const connId = asNitradoConnId(rawConnId);
     const accounts = await listManagedVirtualAccounts(guildId, connId, asUserDiscordId(interaction.user.id));
     if (accounts.length === 0) throw new Error('Dir ist in diesem Gameserver kein virtuelles Konto zugewiesen.');
+    const financeMap = await listVirtualAccountFinanceMap(guildId, connId);
     const options = [];
     for (const account of accounts.slice(0, 25)) {
-      const finance = await ensureVirtualAccountFinance(guildId, connId, account.id);
+      const finance = financeMap.get(account.id) ?? await ensureVirtualAccountFinance(guildId, connId, account.id);
       options.push({
         label: account.name.slice(0, 100),
         value: account.id,
@@ -239,8 +238,7 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
 export async function handleVirtualManagerMoveButton(interaction: ButtonInteraction): Promise<void> {
   const [, , direction, accountId] = interaction.customId.split(':');
   try {
-    await assertManager(interaction, accountId);
-    const accountScope = await resolveAccountScope(accountId);
+    const accountScope = await assertManager(interaction, accountId);
     const account = await getVirtualAccountById(accountScope.guildId, accountScope.connId, accountId);
     if (!account || account.kind !== 'CUSTOM') throw new Error('Dieses Konto erlaubt keine generische Pocket-Verschiebung.');
     if (direction !== 'wb' && direction !== 'bw') throw new Error('Pocket-Richtung ist ungültig.');
@@ -326,12 +324,11 @@ async function syncAfterManagerAction(interaction: ModalSubmitInteraction, guild
   title: string; amount: bigint; pocket?: EconomyPocket; targetDiscordId?: UserDiscordId; reason?: string;
 }) {
   try {
-    await postVirtualAccountArchive(interaction.client, {
-      guildId, nitradoConnId: connId, accountId, title: event.title,
+    await publishVirtualAccountActivityLive(interaction.client, guildId, connId, accountId, {
+      title: event.title,
       actorDiscordId: asUserDiscordId(interaction.user.id), targetDiscordId: event.targetDiscordId ?? null,
       amount: event.amount, pocket: event.pocket ?? null, status: '✅ Ausgeführt', reason: event.reason ?? null,
     });
-    await syncVirtualAccountProjection(interaction.client, guildId, connId, accountId);
   } catch (error) {
     logger.error(`Virtual-Account Discord-Sync nach Manageraktion fehlgeschlagen (${accountId}):`, error as Error);
     await interaction.followUp({ content: 'Die Geldbuchung ist erfolgreich gespeichert. Discord-Archiv/Live-Sync konnte noch nicht aktualisiert werden.', flags: MessageFlags.Ephemeral }).catch(() => undefined);

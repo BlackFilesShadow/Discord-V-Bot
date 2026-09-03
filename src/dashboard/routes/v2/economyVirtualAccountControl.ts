@@ -23,7 +23,8 @@ import {
   getVirtualManagerPanelSafe,
   refreshConfiguredVirtualManagerPanelSafe,
 } from '../../../modules/economy/virtualAccountManagerPanelSafety';
-import { retireVirtualAccountProjection, syncVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
+import { retireVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
+import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
 import { logAuditDb } from '../../../utils/logger';
 
 export const economyVirtualAccountControlRouter = Router({ mergeParams: true });
@@ -161,7 +162,7 @@ async function bestEffortProjection(req: Parameters<Parameters<typeof economyVir
   const client = tryGetDashboardClient();
   if (!client) return 'Bot ist nicht bereit; Discord-Projektion wurde noch nicht synchronisiert.';
   try {
-    await syncVirtualAccountProjection(client, scope.guildId, connId, accountId);
+    await syncVirtualAccountProjectionLive(client, scope.guildId, connId, accountId);
     return null;
   } catch (error) {
     return (error as Error).message;
@@ -300,7 +301,7 @@ economyVirtualAccountControlRouter.post('/control/accounts/:accountId/sync', req
   const client = tryGetDashboardClient();
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
   try {
-    await syncVirtualAccountProjection(client, scope.guildId, connId, String(req.params.accountId));
+    await syncVirtualAccountProjectionLive(client, scope.guildId, connId, String(req.params.accountId));
     res.json({ ok: true, account: await serializeAccount(scope.guildId, connId, String(req.params.accountId)) });
   } catch (error) { res.status(502).json({ error: (error as Error).message }); }
 });

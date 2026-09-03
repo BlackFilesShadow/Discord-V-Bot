@@ -21,8 +21,9 @@ import {
   type VirtualAccountMetadata,
 } from '../../../modules/economy/virtualAccountMetadata';
 import { asUserDiscordId } from '../../../types/scope';
-import { logAuditDb } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 import prisma from '../../../database/prisma';
+import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
 
 export const economyVirtualAccountsRouter = Router({ mergeParams: true });
 const MAX_AMOUNT = 1_000_000_000_000_000n;
@@ -339,7 +340,21 @@ economyVirtualAccountsRouter.post('/:accountId/payout', requireGuildPermission('
         booked: result.booked,
       },
     });
-    res.json({ ok: true, booked: result.booked, account: serializeAccount(result.account, await metadataFor(result.account)) });
+    let syncWarning: string | null = null;
+    if (result.booked) {
+      const client = tryGetDashboardClient();
+      if (client) {
+        try {
+          await syncVirtualAccountProjectionLive(client, scope.guildId, connId, result.account.id);
+        } catch (error) {
+          syncWarning = 'Discord-Anzeige konnte noch nicht synchronisiert werden.';
+          logger.error(`Virtual-Account Discord-Sync nach Legacy-Payout fehlgeschlagen (${result.account.id}):`, error as Error);
+        }
+      } else {
+        syncWarning = 'Bot nicht bereit; Discord-Anzeige wurde nicht synchronisiert.';
+      }
+    }
+    res.json({ ok: true, booked: result.booked, syncWarning, account: serializeAccount(result.account, await metadataFor(result.account)) });
   } catch (error) {
     res.status(400).json({ error: (error as Error).message });
   }
