@@ -46,7 +46,6 @@ function account(id: string, name: string, walletBalance: string, bankBalance = 
     textStyle: 'NORMAL',
     exchangePlayerUnits: null,
     exchangeAccountUnits: null,
-    accountEmoji: '🏦',
     accountPurpose: 'GENERAL',
     managers: [],
     projection: null,
