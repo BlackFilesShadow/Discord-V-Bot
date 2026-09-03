@@ -14,6 +14,7 @@ jest.mock('../../src/modules/economy/repository', () => ({ getConfig: jest.fn() 
 jest.mock('../../src/modules/economy/virtualAccounts', () => ({ getVirtualAccountById: jest.fn() }));
 jest.mock('../../src/utils/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, logAudit: jest.fn() }));
 
+import { createHash } from 'node:crypto';
 import prisma from '../../src/database/prisma';
 import { tryGetDashboardClient } from '../../src/dashboard/clientRegistry';
 import { getMarketOrder } from '../../src/modules/economy/blackMarketOrder';
@@ -30,6 +31,13 @@ const NOW = new Date('2026-09-01T00:02:00.000Z');
 const GUILD_ID = '943456789012345678';
 const CONN_ID = 'c999999999999999999999999';
 let rawRows: any[] = [];
+
+function expectedReadyNonce(noticeId: string): string {
+  return createHash('sha256')
+    .update(`market-ready\u0000${noticeId}`)
+    .digest('hex')
+    .slice(0, 25);
+}
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -65,7 +73,7 @@ beforeEach(() => {
 });
 
 describe('Schwarzmarkt-Bestellung Ready-Outbox', () => {
-  it('claimed eine PENDING Notice, sendet genau eine Mention und markiert SENT mit einer Minute TTL', async () => {
+  it('claimed eine PENDING Notice, sendet genau eine deduplizierte Mention und markiert SENT mit einer Minute TTL', async () => {
     rawRows = [{ id: 'notice-1', orderId: 'order-1', guildId: GUILD_ID, nitradoConnId: CONN_ID, channelId: null, userDiscordId: 'u1', messageId: null, attempts: 0 }];
     const send = jest.fn().mockResolvedValue({ id: 'msg-ready' });
     const find = jest.fn().mockReturnValue(undefined);
@@ -77,9 +85,34 @@ describe('Schwarzmarkt-Bestellung Ready-Outbox', () => {
     await runMarketOrderReadyCleanupOnce(NOW);
 
     expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({
+      content: '<@u1>',
+      allowedMentions: { users: ['u1'] },
+      nonce: expectedReadyNonce('notice-1'),
+      enforceNonce: true,
+    }));
     expect(db.economyMarketOrderReadyNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'notice-1', orderId: 'order-1', status: 'SENDING' },
       data: expect.objectContaining({ status: 'SENT', messageId: 'msg-ready', deleteAt: new Date(NOW.getTime() + 60_000) }),
+    }));
+  });
+
+  it('reconciled einen bereits gesendeten Outbox-Marker ohne zweite Mention', async () => {
+    rawRows = [{ id: 'notice-recovered', orderId: 'order-1', guildId: GUILD_ID, nitradoConnId: CONN_ID, channelId: null, userDiscordId: 'u1', messageId: null, attempts: 1 }];
+    const send = jest.fn();
+    const existingMessage = { id: 'msg-existing', author: { id: 'bot-1' }, embeds: [{ footer: { text: 'V-Bot · Outbox:notice-recovered' } }] };
+    const recent = { find: jest.fn().mockReturnValue(existingMessage) };
+    getClient.mockReturnValue({
+      user: { id: 'bot-1' },
+      channels: { fetch: jest.fn().mockResolvedValue({ id: 'ready-1', type: 0, send, messages: { fetch: jest.fn().mockResolvedValue(recent) } }) },
+    });
+
+    await runMarketOrderReadyCleanupOnce(NOW);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(db.economyMarketOrderReadyNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'notice-recovered', orderId: 'order-1', status: 'SENDING' },
+      data: expect.objectContaining({ status: 'SENT', messageId: 'msg-existing' }),
     }));
   });
 
