@@ -8,6 +8,7 @@ test('custom account deletion is terminal while immutable history stays referent
   const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
   const route = read('src/dashboard/routes/v2/economyVirtualAccountControl.ts');
   const terminal = read('src/dashboard/routes/v2/economyVirtualAccountTerminalDeletion.ts');
+  const migration = read('prisma/migrations/20260903010000_virtual_account_terminal_deletion/migration.sql');
   const v2 = read('src/dashboard/routes/v2.ts');
   const ui = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
 
@@ -16,10 +17,21 @@ test('custom account deletion is terminal while immutable history stays referent
   expect(deletion).not.toContain('SET "bankBalance"=0');
   expect(deletion).not.toContain('SET "balance"=0');
   expect(deletion).not.toContain('CONTROL_DELETE_RESET');
-  expect(deletion).toContain('EconomyVirtualAccountDeleted');
+  expect(deletion).toContain('EconomyVirtualAccountHistoryIdentity');
+  expect(deletion).toContain("mode: 'HARD_DELETED'");
+  expect(deletion).not.toContain("mode: 'HISTORY_RETAINED'");
+  expect(deletion).not.toContain('EconomyVirtualAccountDeleted');
   expect(deletion).toContain("account.kind !== 'CUSTOM'");
-  expect(deletion).toContain("mode: 'HISTORY_RETAINED'");
-  expect(deletion).not.toContain("mode: 'CONTROL_HIDDEN'");
+  expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
+
+  expect(migration).toContain('CREATE TABLE "EconomyVirtualAccountHistoryIdentity"');
+  expect(migration).toContain('EconomyVirtualAccountEntry_history_identity_fkey');
+  expect(migration).toContain('LotteryRound_pot_history_identity_fkey');
+  expect(migration).toContain('EconomyMarketListing_vendor_history_identity_fkey');
+  expect(migration).toContain('EconomyMarketPurchase_vendor_history_identity_fkey');
+  expect(migration).toContain('EconomyMarketOrder_vendor_history_identity_fkey');
+  expect(migration).toContain('DROP TABLE "EconomyVirtualAccountControlHidden"');
+
   expect(terminal).toContain('!deletedIds.has(account.id)');
   expect(terminal).toContain('Gelöschte Konten können nicht wiederhergestellt werden.');
   expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter'))
