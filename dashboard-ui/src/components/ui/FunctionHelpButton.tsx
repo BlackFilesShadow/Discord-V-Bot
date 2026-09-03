@@ -16,7 +16,7 @@ export function FunctionHelpButton({ title, text }: FunctionHelpButtonProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border text-muted hover:border-accent/60 hover:text-accent focus-ring"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-warn/70 bg-warn/10 text-warn hover:border-warn hover:bg-warn/20 focus-ring"
         aria-label={`Hilfe zu ${title}`}
       >
         <CircleAlert className="h-4 w-4" aria-hidden="true" />

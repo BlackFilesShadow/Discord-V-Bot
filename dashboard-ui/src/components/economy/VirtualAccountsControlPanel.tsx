@@ -23,6 +23,7 @@ import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
+import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
 
 interface ProjectionState {
   channelId: string | null;
@@ -622,7 +623,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       <div className="grid gap-4 xl:grid-cols-2 mb-5">
         <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />Serverbank</p>
+            <div className="inline-flex items-center gap-1.5">
+              <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Landmark className="h-3.5 w-3.5" />Serverbank</p>
+              <FunctionHelpButton title="Serverbank" text={['Die Serverbank ist das zentrale CUSTOM-Konto dieses Slots.', 'Wallet und Bankreserve werden getrennt geführt. Guthaben wird bei keiner Aktion verworfen.']} />
+            </div>
             {treasury && <Badge variant="ok">aktiv</Badge>}
           </div>
           <p className="text-xs text-muted">Die Serverbank ist ein CUSTOM-Treasury-Konto mit eigenem Wallet + Bankreserve. Wird sie gelöscht, kann unmittelbar eine neue Serverbank angelegt werden; historische Buchungen bleiben erhalten.</p>
@@ -644,7 +648,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
         </div>
 
         <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
-          <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" />Management-Kanal</p>
+          <div className="inline-flex items-center gap-1.5">
+            <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><ShieldCheck className="h-3.5 w-3.5" />Management-Kanal</p>
+            <FunctionHelpButton title="Management-Kanal" text={['Dieser Discord-Kanal enthält das Panel für Kontoverwalter.', 'Nur zugewiesene Verwalter erhalten Zugriff und können ausschließlich ihre Konten bedienen.']} />
+          </div>
           <p className="text-xs text-muted">Kein Rollen-Zwang: V-Bot gibt nur den aktuell zugewiesenen Kontoverwaltern Zugriff und stellt vorbestehende User-Rechte beim Entfernen wieder her.</p>
           <Select
             value={effectiveManagerChannel}
@@ -662,7 +669,10 @@ export function VirtualAccountsControlPanel({ guildId, slot }: { guildId: string
       </div>
 
       <div className="rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3 mb-5">
-        <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" />Neues Konto</p>
+        <div className="inline-flex items-center gap-1.5">
+          <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" />Neues Konto</p>
+          <FunctionHelpButton title="Neues Konto" text={['Erstellt ein getrenntes CUSTOM-Konto für diesen Slot.', 'Der Ersteller bleibt automatisch Kontoverwalter; weitere Verwalter können vor dem Speichern ergänzt werden.']} />
+        </div>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm">
             <span className="text-muted">Kontoname</span>
@@ -864,7 +874,10 @@ function LegacyAdminPayout({
 
   return (
     <div className="mt-5 rounded-lg border border-border/60 bg-bg/40 p-3 space-y-3">
-      <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Admin-Auszahlung</p>
+      <div className="inline-flex items-center gap-1.5">
+        <p className="text-sm font-medium text-white inline-flex items-center gap-1.5"><Send className="h-3.5 w-3.5" />Admin-Auszahlung</p>
+        <FunctionHelpButton title="Admin-Auszahlung" text={['Bucht Guthaben atomar aus einem CUSTOM-Konto auf das Konto eines Discord-Mitglieds.', 'Quelle, Ziel und Betrag werden vor der Buchung geprüft; jede Auszahlung ist gegen Doppelausführung geschützt.']} />
+      </div>
       <p className="text-xs text-muted">Einmalige zentrale Admin-Auszahlung. Der Discord-User wird per Dropdown gewählt; intern wird die zugehörige User-GUID an den vorhandenen sicheren Buchungspfad übergeben. Die Begründung ist optional.</p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-sm">
