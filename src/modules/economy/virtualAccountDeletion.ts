@@ -104,7 +104,8 @@ export async function deleteUnusedVirtualAccount(args: {
       }
 
       // Serialize terminal deletion against the historical identity before checking
-      // active domain dependencies. This keeps the deletion snapshot authoritative.
+      // active domain dependencies. Database triggers on active domain rows acquire
+      // KEY SHARE on the same live account, closing create-vs-delete races.
       const identities = await raw.$queryRawUnsafe<Array<{ accountId: string; deletedAt: Date | null }>>(
         'SELECT "accountId", "deletedAt" FROM "EconomyVirtualAccountHistoryIdentity" WHERE "accountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
         args.accountId,
@@ -117,11 +118,13 @@ export async function deleteUnusedVirtualAccount(args: {
 
       const activeRefs = await raw.$queryRawUnsafe<Array<{ active: boolean }>>(
         `SELECT (
-          EXISTS(SELECT 1 FROM "LotteryRound" WHERE "potAccountId"=$1 AND "status" IN ('ACTIVE','DRAWING','REFUNDING') LIMIT 1)
-          OR EXISTS(SELECT 1 FROM "EconomyMarketListing" WHERE "vendorAccountId"=$1 AND "active"=TRUE LIMIT 1)
-          OR EXISTS(SELECT 1 FROM "EconomyMarketOrder" WHERE "vendorAccountId"=$1 AND "status"='OPEN'::"EconomyMarketOrderStatus" LIMIT 1)
+          EXISTS(SELECT 1 FROM "LotteryRound" WHERE "potAccountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status" IN ('ACTIVE','DRAWING','REFUNDING') LIMIT 1)
+          OR EXISTS(SELECT 1 FROM "EconomyMarketListing" WHERE "vendorAccountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "active"=TRUE LIMIT 1)
+          OR EXISTS(SELECT 1 FROM "EconomyMarketOrder" WHERE "vendorAccountId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"='OPEN'::"EconomyMarketOrderStatus" LIMIT 1)
         ) AS active`,
         args.accountId,
+        String(args.guildId),
+        String(args.nitradoConnId),
       );
       if (Boolean(activeRefs[0]?.active)) {
         throw new Error('Konto wird noch von einem aktiven Fachvorgang verwendet und kann nicht generisch gelöscht werden.');
