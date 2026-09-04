@@ -27,6 +27,16 @@ test.describe('Login-Seite (SPA-Smoke)', () => {
     await expect(page.getByTestId('session-expired-notice')).toHaveCount(0);
   });
 
+  test('zeigt bei einer normalen unauthentifizierten Session keine Ablaufmeldung', async ({ page }) => {
+    await page.route('**/api/me', (route) =>
+      route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),
+    );
+
+    await page.goto('/login');
+    await expect(page.getByRole('button', { name: /Discord/i })).toBeVisible();
+    await expect(page.getByTestId('session-expired-notice')).toHaveCount(0);
+  });
+
   test('hat lang-Attribut und dark-mode-Klasse (a11y/Theme-Smoke)', async ({ page }) => {
     await page.route('**/auth/status', (route) =>
       route.fulfill({ status: 401, contentType: 'application/json', body: '{}' }),

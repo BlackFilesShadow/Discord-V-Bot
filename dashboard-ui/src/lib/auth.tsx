@@ -17,6 +17,22 @@ interface AuthState {
 
 const AuthCtx = createContext<AuthState>({ user: null, loading: true, sessionExpired: false, refresh: async () => {} });
 const EXPIRED_SESSION_REDIRECT_DELAY_MS = 250;
+export const AUTHENTICATED_SESSION_STORAGE_KEY = 'vbot:authenticated-session';
+
+function hasAuthenticatedSessionMarker(): boolean {
+  try { return sessionStorage.getItem(AUTHENTICATED_SESSION_STORAGE_KEY) === '1'; }
+  catch { return false; }
+}
+
+function markAuthenticatedSession(): void {
+  try { sessionStorage.setItem(AUTHENTICATED_SESSION_STORAGE_KEY, '1'); }
+  catch { return; }
+}
+
+export function clearAuthenticatedSessionMarker(): void {
+  try { sessionStorage.removeItem(AUTHENTICATED_SESSION_STORAGE_KEY); }
+  catch { return; }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -29,6 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const data = await api.get<{ user: SessionUser }>('/api/me');
       setUser(data.user);
       setSessionExpired(false);
+      markAuthenticatedSession();
     } catch {
       setUser(null);
     } finally {
@@ -48,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let pendingRevalidation: Promise<void> | null = null;
     let expiryTimer: ReturnType<typeof setTimeout> | null = null;
     const onAuthExpired = () => {
+      if (!hasAuthenticatedSessionMarker()) return;
       if (pendingRevalidation) return;
       pendingRevalidation = api.get<{ user: SessionUser }>('/api/me')
         .then(data => {

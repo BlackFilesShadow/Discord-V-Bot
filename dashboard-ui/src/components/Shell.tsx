@@ -7,7 +7,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   ArrowLeft, LogOut, Menu, X, Command, Rows3, Rows2, Square, Palette,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth';
+import { clearAuthenticatedSessionMarker, useAuth } from '@/lib/auth';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
 import { useDevSession } from '@/lib/devSession';
@@ -79,6 +79,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
 
   async function logout(): Promise<void> {
     try { await fetch('/auth/logout', { method: 'POST', credentials: 'include' }); } catch { /* ignore */ }
+    clearAuthenticatedSessionMarker();
     window.location.href = '/login';
   }
 
