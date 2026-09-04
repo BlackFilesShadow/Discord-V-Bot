@@ -11,13 +11,9 @@ const lottery = read('src/modules/economy/lottery.ts');
 const market = read('src/modules/economy/blackMarket.ts');
 
 describe('Economy system-account manipulation boundary', () => {
-  test('generic dashboard archive and payout reject non-CUSTOM accounts before money mutation', () => {
+  test('generic dashboard payout rejects non-CUSTOM accounts before money mutation', () => {
     expect(route).toContain("if (account.kind !== 'CUSTOM')");
     expect(route).toContain('Systemkonten werden ausschliesslich durch ihre Fachfunktion verwaltet.');
-
-    const archiveRoute = route.slice(route.indexOf("post('/:accountId/archive'"), route.indexOf("post('/:accountId/payout'"));
-    expect(archiveRoute).toContain('await requireCustomAccount(scope.guildId, connId, String(req.params.accountId));');
-    expect(archiveRoute.indexOf('requireCustomAccount')).toBeLessThan(archiveRoute.indexOf('archiveVirtualAccount'));
 
     const payoutRoute = route.slice(route.indexOf("post('/:accountId/payout'"));
     expect(payoutRoute).toContain('await requireCustomAccount(scope.guildId, connId, String(req.params.accountId));');

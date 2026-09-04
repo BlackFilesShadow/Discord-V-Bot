@@ -10,16 +10,19 @@ describe('virtuelle Konten — Surface-Sicherheit', () => {
   const command = read('src/commands/dashboard/virtualAccounts.ts');
   const route = read('src/dashboard/routes/v2/economyVirtualAccounts.ts');
   const control = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
+  const terminal = read('src/dashboard/routes/v2/economyVirtualAccountTerminalDeletion.ts');
 
-  it('Dashboard verhindert Archivierung sichtbar bei Wallet- oder Bank-Restguthaben', () => {
-    expect(panel).toContain("BigInt(account.walletBalance) === 0n && BigInt(account.bankBalance) === 0n");
-    expect(panel).toContain('Archivieren erst bei Wallet=0 und Bank=0 möglich.');
+  it('Dashboard haelt Systemkonten aus der generischen Kontenverwaltung heraus', () => {
+    expect(panel).toContain("account.kind !== 'LOTTERY_POT'");
+    expect(panel).toContain("account.kind !== 'MARKET_VENDOR'");
     expect(control).toContain("account.kind !== 'CUSTOM'");
   });
 
   it('Dashboard bietet Wallet, Bank, Waehrung, Manager, Live-Sync und den gemeinsamen Konten-Workspace', () => {
-    expect(workspace).toContain('<VirtualAccountsControlPanel guildId={guildId} slot={slot} />');
-    expect(workspace).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} />');
+    expect(workspace).toContain('<VirtualAccountsControlPanel');
+    expect(workspace).toContain('guildId={guildId}');
+    expect(workspace).toContain('slot={slot}');
+    expect(workspace).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} onConfigureServerBank={() => setOpenTreasuryConfiguration(true)} />');
     expect(workspace).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
     expect(workspace).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
     expect(panel).toContain('walletBalance');
@@ -55,7 +58,9 @@ describe('virtuelle Konten — Surface-Sicherheit', () => {
   it('Dashboard-Mutationen bleiben economy.manage-geschuetzt', () => {
     const legacyManage = (route.match(/requireGuildPermission\('economy\.manage'\)/g) ?? []).length;
     const controlManage = (control.match(/requireGuildPermission\('economy\.manage'\)/g) ?? []).length;
-    expect(legacyManage).toBeGreaterThanOrEqual(3);
+    const terminalManage = (terminal.match(/requireGuildPermission\('economy\.manage'\)/g) ?? []).length;
+    expect(legacyManage).toBeGreaterThanOrEqual(2);
     expect(controlManage).toBeGreaterThanOrEqual(4);
+    expect(terminalManage).toBeGreaterThanOrEqual(5);
   });
 });

@@ -68,21 +68,21 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(routes).toContain("requireGuildPermission('economy.manage')");
   });
 
-  it('loescht nur leere CUSTOM-Livekonten und erhaelt Historie ueber eine getrennte Identity', () => {
+  it('loescht CUSTOM-Livekonten terminal und erhaelt Historie ueber eine getrennte Identity', () => {
     expect(control).toContain("delete('/control/accounts/:accountId'");
     expect(control).toContain("requireGuildPermission('economy.manage')");
     expect(control).toContain('deleteUnusedVirtualAccount');
     expect(deletion).toContain("account.kind !== 'CUSTOM'");
     expect(deletion).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(deletion).toContain('FOR UPDATE');
-    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
-    expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+    expect(deletion).toContain("finance.accountPurpose === 'BANK_TREASURY'");
+    expect(deletion).toContain('Konto wird noch von einem aktiven Fachvorgang verwendet und kann nicht generisch gelöscht werden.');
     expect(deletion).not.toContain('CONTROL_DELETE_RESET');
     expect(deletion).not.toContain('UPDATE "EconomyVirtualAccountFinance" SET "bankBalance"=0');
     expect(deletion).not.toContain('UPDATE "EconomyVirtualAccount" SET "balance"=0');
     expect(deletion).toContain('EconomyVirtualAccountHistoryIdentity');
     expect(deletion).toContain('DELETE FROM "EconomyVirtualAccount"');
-    expect(deletion).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
+    expect(deletion).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"`);
     expect(deletion).toContain("candidate.code === '23503'");
     expect(deletion).not.toContain('retainZeroBalanceCustomHistory');
     expect(terminalMigration).toContain('EconomyVirtualAccountEntry_history_identity_fkey');
@@ -94,11 +94,7 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(terminalMigration).toContain('DROP TABLE "EconomyVirtualAccountControlHidden"');
   });
 
-  it('verbietet weiterhin Archivierung mit Restguthaben und schuetzt Systemkonten in der Archiv-Fachfunktion', () => {
-    expect(service).toContain('current.balance !== 0n || finance.bankBalance !== 0n');
-    expect(service).toContain('Konto-Finanzprofil fehlt; Archivierung wird sicherheitshalber abgebrochen.');
-    expect(service).toContain('Wallet und Bank muessen 0 sein.');
-    expect(service).toContain("' FOR UPDATE'");
+  it('schuetzt Systemkonten vor der generischen Kontenverwaltung', () => {
     expect(controlSafety).toContain("account.kind !== 'CUSTOM'");
   });
 

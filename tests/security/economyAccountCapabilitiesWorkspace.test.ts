@@ -19,7 +19,7 @@ describe('Economy account capability workspace', () => {
     expect(safety).toContain("economyVirtualAccountTreasurySafetyRouter.get('/control/accounts'");
     expect(safety).toContain("accounts.filter(account => account.kind === 'CUSTOM')");
     expect(safety).toContain("economyVirtualAccountTreasurySafetyRouter.get('/control/system-accounts'");
-    expect(safety).toContain("accounts.filter(account => account.kind !== 'CUSTOM')");
+    expect(safety).toContain("account.kind !== 'CUSTOM' || finance.accountPurpose === 'BANK_TREASURY'");
     expect(safety).toContain('listHiddenVirtualAccountIds');
   });
 

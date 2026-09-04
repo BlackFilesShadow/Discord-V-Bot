@@ -24,12 +24,12 @@ test('Datenschutz und Nutzungsbedingungen sind ohne Login direkt erreichbar', as
   await expect(page.getByText(/virtuelle Konten/i).first()).toBeVisible();
 });
 
-test('Login verlinkt die rechtlichen Seiten vor Discord OAuth', async ({ page }) => {
+test('Login zeigt vor Discord OAuth keine zusaetzlichen Rechtstexte', async ({ page }) => {
   await unauthenticated(page);
   await page.goto('/login');
-  await expect(page.getByRole('link', { name: 'Datenschutz' })).toHaveAttribute('href', '/legal/privacy');
-  await expect(page.getByRole('link', { name: 'Nutzungsbedingungen' })).toHaveAttribute('href', '/legal/terms');
-  await expect(page.getByText(/identify, guilds und email/)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Datenschutz' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Nutzungsbedingungen' })).toHaveCount(0);
+  await expect(page.getByText(/identify, guilds und email/)).toHaveCount(0);
 });
 
 for (const width of [320, 360, 375, 390, 430] as const) {

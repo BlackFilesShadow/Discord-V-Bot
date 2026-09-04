@@ -15,15 +15,19 @@ export const LINKING_CHANNEL_PERMISSIONS = [
 ] as const;
 
 export function buildLinkingInfoEmbed(serverLabel: string): EmbedBuilder {
+  const steps = [
+    '1. Spiele zunächst mindestens **5 Minuten** auf dem DayZ-Server.',
+    '2. Nutze `/link` und gib deinen **exakten PSN-/Xbox-/DayZ-Spielernamen** ein.',
+    '3. V-Bot prüft automatisch die bereits erfassten ADM-/Session-Daten und die dazugehörige DayZ-GUID.',
+    '4. Ist die Mindestspielzeit erreicht und Name/GUID sind noch frei, wird dein Discord-Account automatisch verknüpft.',
+  ];
+
   return vEmbed(0x5865F2)
     .setTitle('🔗 Discord mit DayZ verbinden')
     .setDescription(
       `Verbinde deinen Discord-Account mit deinem Spieler auf **${serverLabel}**.\n\n`
       + '**So funktioniert es:**\n'
-      + '1. Spiele zunächst mindestens **5 Minuten** auf dem DayZ-Server.\n'
-      + '2. Nutze `/link` und gib deinen **exakten PSN-/Xbox-/DayZ-Spielernamen** ein.\n'
-      + '3. V-Bot prüft automatisch die bereits erfassten ADM-/Session-Daten und die dazugehörige DayZ-GUID.\n'
-      + '4. Ist die Mindestspielzeit erreicht und Name/GUID sind noch frei, wird dein Discord-Account automatisch verknüpft.\n\n'
+      + `${steps.join('\n')}\n\n`
       + 'Danach können aktivierte Spielzeit- und Server-Rewards eindeutig deinem Discord-Account gutgeschrieben werden.',
     )
     .addFields({

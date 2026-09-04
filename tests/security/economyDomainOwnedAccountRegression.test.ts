@@ -23,7 +23,6 @@ describe('Economy domain-owned account hardening', () => {
     expect(terminalRoute).toContain("put('/control/accounts/:accountId'");
     expect(terminalRoute).toContain("delete('/control/accounts/:accountId'");
     expect(terminalRoute).toContain("post('/control/accounts/:accountId/sync'");
-    expect(terminalRoute).toContain("post('/:accountId/archive'");
     expect(terminalRoute).toContain("post('/:accountId/payout'");
   });
 

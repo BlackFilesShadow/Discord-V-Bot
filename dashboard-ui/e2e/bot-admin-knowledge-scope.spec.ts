@@ -173,7 +173,7 @@ test.describe('AI-10/11 Bot-Admin Knowledge Scope + Provenance', () => {
     await page.getByRole('button', { name: 'Neu', exact: true }).click();
 
     const controls = [
-      page.getByRole('button', { name: 'AI-Wissensbank' }),
+      page.getByRole('button', { name: 'AI-Wissensbank', exact: true }),
       page.getByRole('combobox', { name: 'Discord-Server für Wissensbank' }),
       page.getByRole('combobox', { name: 'Knowledge-Scope filtern' }),
       page.getByRole('combobox', { name: 'Knowledge Quellentyp' }),

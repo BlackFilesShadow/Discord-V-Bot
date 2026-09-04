@@ -56,11 +56,11 @@ test('ready delivery has retry state, lease and one-minute cleanup', () => {
   expect(runtime).toContain('FOR UPDATE SKIP LOCKED');
   expect(runtime).toContain("status: 'PENDING'");
   expect(runtime).toContain("status: 'SENT'");
-  expect(runtime).toContain('READY_TTL_MS = 60_000');
+  expect(runtime).toContain('READY_TTL_MS = 20 * 60_000');
 });
 
 test('original pending order embed is edited to completed after close', () => {
   expect(source).toContain('async function editOriginalOrderMessage');
-  expect(source).toContain(".setTitle('✅ Bestellung abgeschlossen')");
-  expect(source).toContain("value: '**Bestellung abgeschlossen**'");
+  expect(source).toContain(".setTitle('✅ Bestellung beendet')");
+  expect(source).toContain("value: '**Bestellung beendet**'");
 });

@@ -91,9 +91,9 @@ describe('Nitrado-1Z final production coupling matrix', () => {
   it('runs whitelist, ban expiry/reconciliation, token validation, ADM and feed workers in one symmetric runtime lifecycle', () => {
     for (const start of [
       'startNitradoJobWorker()', 'startBanExpiryRuntime()', 'startBanReconciliationCron()',
-      'startTokenValidationCron(client)', 'startWhitelistSyncCron()', 'startAdmLiveSyncCron()',
+      'startTokenValidationCron(client)', 'startWhitelistSyncCron(client)', 'startAdmLiveSyncCron()',
       'startAdmPostProcessCron()', 'startGameplayFeedRuntime()',
-    ]) expect(runtime).toContain(start);
+    ]) expect(runtime).toContain(start === 'startBanReconciliationCron()' ? 'startBanReconciliationCron(client)' : start);
     for (const stop of [
       'stopGameplayFeedRuntime()', 'stopAdmPostProcessCron()', 'stopAdmLiveSyncCron()',
       'stopWhitelistSyncCron()', 'stopTokenValidationCron()', 'stopBanReconciliationCron()',

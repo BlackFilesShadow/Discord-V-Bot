@@ -8,7 +8,8 @@ describe('Whitelist-Info-Embed', () => {
   );
 
   it('erklaert Whitelist und verweist auf den produktiven Antrag-Command ohne technische Slot-/ID-Sprache', () => {
-    expect(source).toContain("statusTitle('INFO', 'Whitelist')");
+    expect(source).toContain("vEmbed(Colors.Info)");
+    expect(source).toContain(".setTitle('Whitelist')");
     expect(source).toContain('`/whitelist-antrag`');
     expect(source).toContain('Trage deinen **exakten Spielernamen** ein');
     expect(source).toContain('wähle den gewünschten Server über seinen Alias aus');

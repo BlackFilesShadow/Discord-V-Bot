@@ -175,7 +175,7 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Mitglied suchen...' }).click();
     await page.getByRole('option', { name: /Alice/ }).click();
     await page.locator('select').selectOption('economy.view');
-    await page.getByRole('button', { name: 'Erteilen' }).click();
+    await page.getByRole('button', { name: 'Erteilen', exact: true }).click();
 
     await expect(page.getByText('Alice', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Berechtigung economy.view von Alice entziehen/ })).toBeVisible();
@@ -185,7 +185,7 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Rolle waehlen...' }).click();
     await page.getByRole('option', { name: /Moderation/ }).click();
     await page.locator('select').selectOption('whitelist.view');
-    await page.getByRole('button', { name: 'Erteilen' }).click();
+    await page.getByRole('button', { name: 'Erteilen', exact: true }).click();
 
     await expect(page.getByText('@Moderation', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Berechtigung whitelist.view von Rolle @Moderation entziehen/ })).toBeVisible();
@@ -204,13 +204,13 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Mitglied suchen...' }).click();
     await page.getByRole('option', { name: /Alice/ }).click();
     await page.locator('select').selectOption('economy.view');
-    await page.getByRole('button', { name: 'Erteilen' }).click();
+    await page.getByRole('button', { name: 'Erteilen', exact: true }).click();
 
     await page.getByRole('button', { name: 'Rolle' }).click();
     await page.getByRole('button', { name: 'Rolle waehlen...' }).click();
     await page.getByRole('option', { name: /Moderation/ }).click();
     await page.locator('select').selectOption('tickets.manage');
-    await page.getByRole('button', { name: 'Erteilen' }).click();
+    await page.getByRole('button', { name: 'Erteilen', exact: true }).click();
 
     page.on('dialog', dialog => void dialog.accept());
     const aliceCard = page.getByText('Alice', { exact: true }).locator('xpath=ancestor::*[contains(@class,"card-premium")][1]');
@@ -233,7 +233,7 @@ test.describe('Permissions authenticated owner contract', () => {
     await page.getByRole('button', { name: 'Mitglied suchen...' }).click();
     await page.getByRole('option', { name: /Alice/ }).click();
     await page.locator('select').selectOption('economy.view');
-    await page.getByRole('button', { name: 'Erteilen' }).click();
+    await page.getByRole('button', { name: 'Erteilen', exact: true }).click();
 
     await expect(page.getByText('Permission-Konflikt. Bitte erneut versuchen.').first()).toBeVisible();
     await expect(page.getByText('Mitglieder (0)', { exact: true })).toBeVisible();
@@ -267,7 +267,7 @@ test.describe('Permissions mobile matrix', () => {
       await page.setViewportSize(viewport);
       await openPermissions(page);
 
-      await expect(page.getByRole('button', { name: 'Erteilen' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Erteilen', exact: true })).toBeVisible();
       await expect(page.getByText('Mitglieder (0)', { exact: true })).toBeVisible();
       await expect(page.getByText('Rollen (0)', { exact: true })).toBeVisible();
       await expectNoHorizontalOverflow(page);

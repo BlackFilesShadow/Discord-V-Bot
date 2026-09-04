@@ -51,22 +51,26 @@ const matrix = JSON.parse(read('docs/dashboard-button-matrix.json')) as ButtonMa
 // button matrix and its inventoriedMainSha.
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
+const CURRENT_SYSTEM_ACCOUNTS_OVERVIEW = 'dashboard-ui/src/components/economy/SystemAccountsOverview.tsx';
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
 const CURRENT_BLACK_MARKET_DISCORD_SETTINGS = 'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx';
 const CURRENT_NITRADO_DRIFT_BANNER = 'dashboard-ui/src/components/NitradoDriftBanner.tsx';
 const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_SERVER_SLOT = 'dashboard-ui/src/pages/ServerSlot.tsx';
+const CURRENT_FUNCTION_HELP_BUTTON = 'dashboard-ui/src/components/ui/FunctionHelpButton.tsx';
 
 const REVIEWED_POST_STAGE_FILES = new Set([
   HISTORICAL_VIRTUAL_ACCOUNT_PANEL,
   CURRENT_VIRTUAL_ACCOUNT_PANEL,
+  CURRENT_SYSTEM_ACCOUNTS_OVERVIEW,
   CURRENT_BLACK_MARKET_PANEL,
   CURRENT_BLACK_MARKET_DISCORD_SETTINGS,
   CURRENT_NITRADO_DRIFT_BANNER,
   CURRENT_KILLFEED_PANEL,
   CURRENT_GOODBYE_PANEL,
   CURRENT_SERVER_SLOT,
+  CURRENT_FUNCTION_HELP_BUTTON,
 ]);
 
 function resolveUiModule(from: string, specifier: string): string | null {
@@ -290,5 +294,11 @@ describe('stage 24 dashboard button matrix architecture', () => {
     expect(button).toContain('min-h-11');
     expect(theme).toMatch(/@media \(max-width: 767px\)[\s\S]*button,[\s\S]*min-height: 44px/);
     expect(global).toMatch(/@media \(pointer: coarse\)[\s\S]*button,[\s\S]*min-height: 44px/);
+  });
+
+  test('global function-help button stays explicit and form-safe', () => {
+    const help = read(CURRENT_FUNCTION_HELP_BUTTON);
+    expect(help).toContain('type="button"');
+    expect(help).toContain('aria-label={`Hilfe zu ${title}`}');
   });
 });

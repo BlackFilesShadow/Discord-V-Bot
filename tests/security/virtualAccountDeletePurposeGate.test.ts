@@ -7,9 +7,9 @@ describe('virtual account delete purpose gate', () => {
   it('allows terminal generic deletion only for empty CUSTOM accounts', () => {
     expect(source).toContain("if (account.kind !== 'CUSTOM')");
     expect(source).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
-    expect(source).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
-    expect(source).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
-    expect(source).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind" AND "balance"=0`);
+    expect(source).toContain("finance.accountPurpose === 'BANK_TREASURY'");
+    expect(source).toContain('Konto wird noch von einem aktiven Fachvorgang verwendet und kann nicht generisch gelöscht werden.');
+    expect(source).toContain(String.raw`AND "kind"=\'CUSTOM\'::"EconomyVirtualAccountKind"`);
   });
 
   it('never frees a system-account purpose through the generic delete path', () => {

@@ -21,7 +21,7 @@ describe('Nitrado-1N whitelist reconcile connection-lock gate', () => {
     const exactGuild = sync.indexOf('guildId: candidate.guildId,', exactId);
     const active = sync.indexOf("status: 'ACTIVE',", exactGuild);
     const whitelistEnabled = sync.indexOf('serverSettings: { some: { whitelistActive: true } },', active);
-    const reconcileFresh = sync.indexOf('await reconcileLockedConnection(fresh);', whitelistEnabled);
+    const reconcileFresh = sync.indexOf('await reconcileLockedConnection(fresh, client);', whitelistEnabled);
 
     expect(reconcile).toBeGreaterThanOrEqual(0);
     expect(acquire).toBeGreaterThan(reconcile);
@@ -55,7 +55,7 @@ describe('Nitrado-1N whitelist reconcile connection-lock gate', () => {
     const reconcile = sync.indexOf('async function reconcileConnection(candidate:');
     const tryBlock = sync.indexOf('try {', reconcile);
     const fresh = sync.indexOf('const fresh = await prisma.nitradoConnection.findFirst({', tryBlock);
-    const work = sync.indexOf('await reconcileLockedConnection(fresh);', fresh);
+    const work = sync.indexOf('await reconcileLockedConnection(fresh, client);', fresh);
     const finallyBlock = sync.indexOf('} finally {', work);
     const release = sync.indexOf('await lock.release();', finallyBlock);
 

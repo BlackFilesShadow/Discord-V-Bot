@@ -10,7 +10,7 @@ describe('Nitrado-1X ban reconciliation architecture', () => {
     const fn = source.indexOf('async function reconcileConnection');
     const lock = source.indexOf('tryAcquireNitradoConfigMutationLock(candidate.id)', fn);
     const fresh = source.indexOf('prisma.nitradoConnection.findFirst', lock);
-    const work = source.indexOf('await reconcileLockedConnection(fresh, now)', fresh);
+    const work = source.indexOf('await reconcileLockedConnection(fresh, now, client)', fresh);
 
     expect(fn).toBeGreaterThanOrEqual(0);
     expect(lock).toBeGreaterThan(fn);
@@ -58,7 +58,7 @@ describe('Nitrado-1X ban reconciliation architecture', () => {
   it('is wired into central Nitrado runtime start and stop', () => {
     const runtime = read('src/modules/nitrado/runtime.ts');
     expect(runtime).toContain("from '../bans/banReconciliation'");
-    expect(runtime).toContain('startBanReconciliationCron();');
+    expect(runtime).toContain('startBanReconciliationCron(client);');
     expect(runtime).toContain('stopBanReconciliationCron();');
   });
 });

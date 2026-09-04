@@ -27,8 +27,6 @@ describe('Dashboard Economy Slot Scope', () => {
 
   it('gibt den Slot an alle Economy-Unterpanels weiter und trennt nur deren UI auf Page 2', () => {
     expect(slot).toContain('<VirtualAccountsPanel guildId={guildId} slot={slot} />');
-    expect(slot).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
-    expect(slot).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
     expect(slot).toContain('<CasinoTable guildId={guildId} slot={slot} />');
     expect(slot).toContain("tab === 'virtual-accounts'");
     expect(slot).toContain("tab === 'bank-casino'");
@@ -36,7 +34,7 @@ describe('Dashboard Economy Slot Scope', () => {
   });
 
   it('isoliert virtuelle Konten inklusive Control, Managerpanel, Audit und Payout pro Slot', () => {
-    expect(virtualAccounts).toContain("{ guildId, slot }: { guildId: string; slot: string }");
+    expect(virtualAccounts).toContain('export function VirtualAccountsControlPanel({ guildId, slot, openTreasuryConfiguration = false, onTreasuryConfigurationOpened }');
     expect(virtualAccounts).toContain("['economy-virtual-control', guildId, slot]");
     expect(virtualAccounts).toContain('/control/accounts?slot=${encodeURIComponent(slot)}');
     expect(virtualAccounts).toContain("['economy-virtual-manager-panel', guildId, slot]");

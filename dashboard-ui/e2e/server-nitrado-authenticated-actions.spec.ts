@@ -171,7 +171,7 @@ test.describe('Nitrado authenticated owner CRUD contract', () => {
     await page.getByLabel('Alias (1-40 Zeichen)').fill('  Chernarus  ');
     await page.getByLabel('Nitrado API-Token').fill(TOKEN);
     await page.getByLabel('Nitrado Service-ID (optional)').fill('12345');
-    await page.getByRole('button', { name: 'Slot anlegen' }).click();
+    await page.getByRole('button', { name: 'Slot anlegen', exact: true }).click();
 
     await expect.poll(() => stub.writes().length).toBe(1);
     const [write] = stub.writes();

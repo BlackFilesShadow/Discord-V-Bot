@@ -233,7 +233,7 @@ for (const width of [320, 360, 375, 390, 430] as const) {
     await noPageOverflow(page);
 
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
-    await expect(page.getByRole('heading', { name: 'Bank' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Bank', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Bank speichern', exact: true })).toBeVisible();
     await noPageOverflow(page);
   });

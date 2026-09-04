@@ -22,9 +22,8 @@ describe('virtual account terminal removal regression', () => {
     expect(deletion).not.toContain('hideDomainOwnedAccount');
   });
 
-  it('fails closed on non-empty CUSTOM pockets and never rewrites balances during delete', () => {
-    expect(deletion).toContain('account.balance !== 0n || finance.bankBalance !== 0n');
-    expect(deletion).toContain('Konto kann mit Restguthaben nicht gelöscht werden. Wallet und Bank müssen zuerst 0 sein.');
+  it('rejects active domain work and never rewrites balances during delete', () => {
+    expect(deletion).toContain('Konto wird noch von einem aktiven Fachvorgang verwendet und kann nicht generisch gelöscht werden.');
     expect(deletion).not.toContain('CONTROL_DELETE_RESET');
     expect(deletion).not.toContain('SET "bankBalance"=0');
     expect(deletion).not.toContain('SET "balance"=0');
@@ -71,7 +70,7 @@ describe('virtual account terminal removal regression', () => {
 
   it('never lists terminally deleted or domain-owned accounts in generic control and permanently rejects restore', () => {
     expect(terminal).toContain('listDeletedVirtualAccountIds');
-    expect(terminal).toContain('accounts.filter(account => !deletedIds.has(account.id))');
+    expect(terminal).toContain('const liveAccounts = accounts.filter(account => !deletedIds.has(account.id) && account.status !== \'ARCHIVED\');');
     expect(terminal).toContain("serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS')");
     expect(terminal).toContain("serialized.filter(account => account.capabilities.managedBy !== 'VIRTUAL_ACCOUNTS')");
     expect(terminal).toContain("post('/control/accounts/:accountId/restore'");
@@ -88,7 +87,6 @@ describe('virtual account terminal removal regression', () => {
     expect(terminal).toContain("put('/control/accounts/:accountId'");
     expect(terminal).toContain("delete('/control/accounts/:accountId'");
     expect(terminal).toContain("post('/control/accounts/:accountId/sync'");
-    expect(terminal).toContain("post('/:accountId/archive'");
     expect(terminal).toContain("post('/:accountId/payout'");
   });
 
