@@ -24,6 +24,7 @@ test.describe('Login-Seite (SPA-Smoke)', () => {
     await expect(page.getByRole('button', { name: /Discord/i })).toBeVisible();
     // Heading sichtbar (verwendet \u2011 = non-breaking hyphen)
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+    await expect(page.getByTestId('session-expired-notice')).toHaveCount(0);
   });
 
   test('hat lang-Attribut und dark-mode-Klasse (a11y/Theme-Smoke)', async ({ page }) => {

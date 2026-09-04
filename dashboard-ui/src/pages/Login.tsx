@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
-import { LegalFooter } from '@/components/LegalFooter';
 
 export default function Login() {
   const { user, loading, sessionExpired } = useAuth();
@@ -47,12 +46,8 @@ export default function Login() {
             <Button onClick={startOAuth} className="w-full" size="lg" disabled={loading}>
               {loading ? 'Pruefe Session…' : 'Mit Discord anmelden'}
             </Button>
-            <p className="text-xs text-muted mt-6 leading-5">
-              Für die Anmeldung verarbeitet V-Bot Discord-Konto- und Serverdaten über die Scopes identify, guilds und email. Details zu Daten, Sessions und Löschung findest du in der Datenschutzerklärung. Mit der Nutzung gelten außerdem die Nutzungsbedingungen.
-            </p>
           </div>
         </div>
-        <LegalFooter className="mt-4" />
       </div>
     </div>
   );

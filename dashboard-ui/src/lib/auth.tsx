@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, AUTH_EXPIRED_EVENT } from './api';
+import { api, ApiError, AUTH_EXPIRED_EVENT } from './api';
 
 export interface SessionUser {
   discordId: string;
@@ -56,7 +56,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(data.user);
           setSessionExpired(false);
         })
-        .catch(() => {
+        .catch((error: unknown) => {
+          if (!(error instanceof ApiError) || error.status !== 401) return;
           // Die Mutation, welche das 401 ausgelöst hat, muss ihren lokalen
           // Fehlerzustand noch einmal rendern, bevor Protected zur Login-Seite
           // weiterleitet.
