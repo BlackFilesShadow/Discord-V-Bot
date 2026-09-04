@@ -230,7 +230,12 @@ economyVirtualAccountTreasurySafetyRouter.get('/control/system-accounts', requir
     listVirtualAccounts(scope.guildId, connId, true),
     listHiddenVirtualAccountIds({ guildId: scope.guildId, nitradoConnId: connId }),
   ]);
-  const systemAccounts = accounts.filter(account => account.kind !== 'CUSTOM');
+  const systemAccounts = (await Promise.all(accounts.map(async account => ({
+    account,
+    finance: await ensureVirtualAccountFinance(scope.guildId, connId, account.id),
+  })))).filter(({ account, finance }) => (
+    account.kind !== 'CUSTOM' || finance.accountPurpose === 'BANK_TREASURY'
+  )).map(({ account }) => account);
   res.json({
     accounts: await Promise.all(systemAccounts.map(account => serializeAccount(scope.guildId, connId, account.id, hiddenIds.has(account.id)))),
   });

@@ -425,8 +425,8 @@ async function editOriginalOrderMessage(client: Client, order: MarketOrderView):
   const channel = await client.channels.fetch(order.orderChannelId).catch(() => null); if (!channel || channel.type !== ChannelType.GuildText) return;
   const message = await channel.messages.fetch(order.orderMessageId).catch(() => null); if (!message) return;
   const existing = message.embeds[0]?.toJSON();
-  const fields = (existing?.fields ?? []).map(field => field.name === 'Status' ? { ...field, value: '**Bestellung abgeschlossen**' } : field);
-  await message.edit({ embeds: [new EmbedBuilder(existing).setColor(0x22c55e).setTitle('✅ Bestellung abgeschlossen').setFields(fields).setFooter({ text: 'V-Bot · Schwarzmarkt · Bestellung abgeschlossen' }).setTimestamp(order.closedAt ?? new Date())], components: [], allowedMentions: { parse: [] } });
+  const fields = (existing?.fields ?? []).map(field => field.name === 'Status' ? { ...field, value: '**Bestellung beendet**' } : field);
+  await message.edit({ embeds: [new EmbedBuilder(existing).setColor(0x22c55e).setTitle('✅ Bestellung beendet').setFields(fields).setFooter({ text: 'V-Bot · Schwarzmarkt · Verschwindet nach 1 Minute' }).setTimestamp(order.closedAt ?? new Date())], components: [], allowedMentions: { parse: [] } });
 }
 
 export async function handleMarketOrderManagerSelect(interaction: StringSelectMenuInteraction): Promise<void> {
@@ -443,7 +443,7 @@ export async function handleMarketOrderManagerSelect(interaction: StringSelectMe
     await interaction.deferUpdate();
     const result = await closeMarketOrder({ guildId, nitradoConnId, orderId, vendorAccountId: order.vendorAccountId, actorDiscordId: asUserDiscordId(interaction.user.id) });
     if (result.changed) await editOriginalOrderMessage(interaction.client, result.order).catch(error => logger.warn(`Bestell-Embed Abschluss-Update fehlgeschlagen (${orderId}): ${(error as Error).message}`));
-    await interaction.editReply({ embeds: [vEmbed(0x22c55e).setTitle('Bestellung abgeschlossen').setDescription(`Bestellung von <@${order.userDiscordId}> wurde abgeschlossen. Die Fertig-Benachrichtigung ist persistent eingeplant und wird retry-sicher zugestellt.`)], components: [], allowedMentions: { users: [order.userDiscordId] } });
+    await interaction.editReply({ embeds: [vEmbed(0x22c55e).setTitle('Bestellung beendet').setDescription(`Bestellung von <@${order.userDiscordId}> wurde beendet. Die Fertig-Benachrichtigung ist persistent eingeplant und wird retry-sicher zugestellt.`)], components: [], allowedMentions: { users: [order.userDiscordId] } });
   } catch (error) {
     if (interaction.deferred || interaction.replied) await interaction.editReply({ embeds: [vEmbed(0xe74c3c).setTitle('Bestellung konnte nicht abgeschlossen werden').setDescription((error as Error).message)], components: [], allowedMentions: { parse: [] } }).catch(() => undefined);
     else await replyError(interaction, (error as Error).message);

@@ -23,6 +23,8 @@ model EconomyMarketOrder {
   status            EconomyMarketOrderStatus @default(OPEN)
   orderChannelId    String?
   orderMessageId    String?
+  orderMessageDeleteAt DateTime?
+  orderMessageDeletedAt DateTime?
   createdAt         DateTime                 @default(now())
   closedAt          DateTime?
   closedByDiscordId String?
@@ -35,7 +37,7 @@ model EconomyMarketOrder {
 
 // Persistenter Outbox- und Cleanup-Datensatz fuer die "Bestellung bereit"-
 // Mention. PENDING/SENDING werden retryfaehig versendet; SENT wird nach der
-// festgelegten Minute restart-sicher geloescht.
+// festgelegten Aufbewahrungszeit restart-sicher geloescht.
 model EconomyMarketOrderReadyNotice {
   id            String                              @id @default(cuid())
   orderId       String                              @unique

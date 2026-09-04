@@ -50,7 +50,7 @@ function account(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function stubVirtualWorkspace(page: Page) {
+async function stubVirtualWorkspace(page: Page, { treasuryExists = false }: { treasuryExists?: boolean } = {}) {
   const mutations: Mutation[] = [];
 
   await page.route('**/api/me', route => json(route, {
@@ -105,7 +105,32 @@ async function stubVirtualWorkspace(page: Page) {
     });
 
     const base = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts`;
-    if (path === `${base}/control/accounts` && method === 'GET') return json(route, { accounts: [account()] });
+    if (path === `${base}/control/accounts` && method === 'GET') return json(route, {
+      accounts: [
+        account(),
+        ...(treasuryExists ? [account({ id: TREASURY_ID, name: 'Serverbank', accountPurpose: 'BANK_TREASURY', channelId: null, archiveChannelId: null, projection: null })] : []),
+      ],
+    });
+    if (path === `${base}/control/system-accounts` && method === 'GET') return json(route, {
+      accounts: treasuryExists ? [account({
+        id: TREASURY_ID,
+        name: 'Serverbank',
+        accountPurpose: 'BANK_TREASURY',
+        channelId: null,
+        archiveChannelId: null,
+        projection: null,
+        capabilities: {
+          managedBy: 'SERVER_BANK',
+          canConfigure: true,
+          canDelete: false,
+          canArchive: false,
+          canPayout: false,
+          canSyncProjection: false,
+          canRestore: false,
+          readOnlyReason: null,
+        },
+      })] : [],
+    });
     if (path === `${base}/control/members` && method === 'GET') return json(route, { members: [] });
     if (path === `${base}/members` && method === 'GET') return json(route, { members: [] });
     if (path === `${base}/control/manager-panel` && method === 'GET') return json(route, { panel: null });
@@ -160,6 +185,14 @@ async function openWorkspace(page: Page): Promise<void> {
 }
 
 test.describe('Virtual account treasury + manager authenticated contracts', () => {
+  test('Systemkonto-Link öffnet die sichtbare Serverbank-Konfiguration', async ({ page }) => {
+    await stubVirtualWorkspace(page, { treasuryExists: true });
+    await openWorkspace(page);
+
+    await page.getByRole('button', { name: 'Serverbank konfigurieren', exact: true }).click();
+    await expect(page.getByTestId('serverbank-configuration')).toBeVisible();
+  });
+
   test('Serverbank und Management-Kanal bleiben exakt Guild+Slot-gescoped', async ({ page }) => {
     const mutations = await stubVirtualWorkspace(page);
     await openWorkspace(page);

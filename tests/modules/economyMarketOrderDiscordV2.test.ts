@@ -79,7 +79,7 @@ test('strict order replay validates stored order and exact persisted transfer pa
   expect(service).toContain("sourceRef: `market-order:${fingerprint}`");
 });
 
-test('pending and ready embeds expose the requested lifecycle and one-minute deletion', () => {
+test('pending and ready embeds expose the requested lifecycle and retention', () => {
   const interactions = read('src/modules/economy/blackMarketOrderInteractionsV2.ts');
   const runtime = read('src/modules/economy/marketOrderReadyRuntime.ts');
 
@@ -92,7 +92,10 @@ test('pending and ready embeds expose the requested lifecycle and one-minute del
   expect(runtime).toContain("{ name: 'Händler'");
   expect(runtime).toContain("{ name: 'Bestellung'");
   expect(runtime).toContain("{ name: 'Artikel'");
-  expect(runtime).toContain('READY_TTL_MS = 60_000');
+  expect(interactions).toContain("setTitle('✅ Bestellung beendet')");
+  expect(interactions).toContain("value: '**Bestellung beendet**'");
+  expect(runtime).toContain('READY_TTL_MS = 20 * 60_000');
+  expect(runtime).toContain('orderMessageDeleteAt');
 });
 
 test('vendor catalog renders compact article, price and currency without N+1 vendor lookup', () => {

@@ -279,7 +279,7 @@ export async function scheduleMarketOrderReadyNotice(args: {
 }): Promise<void> {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const now = args.now ?? new Date();
-  const deleteAt = new Date(now.getTime() + 60_000);
+  const deleteAt = new Date(now.getTime() + 20 * 60_000);
   await prisma.$executeRawUnsafe(
     `INSERT INTO "EconomyMarketOrderReadyNotice" ("id","orderId","guildId","nitradoConnId","channelId","userDiscordId","messageId","status","attempts","sentAt","deleteAt","createdAt")
      VALUES ($1,$2,$3,$4,$5,$6,$7,'SENT',1,$8,$9,CURRENT_TIMESTAMP)
@@ -320,7 +320,7 @@ export async function closeMarketOrder(args: {
       );
     }
     const closed = await raw.$executeRawUnsafe(
-      'UPDATE "EconomyMarketOrder" SET "status"=\'CLOSED\', "closedAt"=CURRENT_TIMESTAMP, "closedByDiscordId"=$4 WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"=\'OPEN\'',
+      'UPDATE "EconomyMarketOrder" SET "status"=\'CLOSED\', "closedAt"=CURRENT_TIMESTAMP, "closedByDiscordId"=$4, "orderMessageDeleteAt"=CURRENT_TIMESTAMP + INTERVAL \'1 minute\' WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"=\'OPEN\'',
       args.orderId, String(args.guildId), String(args.nitradoConnId), String(args.actorDiscordId),
     );
     if (closed !== 1) throw new Error('Bestellung wurde parallel veraendert. Bitte neu laden.');

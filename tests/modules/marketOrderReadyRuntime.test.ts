@@ -1,6 +1,8 @@
 jest.mock('../../src/database/prisma', () => {
   const prisma: Record<string, any> = {
     $transaction: jest.fn(),
+    $queryRawUnsafe: jest.fn(),
+    $executeRawUnsafe: jest.fn(),
     economyMarketDiscordProjection: { findUnique: jest.fn() },
     economyMarketListing: { findMany: jest.fn() },
     economyMarketOrderReadyNotice: { findMany: jest.fn(), updateMany: jest.fn() },
@@ -54,6 +56,8 @@ beforeEach(() => {
   db.economyMarketListing.findMany.mockResolvedValue([{ id: 'listing-1', name: 'M4A1' }]);
   db.economyMarketOrderReadyNotice.findMany.mockResolvedValue([]);
   db.economyMarketOrderReadyNotice.updateMany.mockResolvedValue({ count: 1 });
+  db.$queryRawUnsafe.mockResolvedValue([]);
+  db.$executeRawUnsafe.mockResolvedValue(1);
   getOrder.mockResolvedValue({
     id: 'order-1',
     status: 'CLOSED',
@@ -73,7 +77,7 @@ beforeEach(() => {
 });
 
 describe('Schwarzmarkt-Bestellung Ready-Outbox', () => {
-  it('claimed eine PENDING Notice, sendet genau eine deduplizierte Mention und markiert SENT mit einer Minute TTL', async () => {
+  it('claimed eine PENDING Notice, sendet genau eine deduplizierte Mention und markiert SENT mit 20 Minuten TTL', async () => {
     rawRows = [{ id: 'notice-1', orderId: 'order-1', guildId: GUILD_ID, nitradoConnId: CONN_ID, channelId: null, userDiscordId: 'u1', messageId: null, attempts: 0 }];
     const send = jest.fn().mockResolvedValue({ id: 'msg-ready' });
     const find = jest.fn().mockReturnValue(undefined);
@@ -93,7 +97,7 @@ describe('Schwarzmarkt-Bestellung Ready-Outbox', () => {
     }));
     expect(db.economyMarketOrderReadyNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'notice-1', orderId: 'order-1', status: 'SENDING' },
-      data: expect.objectContaining({ status: 'SENT', messageId: 'msg-ready', deleteAt: new Date(NOW.getTime() + 60_000) }),
+      data: expect.objectContaining({ status: 'SENT', messageId: 'msg-ready', deleteAt: new Date(NOW.getTime() + 20 * 60_000) }),
     }));
   });
 

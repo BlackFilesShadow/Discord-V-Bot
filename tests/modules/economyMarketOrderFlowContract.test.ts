@@ -8,10 +8,11 @@ const readyRuntime = fs.readFileSync(path.join(root, 'src/modules/economy/market
 
 test('production order flow keeps paid -> pending -> manager close -> retryable ready lifecycle', () => {
   expect(interactions).toContain("setTitle('📦 Bestellung ausstehend')");
-  expect(interactions).toContain(".setTitle('✅ Bestellung abgeschlossen')");
+  expect(interactions).toContain(".setTitle('✅ Bestellung beendet')");
   expect(interactions).toContain('postOrderChannelEmbed(interaction.client');
   expect(interactions).toContain('editOriginalOrderMessage');
   expect(orderService).toContain("'PENDING',0,CURRENT_TIMESTAMP");
   expect(readyRuntime).toContain(".setTitle('✅ Bestellung bereit')");
-  expect(readyRuntime).toContain('Löschung nach 1 Minute');
+  expect(orderService).toContain("INTERVAL \\'1 minute\\'");
+  expect(readyRuntime).toContain('Löschung nach 20 Minuten');
 });

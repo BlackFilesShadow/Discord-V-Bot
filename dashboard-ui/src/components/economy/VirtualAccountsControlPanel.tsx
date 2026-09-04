@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Banknote,
@@ -456,6 +456,7 @@ export function VirtualAccountsControlPanel({ guildId, slot, openTreasuryConfigu
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [managerChannel, setManagerChannel] = useState<string>('');
   const [managerChannelTouched, setManagerChannelTouched] = useState(false);
+  const treasuryEditorRef = useRef<HTMLDivElement>(null);
 
   const accounts = useQuery({
     queryKey: ['economy-virtual-control', guildId, slot],
@@ -498,6 +499,11 @@ export function VirtualAccountsControlPanel({ guildId, slot, openTreasuryConfigu
     setEditingId(treasury.id);
     onTreasuryConfigurationOpened?.();
   }, [onTreasuryConfigurationOpened, openTreasuryConfiguration, treasury]);
+
+  useEffect(() => {
+    if (editingId !== treasury?.id) return;
+    treasuryEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [editingId, treasury?.id]);
 
   const createValidation = useMemo(() => {
     if (!createDraft.name.trim() || createDraft.name.trim().length > 80) return 'Kontoname muss 1..80 Zeichen enthalten.';
@@ -633,7 +639,9 @@ export function VirtualAccountsControlPanel({ guildId, slot, openTreasuryConfigu
                 <Button size="sm" variant="outline" onClick={() => setEditingId(editingId === treasury.id ? null : treasury.id)}>Konfigurieren</Button>
               </div>
               {editingId === treasury.id && (
-                <AccountEditor account={treasury} guildId={guildId} slot={slot} channels={textChannels} onDone={setMessage} />
+                <div ref={treasuryEditorRef} data-testid="serverbank-configuration">
+                  <AccountEditor account={treasury} guildId={guildId} slot={slot} channels={textChannels} onDone={setMessage} />
+                </div>
               )}
             </>
           ) : (

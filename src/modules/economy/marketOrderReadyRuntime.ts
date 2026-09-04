@@ -1,7 +1,8 @@
 /**
  * Restart-sichere Ready-Outbox + Cleanup fuer Schwarzmarkt-Bestellungen.
  * PENDING/SENDING werden mit kurzer Lease verarbeitet; Fehler landen mit
- * Backoff wieder in PENDING. SENT-Nachrichten werden nach einer Minute geloescht.
+ * Backoff wieder in PENDING. Fertig-Nachrichten bleiben 20 Minuten sichtbar;
+ * abgeschlossene Bestell-Embeds werden nach einer Minute geloescht.
  */
 import { createHash } from 'node:crypto';
 import { ChannelType } from 'discord.js';
@@ -17,7 +18,7 @@ import { getVirtualAccountById } from './virtualAccounts';
 const POLL_INTERVAL_MS = 5_000;
 const BATCH = 50;
 const LEASE_MS = 30_000;
-const READY_TTL_MS = 60_000;
+const READY_TTL_MS = 20 * 60_000;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -31,6 +32,14 @@ interface ReadyNoticeRow {
   userDiscordId: string;
   messageId: string | null;
   attempts: number;
+}
+
+interface ClosedOrderMessageRow {
+  id: string;
+  guildId: string;
+  nitradoConnId: string;
+  orderChannelId: string;
+  orderMessageId: string;
 }
 
 function isUnknownDiscordResource(error: unknown, code: number): boolean {
@@ -148,7 +157,7 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
         { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** (${cfg.currencyName})`, inline: false },
         { name: 'Artikel', value: itemLines.join('\n').slice(0, 1024), inline: false },
       )
-      .setFooter({ text: `V-Bot · Schwarzmarkt · Löschung nach 1 Minute · ${marker}` })
+      .setFooter({ text: `V-Bot · Schwarzmarkt · Löschung nach 20 Minuten · ${marker}` })
       .setTimestamp(now);
     const sent = await channel.send({
       content: `<@${notice.userDiscordId}>`,
@@ -207,6 +216,23 @@ async function deleteNoticeMessage(notice: ReadyNoticeRow): Promise<void> {
   });
 }
 
+async function deleteClosedOrderMessage(order: ClosedOrderMessageRow): Promise<void> {
+  const client = tryGetDashboardClient();
+  if (!client) throw new Error('Discord-Client nicht verfuegbar.');
+  const channel = await client.channels.fetch(order.orderChannelId).catch(error => {
+    if (isUnknownDiscordResource(error, 10003)) return null;
+    throw error;
+  });
+  if (!channel || channel.type !== ChannelType.GuildText) return;
+  const message = await channel.messages.fetch(order.orderMessageId).catch(error => {
+    if (isUnknownDiscordResource(error, 10008)) return null;
+    throw error;
+  });
+  if (message) await message.delete().catch(error => {
+    if (!isUnknownDiscordResource(error, 10008)) throw error;
+  });
+}
+
 export async function runMarketOrderReadyCleanupOnce(now = new Date()): Promise<void> {
   if (running) return;
   running = true;
@@ -237,6 +263,29 @@ export async function runMarketOrderReadyCleanupOnce(now = new Date()): Promise<
         });
       } catch (error) {
         logger.warn(`Schwarzmarkt-Bestellung-Ready-Cleanup fehlgeschlagen fuer ${notice.id}: ${(error as Error).message}`);
+      }
+    }
+
+    const dueOrderMessages = await prisma.$queryRawUnsafe<ClosedOrderMessageRow[]>(
+      `SELECT "id","guildId","nitradoConnId","orderChannelId","orderMessageId"
+       FROM "EconomyMarketOrder"
+       WHERE "status"='CLOSED' AND "orderMessageDeletedAt" IS NULL
+         AND "orderMessageDeleteAt" <= $1
+         AND "orderChannelId" IS NOT NULL AND "orderMessageId" IS NOT NULL
+       ORDER BY "orderMessageDeleteAt" ASC LIMIT $2`,
+      now,
+      BATCH,
+    );
+    for (const order of dueOrderMessages) {
+      try {
+        await deleteClosedOrderMessage(order);
+        await prisma.$executeRawUnsafe(
+          'UPDATE "EconomyMarketOrder" SET "orderMessageDeletedAt"=$2 WHERE "id"=$1 AND "orderMessageDeletedAt" IS NULL',
+          order.id,
+          now,
+        );
+      } catch (error) {
+        logger.warn(`Schwarzmarkt-Bestell-Embed-Cleanup fehlgeschlagen fuer ${order.id}: ${(error as Error).message}`);
       }
     }
   } catch (error) {
