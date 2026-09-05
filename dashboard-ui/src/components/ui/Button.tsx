@@ -17,10 +17,15 @@ const variants = {
   danger: 'btn-premium-danger',
 };
 
+// Keep every visual variant on the shared 44px minimum-control contract.
+// The old md:min-h-0 override collapsed small desktop buttons to 32px. The
+// minimum height is deliberately kept on the primitive itself because the
+// dashboard architecture/mobile contract relies on it in addition to the
+// coarse-pointer CSS safety net.
 const sizes = {
-  sm: 'h-8 px-3 text-xs',
-  md: 'h-10 px-4 text-sm',
-  lg: 'h-12 px-6 text-base',
+  sm: 'h-11 min-w-11 px-3.5 text-sm',
+  md: 'h-11 min-w-11 px-4 text-sm',
+  lg: 'h-12 min-w-12 px-6 text-base',
 };
 
 export function Button({
@@ -39,8 +44,8 @@ export function Button({
       type={type}
       disabled={disabled || loading}
       className={twMerge(
-        'inline-flex min-h-11 md:min-h-0 items-center justify-center gap-2 rounded-md font-medium',
-        'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none',
+        'inline-flex min-h-11 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium',
+        'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-none',
         'focus-ring',
         variants[variant],
         sizes[size],
