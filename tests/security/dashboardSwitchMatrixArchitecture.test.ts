@@ -126,6 +126,7 @@ describe('stage 25 dashboard switch matrix architecture', () => {
       'dashboard-ui/src/components/ReactionEmbedsTab.tsx',
       'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx',
       'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx',
+      'dashboard-ui/src/components/radar/ZoneEditor.tsx',
     ]);
     const files = new Set(switches().map(entry => entry.file));
     expect([...files].sort()).toEqual([...reviewed].sort());
