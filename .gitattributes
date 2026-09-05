@@ -43,3 +43,4 @@
 *.7z binary
 *.pdf binary
 *.node binary
+dashboard-ui/public/radar/maps/livonia.png filter=lfs diff=lfs merge=lfs -text

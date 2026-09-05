@@ -10,6 +10,7 @@ import { startAdmPostProcessCron, stopAdmPostProcessCron } from './adm/admPostPr
 import { startPermaOnlyCron, stopPermaOnlyCron } from './permaOnlyCron';
 import { startWhitelistSyncCron, stopWhitelistSyncCron } from '../whitelist/whitelistSyncCron';
 import { startGameplayFeedRuntime, stopGameplayFeedRuntime } from '../gameplayFeeds/runtime';
+import { startRadarRuntime, stopRadarRuntime } from '../radar/runtime';
 import { startBankInterestCron, stopBankInterestCron } from '../economy/interestCron';
 import { startBanExpiryRuntime, stopBanExpiryRuntime } from '../bans/expiryRuntime';
 import { startBanReconciliationCron, stopBanReconciliationCron } from '../bans/banReconciliation';
@@ -39,6 +40,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startAdmLiveSyncCron();
   startAdmPostProcessCron();
   startGameplayFeedRuntime();
+  startRadarRuntime();
 
   startBankInterestCron();
 
@@ -50,6 +52,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
 
       stopBankInterestCron();
       stopGameplayFeedRuntime();
+      stopRadarRuntime();
       stopAdmPostProcessCron();
       stopAdmLiveSyncCron();
       stopWhitelistSyncCron();

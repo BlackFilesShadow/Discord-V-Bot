@@ -17,7 +17,7 @@ import { resolveDelegatedPermissionContext } from '../../modules/permissions/acc
 import { logger } from '../../utils/logger';
 import { tryGetDashboardClient } from '../clientRegistry';
 import type { SocketSessionShape } from './index';
-import { serverRoomName } from './emitter';
+import { radarRoomName, serverRoomName } from './emitter';
 
 interface JoinPayload {
   guildId?: unknown;
@@ -39,6 +39,12 @@ export function serverFeedPermissionAllows(isOwner: boolean, permissions: readon
   if (isOwner) return true;
   const set = new Set(permissions);
   return set.has('killfeed.view') || set.has('killfeed.manage') || set.has('dashboard.access');
+}
+
+export function radarPermissionAllows(isOwner: boolean, permissions: readonly string[]): boolean {
+  if (isOwner) return true;
+  const set = new Set(permissions);
+  return set.has('radar.view') || set.has('radar.manage') || set.has('dashboard.access');
 }
 
 export interface GuildAccessResult {
@@ -148,6 +154,35 @@ export function registerGuildNamespace(io: IOServer): void {
       }
     });
 
+    socket.on('join.radar', async (payload: JoinServerPayload) => {
+      const gid = payload?.guildId;
+      const connId = payload?.nitradoConnId;
+      if (!isSnowflake(gid) || !isConnectionId(connId)) {
+        socket.emit('join.radar.error', { error: 'guildId/nitradoConnId ungueltig' });
+        return;
+      }
+      try {
+        const access = await resolveGuildAccess(gid, userDiscordId);
+        if (!radarPermissionAllows(access.isOwner, access.permissions)) {
+          socket.emit('join.radar.error', { guildId: gid, nitradoConnId: connId, error: 'radar.view erforderlich' });
+          return;
+        }
+        const conn = await prisma.nitradoConnection.findFirst({
+          where: { id: connId, guildId: gid, status: 'ACTIVE', nitradoServerId: { not: null }, slot: { gte: 1, lte: 4 } },
+          select: { id: true },
+        });
+        if (!conn) {
+          socket.emit('join.radar.error', { guildId: gid, nitradoConnId: connId, error: 'Gameserver nicht aktiv/gebunden' });
+          return;
+        }
+        await socket.join(radarRoomName(gid, connId));
+        socket.emit('join.radar.ok', { guildId: gid, nitradoConnId: connId });
+      } catch (error) {
+        logger.error('Radar-Room-Join-Fehler:', error as Error);
+        socket.emit('join.radar.error', { guildId: gid, nitradoConnId: connId, error: 'internal' });
+      }
+    });
+
     socket.on('leave', async (payload: JoinPayload) => {
       const gid = payload?.guildId;
       if (!isSnowflake(gid)) return;
@@ -161,6 +196,14 @@ export function registerGuildNamespace(io: IOServer): void {
       if (!isSnowflake(gid) || !isConnectionId(connId)) return;
       await socket.leave(serverRoomName(gid, connId));
       socket.emit('leave.server.ok', { guildId: gid, nitradoConnId: connId });
+    });
+
+    socket.on('leave.radar', async (payload: JoinServerPayload) => {
+      const gid = payload?.guildId;
+      const connId = payload?.nitradoConnId;
+      if (!isSnowflake(gid) || !isConnectionId(connId)) return;
+      await socket.leave(radarRoomName(gid, connId));
+      socket.emit('leave.radar.ok', { guildId: gid, nitradoConnId: connId });
     });
 
     socket.on('disconnect', reason => {

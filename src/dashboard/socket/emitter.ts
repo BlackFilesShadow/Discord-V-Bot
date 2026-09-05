@@ -56,6 +56,8 @@ export type GuildEvent =
   | { type: 'tickets.changed'; payload: { guildId: string; templateId?: string } }
   | { type: 'killfeed.changed'; payload: { guildId: string; configId?: string; kind?: 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG' } }
   | { type: 'killfeed.event'; payload: { guildId: string; configId: string; category: string; victimName: string; shooterName?: string; weapon?: string; distance?: number; occurredAt: string } }
+  | { type: 'radar.changed'; payload: { guildId: string; nitradoConnId: string; zoneId?: string } }
+  | { type: 'radar.zone.deleted'; payload: { guildId: string; nitradoConnId: string; zoneId: string } }
   | { type: 'welcome.changed'; payload: { guildId: string } }
   | { type: 'goodbye.changed'; payload: { guildId: string } }
   | { type: 'embed.changed'; payload: { guildId: string; embedId?: string } }
@@ -82,6 +84,10 @@ export function serverRoomName(guildId: string, nitradoConnId: string): string {
   return `gs:${guildId}:${nitradoConnId}`;
 }
 
+export function radarRoomName(guildId: string, nitradoConnId: string): string {
+  return `gr:${guildId}:${nitradoConnId}`;
+}
+
 export function emitGuildEvent(guildId: string, event: GuildEvent): void {
   if (!io) return;
   io.of('/guild').to(`g:${guildId}`).emit(event.type, event.payload);
@@ -92,6 +98,25 @@ export function emitServerGameplayEvent(event: ServerGameplayEventPayload): void
   io.of('/guild')
     .to(serverRoomName(event.guildId, event.nitradoConnId))
     .emit('server.gameplay.event', event);
+}
+
+export interface RadarSocketEventPayload {
+  guildId: string;
+  nitradoConnId: string;
+  zoneId: string;
+  radarEventId: string;
+  functionKey: string;
+  actorName: string | null;
+  x: number;
+  y: number;
+  altitude: number | null;
+  admOccurredAt: string | null;
+}
+
+export function emitRadarEvent(event: RadarSocketEventPayload): void {
+  if (!io) return;
+  const type = event.functionKey === 'PLAYER_DETECTION' ? 'radar.player.detected' : 'radar.zone.event';
+  io.of('/guild').to(radarRoomName(event.guildId, event.nitradoConnId)).emit(type, event);
 }
 
 export interface DevLogLine {

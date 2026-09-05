@@ -44,6 +44,7 @@ import { factionsRouter } from './v2/factions';
 import { ticketsRouter } from './v2/tickets';
 import { casinoRouter } from './v2/casino';
 import { killfeedRouter } from './v2/killfeed';
+import { radarRouter } from './v2/radar';
 import { welcomeRouter } from './v2/welcome';
 import { goodbyeRouter } from './v2/goodbye';
 import { leaveCleanupRouter } from './v2/leaveCleanup';
@@ -119,6 +120,7 @@ v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', requireCasinoDashboardAccess, requireSafeDashboardEconomyScope, casinoRouter);
 
 v2Router.use('/guilds/:guildId/killfeed', killfeedRouter);
+v2Router.use('/guilds/:guildId/radar', radarRouter);
 v2Router.use('/guilds/:guildId/welcome', welcomeRouter);
 v2Router.use('/guilds/:guildId/goodbye', goodbyeRouter);
 v2Router.use('/guilds/:guildId/leave-cleanup', leaveCleanupRouter);

@@ -106,6 +106,7 @@ export async function startDashboard(
         // Eng gefasst: nur same-origin + die explizite Dashboard-Origin als
         // ws/wss (fuer Socket.IO). KEINE generischen ws:/wss:-Wildcards mehr.
         'connect-src': ["'self'", ...dashboardWebsocketOrigins()],
+        'worker-src': ["'self'"],
         'frame-ancestors': ["'none'"],
         'report-uri': ['/api/csp-report'],
       },

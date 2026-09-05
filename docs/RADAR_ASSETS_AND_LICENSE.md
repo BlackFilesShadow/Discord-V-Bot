@@ -1,0 +1,9 @@
+# Radar Assets and License
+
+Die Basemaps stammen aus `BohemiaInteractive/DayZ-Central-Economy` und werden fuer den nichtkommerziellen DayZ-Betrieb von V-Bot als lokale, checksum-gepruefte PNG-Quellen fuer MapLibre ausgeliefert. V-Bot verwendet keine iZurvive-Kartenbilder und hotlinkt keine externen Kartenquellen.
+
+`npm run radar:assets` laedt ausschliesslich den im Manifest gepinnten Commit und lehnt jedes Bild mit abweichender SHA-256-Pruefsumme ab. `npm run radar:assets:verify` ist der Deploy-Gate fuer bereits bereitgestellte Dateien unter `dashboard-ui/public/radar/maps`. PMTiles darf erst als nachgelagerte Optimierung hinzukommen, wenn ein reproduzierbarer, im Build-Image vorhandener Encoder dieselben Quellen und Pruefsummen verarbeitet.
+
+Die genaue Quelle, Commit-ID, SHA-256-Pruefsummen, Bilddimensionen und der Terrainstatus stehen in [asset-manifest.json](../scripts/radar/asset-manifest.json). Das Quellrepository steht unter der Arma and DayZ Public License Share Alike (ADPL-SA). Jede Weitergabe abgeleiteter Tile-Daten muss Attribution enthalten, nichtkommerziell und auf Arma/DayZ beschraenkt bleiben sowie unter derselben Lizenz erfolgen.
+
+Livonias `elevation.tga` wird vor einer Terrain-Nutzung mit `ts-node scripts/radar/analyze-livonia-elevation.ts <datei>` geprüft. Das bestätigte Dateiformat genügt nicht als Höhenbeleg: `terrainAvailable` bleibt `false`, bis Skalierung und Orientierung gegen belastbare Geländereferenzen validiert sind. Erst dann darf eine browserseitige Raster-DEM-Konfiguration ausgeliefert und per Screenshot sowie Canvas-Pixelprüfung freigegeben werden. Chernarus und Sakhal besitzen in Version 1 bewusst kein synthetisches Terrain.

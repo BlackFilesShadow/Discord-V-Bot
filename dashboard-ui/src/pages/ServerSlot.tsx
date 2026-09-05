@@ -15,10 +15,11 @@ import { useToast } from '@/lib/toast';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
+import { ZoneRadarTab } from '@/components/radar/ZoneRadarTab';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
-import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair } from 'lucide-react';
+import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair, MapPinned } from 'lucide-react';
 
-type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed';
+type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
 
 const SLOT_HELP: Record<Tab, { title: string; text: string[] }> = {
   settings: {
@@ -48,6 +49,10 @@ const SLOT_HELP: Record<Tab, { title: string; text: string[] }> = {
   killfeed: {
     title: 'Killfeed und ADM',
     text: ['Hier richtest du Meldungen aus den DayZ-Serverprotokollen ein.', 'Wähle, welche Ereignisse in Discord erscheinen sollen und in welchen Kanal sie gesendet werden.'],
+  },
+  radar: {
+    title: 'Zonenradar',
+    text: ['Das Radar prüft ausschließlich durch ADM belegte Positionen gegen Zonen der aktiven Karte dieses Slots.', 'Spieler-Erkennung und Rollen-Ping bleiben getrennte Einstellungen.'],
   },
 };
 
@@ -118,6 +123,7 @@ export default function ServerSlot() {
       || t === 'virtual-accounts'
       || t === 'bank-casino'
       || t === 'killfeed'
+      || t === 'radar'
     ) return t;
     return 'settings';
   })();
@@ -198,6 +204,7 @@ export default function ServerSlot() {
     ['virtual-accounts', 'Virtuelle Konten', Banknote],
     ['bank-casino', 'Bank und Casino Funktionen', Dice5],
     ['killfeed', 'Killfeed & ADM', Crosshair],
+    ['radar', 'Zonenradar', MapPinned],
   ] as const;
   const tabs = [...pageOneTabs, ...pageTwoTabs] as const;
 
@@ -327,6 +334,18 @@ export default function ServerSlot() {
               <p className="text-muted text-sm">Dir fehlt <code>killfeed.manage</code> oder <code>dashboard.access</code>.</p>
             </Card>
           )
+        )}
+
+        {tab === 'radar' && guildId && slot && (
+          <ZoneRadarTab
+            guildId={guildId}
+            slot={slot}
+            canManage={Boolean(
+              dashboardMeta.data?.isOwner
+              || dashboardMeta.data?.permissions.includes('dashboard.access')
+              || dashboardMeta.data?.permissions.includes('radar.manage'),
+            )}
+          />
         )}
       </div>
     </Shell>

@@ -25,6 +25,7 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
       ['settings', guildId], ['dashboard', guildId], ['nitrado', guildId],
       ['factions', guildId], ['whitelist', guildId], ['permissions', guildId],
       ['tickets', guildId], ['economy', guildId],
+      ['radar-config', guildId], ['radar-zones', guildId],
     ];
 
     const handlers: Record<string, (...args: unknown[]) => void> = {
@@ -39,6 +40,8 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
       'reactionEmbed.changed': () => invalidate([['reaction-embeds', guildId]]),
       'feed.changed':         () => invalidate([['feeds', guildId]]),
       'translatedPost.changed': () => invalidate([['translated-posts', guildId]]),
+      'radar.changed':          () => invalidate([['radar-config', guildId], ['radar-zones', guildId]]),
+      'radar.zone.deleted':     () => invalidate([['radar-zones', guildId]]),
     };
 
     // Beim Reconnect: Room re-joinen UND alle Caches invalidieren

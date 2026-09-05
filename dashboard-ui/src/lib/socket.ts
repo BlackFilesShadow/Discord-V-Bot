@@ -28,3 +28,8 @@ export function joinGuildRoom(guildId: string): void {
   const s = getGuildSocket();
   s.emit('join', { guildId });
 }
+
+export function joinRadarRoom(guildId: string, nitradoConnId: string): void {
+  const s = getGuildSocket();
+  s.emit('join.radar', { guildId, nitradoConnId });
+}

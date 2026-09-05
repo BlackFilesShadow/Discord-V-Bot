@@ -59,6 +59,8 @@ const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_SERVER_SLOT = 'dashboard-ui/src/pages/ServerSlot.tsx';
 const CURRENT_FUNCTION_HELP_BUTTON = 'dashboard-ui/src/components/ui/FunctionHelpButton.tsx';
+const CURRENT_RADAR_TAB = 'dashboard-ui/src/components/radar/ZoneRadarTab.tsx';
+const CURRENT_RADAR_EDITOR = 'dashboard-ui/src/components/radar/ZoneEditor.tsx';
 
 const REVIEWED_POST_STAGE_FILES = new Set([
   HISTORICAL_VIRTUAL_ACCOUNT_PANEL,
@@ -71,6 +73,8 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_GOODBYE_PANEL,
   CURRENT_SERVER_SLOT,
   CURRENT_FUNCTION_HELP_BUTTON,
+  CURRENT_RADAR_TAB,
+  CURRENT_RADAR_EDITOR,
 ]);
 
 function resolveUiModule(from: string, specifier: string): string | null {
@@ -227,6 +231,8 @@ describe('stage 24 dashboard button matrix architecture', () => {
       button.file === CURRENT_VIRTUAL_ACCOUNT_PANEL
       || button.file === CURRENT_BLACK_MARKET_PANEL
       || button.file === CURRENT_BLACK_MARKET_DISCORD_SETTINGS
+      || button.file === CURRENT_RADAR_TAB
+      || button.file === CURRENT_RADAR_EDITOR
       || (button.file === CURRENT_SERVER_SLOT && button.component === 'ServerSlot')
     ));
     expect(reviewed.length).toBeGreaterThan(10);

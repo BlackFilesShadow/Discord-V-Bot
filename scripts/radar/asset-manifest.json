@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "https://github.com/BohemiaInteractive/DayZ-Central-Economy",
+    "commit": "9a21bb9f5fb9c62a7ce2761402196091588133e6",
+    "license": "ADPL-SA",
+    "commercialUseConfirmed": false
+  },
+  "maps": {
+    "CHERNARUS": {
+      "worldMeters": { "width": 15360, "height": 15360 },
+      "basemap": {
+        "path": "CETool/ChernarusPlus/map.png",
+        "sha256": "803d15eb0204c3d0db66fee8342a7d5e12e302139d429c2e72cefa31ca5ef067",
+        "width": 2048,
+        "height": 2048
+      },
+      "terrainAvailable": false
+    },
+    "LIVONIA": {
+      "worldMeters": { "width": 12800, "height": 12800 },
+      "basemap": {
+        "path": "CETool/Enoch/map.png",
+        "sha256": "92ffcdc3323355e9936b8919264927ab12ab37d403705ead8aceea93a2657b7d",
+        "width": 4096,
+        "height": 4096
+      },
+      "elevation": {
+        "path": "CETool/Enoch/layers/elevation.tga",
+        "sha256": "a110bec94ff85409b66851b70035584c36da25f71533ac610df24f45e5557f68",
+        "width": 4096,
+        "height": 4096,
+        "encoding": "RLE_GRAY_8_TOP_ORIGIN",
+        "meterScaleVerified": false
+      },
+      "terrainAvailable": false
+    },
+    "SAKHAL": {
+      "worldMeters": { "width": 15360, "height": 15360 },
+      "basemap": {
+        "path": "CETool/Sakhal/map.png",
+        "sha256": "8aa36ce362a91ba096656ad0f6c0749aaa5955ff19961643b839fac77bb40918",
+        "width": 2048,
+        "height": 2048
+      },
+      "terrainAvailable": false
+    }
+  }
+}

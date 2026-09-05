@@ -70,6 +70,8 @@ export const PERMISSION_SCOPES = [
   'casino.manage',
   'killfeed.view',
   'killfeed.manage',
+  'radar.view',
+  'radar.manage',
   'welcome.view',
   'welcome.manage',
   'embeds.view',

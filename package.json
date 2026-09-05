@@ -44,6 +44,8 @@
     "perf:chaos": "node scripts/chaos-smoke.mjs",
     "audit:sync": "node scripts/sync-masterplan-audit.mjs",
     "audit:check": "node scripts/sync-masterplan-audit.mjs --check",
+    "radar:assets": "node scripts/radar/fetch-basemaps.mjs",
+    "radar:assets:verify": "node scripts/radar/fetch-basemaps.mjs --verify",
     "smoke": "bash deploy/smoke.sh"
   },
   "dependencies": {
@@ -105,6 +107,7 @@
   },
   "overrides": {
     "deepmerge-ts": "8.0.2",
-    "mysql2": "3.22.3"
+    "mysql2": "3.24.3",
+    "qs": "6.16.0"
   }
 }

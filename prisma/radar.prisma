@@ -1,0 +1,150 @@
+enum RadarMap {
+  CHERNARUS
+  LIVONIA
+  SAKHAL
+}
+
+enum RadarZoneShape {
+  CIRCLE
+  POLYGON
+}
+
+enum RadarAllowlistSource {
+  SERVER_WHITELIST
+  MANUAL
+}
+
+enum RadarDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  RETRY
+  FAILED
+}
+
+model RadarConfig {
+  id             String   @id @default(cuid())
+  guildId        String
+  nitradoConnId  String
+  activeMap      RadarMap @default(CHERNARUS)
+  cursorCreatedAt DateTime @default(now())
+  cursorEventId  String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  zones RadarZone[]
+
+  @@unique([guildId, nitradoConnId])
+  @@index([nitradoConnId])
+}
+
+model RadarZone {
+  id              String         @id @default(cuid())
+  configId        String
+  config          RadarConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
+  guildId         String
+  nitradoConnId   String
+  name            String         @db.VarChar(120)
+  map             RadarMap
+  shape           RadarZoneShape
+  isActive        Boolean        @default(true)
+  centerX         Decimal?       @db.Decimal(12, 3)
+  centerY         Decimal?       @db.Decimal(12, 3)
+  radiusMeters    Decimal?       @db.Decimal(12, 3)
+  minX            Decimal        @db.Decimal(12, 3)
+  minY            Decimal        @db.Decimal(12, 3)
+  maxX            Decimal        @db.Decimal(12, 3)
+  maxY            Decimal        @db.Decimal(12, 3)
+  channelId       String         @db.VarChar(32)
+  rolePingEnabled Boolean        @default(true)
+  roleIds         String[]
+  embedColor      String         @default("#dc2626") @db.VarChar(9)
+  editorCenterX   Decimal?       @db.Decimal(12, 3)
+  editorCenterY   Decimal?       @db.Decimal(12, 3)
+  editorZoom      Decimal?       @db.Decimal(8, 3)
+  editorBearing   Decimal?       @db.Decimal(8, 3)
+  editorPitch     Decimal?       @db.Decimal(8, 3)
+  version         Int            @default(1)
+  createdBy       String         @db.VarChar(32)
+  updatedBy       String         @db.VarChar(32)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  points     RadarZonePoint[]
+  functions  RadarZoneFunction[]
+  allowlist  RadarZoneAllowlist[]
+  events     RadarZoneEvent[]
+
+  @@index([guildId, nitradoConnId, map, isActive])
+  @@index([configId, map, isActive])
+}
+
+model RadarZonePoint {
+  id       String    @id @default(cuid())
+  zoneId   String
+  zone     RadarZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  position Int
+  x        Decimal   @db.Decimal(12, 3)
+  y        Decimal   @db.Decimal(12, 3)
+
+  @@unique([zoneId, position])
+}
+
+model RadarZoneFunction {
+  id          String    @id @default(cuid())
+  zoneId      String
+  zone        RadarZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  functionKey String    @db.VarChar(80)
+
+  @@unique([zoneId, functionKey])
+  @@index([functionKey])
+}
+
+model RadarZoneAllowlist {
+  id       String               @id @default(cuid())
+  zoneId   String
+  zone     RadarZone            @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  source   RadarAllowlistSource
+  gameId   String               @db.VarChar(128)
+  playerName String?            @db.VarChar(128)
+  createdAt DateTime            @default(now())
+
+  @@unique([zoneId, gameId])
+  @@index([gameId])
+}
+
+model RadarZoneEvent {
+  id            String   @id @default(cuid())
+  zoneId        String
+  zone          RadarZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  admEventId    String
+  functionKey   String   @db.VarChar(80)
+  guildId       String
+  nitradoConnId String
+  channelId     String   @db.VarChar(32)
+  admEventType  AdmEventType
+  actorGameId   String?  @db.VarChar(128)
+  actorName     String?  @db.VarChar(128)
+  targetGameId  String?  @db.VarChar(128)
+  targetName    String?  @db.VarChar(128)
+  objectType    String?  @db.VarChar(256)
+  toolOrWeapon  String?  @db.VarChar(256)
+  distanceMeters Decimal? @db.Decimal(12, 3)
+  x             Decimal  @db.Decimal(12, 3)
+  y             Decimal  @db.Decimal(12, 3)
+  altitude      Decimal? @db.Decimal(12, 3)
+  admOccurredAt DateTime?
+  status        RadarDeliveryStatus @default(PENDING)
+  attempts      Int      @default(0)
+  nextAttemptAt DateTime @default(now())
+  leaseUntil    DateTime?
+  messageId     String?  @db.VarChar(32)
+  lastError     String?  @db.Text
+  sentAt        DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([zoneId, admEventId, functionKey])
+  @@index([guildId, nitradoConnId, status, nextAttemptAt])
+  @@index([zoneId, sentAt])
+}

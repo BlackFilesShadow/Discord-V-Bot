@@ -8,7 +8,7 @@ import path from 'node:path';
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@': path.resolve(__dirname, './src') },
+    alias: { '@': path.resolve(__dirname, './src'), '@radar-coordinates': path.resolve(__dirname, '../src/shared/radarCoordinates.ts') },
   },
   build: {
     outDir: path.resolve(__dirname, '../src/dashboard/public'),
@@ -27,6 +27,7 @@ export default defineConfig({
           if (id.includes('socket.io-client') || id.includes('engine.io-client')) return 'vendor-socket';
           if (id.includes('lucide-react')) return 'vendor-lucide';
           if (id.includes('zod')) return 'vendor-zod';
+          if (id.includes('maplibre-gl')) return 'vendor-radar-map';
           return 'vendor-misc';
         },
       },

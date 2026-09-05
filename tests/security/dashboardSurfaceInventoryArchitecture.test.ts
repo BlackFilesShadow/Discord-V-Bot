@@ -53,9 +53,9 @@ const POST_STAGE_PUBLIC_ROUTES = [
   '<Route path="/legal/privacy" element={<Privacy />} />',
   '<Route path="/legal/terms" element={<Terms />} />',
 ] as const;
-const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino'] as const;
-const POST_STAGE_V2_MOUNTS = ['/guilds/:guildId/nitrado-drift'] as const;
-const POST_STAGE_V2_APIS = ['/api/v2/guilds/:guildId/nitrado-drift'] as const;
+const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino', 'radar'] as const;
+const POST_STAGE_V2_MOUNTS = ['/guilds/:guildId/nitrado-drift', '/guilds/:guildId/radar'] as const;
+const POST_STAGE_V2_APIS = ['/api/v2/guilds/:guildId/nitrado-drift', '/api/v2/guilds/:guildId/radar'] as const;
 
 function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
