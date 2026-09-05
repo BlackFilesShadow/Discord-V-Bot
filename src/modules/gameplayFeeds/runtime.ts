@@ -56,6 +56,7 @@ const SCAN_BATCH = 200;
 const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 1;
 const DELIVERY_SPACING_MS = 12_000;
+const PVP_ENRICHMENT_TIMEOUT_MS = 2_000;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -353,6 +354,31 @@ async function loadPvpHitDetails(config: GameplayFeedConfig, event: GameplayAdmE
   return hit ? parsePvpHitDetails(hit.rawLine) : null;
 }
 
+/**
+ * PvP-Trefferdetails sind reine Zusatzinformationen fuer das Embed.
+ * Weder ein DB-Fehler noch eine langsame Korrelationsabfrage darf deshalb
+ * die eigentliche Killfeed-Zustellung in RETRY/FAILED schicken.
+ */
+async function loadPvpHitDetailsBestEffort(config: GameplayFeedConfig, event: GameplayAdmEvent) {
+  let timeout: NodeJS.Timeout | null = null;
+  try {
+    return await Promise.race([
+      loadPvpHitDetails(config, event),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`PvP-Hit-Zusatzabfrage nach ${PVP_ENRICHMENT_TIMEOUT_MS} ms abgebrochen`));
+        }, PVP_ENRICHMENT_TIMEOUT_MS);
+        timeout.unref?.();
+      }),
+    ]);
+  } catch (error) {
+    logger.warn(`GameplayFeed ${config.id}: optionale PvP-Trefferdetails uebersprungen: ${safeError(error)}`);
+    return null;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function deliverOne(
   config: GameplayFeedConfig,
   delivery: GameplayFeedDelivery,
@@ -440,7 +466,7 @@ async function deliverOne(
       showDistance: config.showDistance,
     });
     if (!view) throw new Error(`Nicht unterstuetzter Gameplay-Eventtyp: ${event.eventType}`);
-  view.pvpHit = await loadPvpHitDetails(config, event);
+    view.pvpHit = await loadPvpHitDetailsBestEffort(config, event);
 
     const components = view.kind === 'FLAG'
       ? [new ActionRowBuilder<ButtonBuilder>().addComponents(
