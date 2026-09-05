@@ -71,9 +71,9 @@ export function DayzRadarMap({ activeMap, zones, onMapClick }: { activeMap: Rada
       map.addSource('basemap', { type: 'image', url: `/radar/maps/${activeMap.toLowerCase()}.png`, coordinates: [northWest, [southEast[0], northWest[1]], southEast, [northWest[0], southEast[1]]] });
       map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' });
       map.addSource('zones', { type: 'geojson', data: featureCollection(activeMap, zonesRef.current) });
-      map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['case', ['get', 'draft'], 0.14, 0.1] } });
-      map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': '#ef4444', 'line-width': ['case', ['get', 'draft'], 3, 2] } });
-      map.addLayer({ id: 'zone-vertices', type: 'circle', source: 'zones', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 6, 'circle-color': '#ef4444', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+      map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['case', ['get', 'draft'], 0.3, 0.22] } });
+      map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': '#dc2626', 'line-width': ['case', ['get', 'draft'], 4, 3] } });
+      map.addLayer({ id: 'zone-vertices', type: 'circle', source: 'zones', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 9, 'circle-color': '#dc2626', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
       map.on('click', event => {
         const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
         if (point && isPositionInsideMap(activeMap, point)) onMapClickRef.current?.(point);
