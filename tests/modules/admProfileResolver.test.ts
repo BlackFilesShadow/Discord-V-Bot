@@ -89,6 +89,59 @@ describe('ADM profile resolver', () => {
     }));
   });
 
+  it('wechselt nach dem Freshness-Fenster von einer alten nichtleeren AUTO-Quelle zur frischesten ADM-Quelle', async () => {
+    const oldDir = '/games/ni10428225_2/noftp/dayzps/logs';
+    const liveDir = '/games/ni10428225_2/noftp/dayzps/config';
+    profileDb.findUnique.mockResolvedValue({
+      id: 'profile-1',
+      guildId: 'guild-1',
+      nitradoConnId: 'conn-1',
+      profileDir: oldDir,
+      source: 'AUTO',
+      timeZone: 'Europe/Berlin',
+      lastVerifiedAt: new Date(Date.now() - 11 * 60_000),
+      lastError: null,
+    });
+
+    const listAdmFiles = jest.fn(async (_serviceId: string, dir: string) => {
+      if (dir === oldDir) {
+        return [{ name: 'DayZServer_PS4_x64_2026-09-04_10-00-00.ADM', modified_at: 1_786_000_000, size: 12_000 }];
+      }
+      if (dir === liveDir) {
+        return [{ name: 'DayZServer_PS4_x64_2026-09-05_20-00-00.ADM', modified_at: 1_786_100_000, size: 16_000 }];
+      }
+      return [];
+    });
+    const client = makeClient({
+      listAdmFiles,
+      getGameserverInfo: jest.fn().mockResolvedValue({
+        game: 'dayzps',
+        status: 'started',
+        username: 'ni10428225_2',
+        path: '/games/ni10428225_2/noftp/dayzps/',
+      }),
+      searchFiles: jest.fn().mockResolvedValue([]),
+      listDir: jest.fn().mockResolvedValue([]),
+    });
+
+    const resolved = await resolveAdmProfile(
+      { id: 'conn-1', guildId: 'guild-1', nitradoServerId: '19644115' },
+      client,
+    );
+
+    expect(resolved).toEqual({ profileDir: liveDir, source: 'AUTO', timeZone: 'Europe/Berlin' });
+    expect(listAdmFiles).toHaveBeenCalledWith('19644115', oldDir);
+    expect(listAdmFiles).toHaveBeenCalledWith('19644115', liveDir);
+    expect(profileDb.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        profileDir: liveDir,
+        source: 'AUTO',
+        timeZone: 'Europe/Berlin',
+        lastError: null,
+      }),
+    }));
+  });
+
   it('laesst ein leeres existierendes Verzeichnis die rekursive ADM-Suche nicht mehr kurzschliessen', async () => {
     profileDb.findUnique.mockResolvedValue(null);
 
