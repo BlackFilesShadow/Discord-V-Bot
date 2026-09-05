@@ -68,6 +68,12 @@ test.describe('Authenticated Radar', () => {
     const editor = page.getByLabel('Radar-Zoneneditor');
     await expect(editor.getByLabel('DayZ Radar-Karte')).toBeVisible();
     await editor.getByLabel('DayZ Radar-Karte').click({ position: { x: 150, y: 150 } });
+    const centerX = await editor.getByLabel('Mittelpunkt X').inputValue();
+    const centerY = await editor.getByLabel('Mittelpunkt Y').inputValue();
+    await editor.getByLabel('DayZ Radar-Karte').click({ position: { x: 250, y: 150 } });
+    await expect(editor.getByLabel('Mittelpunkt X')).toHaveValue(centerX);
+    await expect(editor.getByLabel('Mittelpunkt Y')).toHaveValue(centerY);
+    await expect(editor.getByText('Kreisradius', { exact: false })).toContainText(/(?!100 m)\d+ m/);
     await expect(editor.getByLabel('Zonenname')).toBeVisible();
     await editor.getByLabel('Zonenname').fill('Nordtor');
     await editor.locator('select').filter({ has: page.locator('option[value="523456789012345678"]') }).selectOption(CHANNEL_ID);
@@ -79,6 +85,20 @@ test.describe('Authenticated Radar', () => {
       query: `?slot=${SLOT}`,
       body: expect.objectContaining({ name: 'Nordtor', map: 'CHERNARUS', channelId: CHANNEL_ID }),
     });
+  });
+
+  test('zeichnet eine Polygonzone präzise Punkt für Punkt auf der Karte', async ({ page }) => {
+    await stubRadar(page);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
+    await page.getByRole('button', { name: 'Zone', exact: true }).click();
+    const editor = page.getByLabel('Radar-Zoneneditor');
+    await editor.getByRole('button', { name: 'Polygon' }).click();
+    const map = editor.getByLabel('DayZ Radar-Karte');
+    await map.click({ position: { x: 120, y: 120 } });
+    await map.click({ position: { x: 220, y: 120 } });
+    await map.click({ position: { x: 180, y: 220 } });
+    await expect(editor.getByText('3 Punkte gesetzt')).toBeVisible();
+    await expect(editor.locator('ol li')).toHaveCount(3);
   });
 
   for (const width of [320, 360, 375, 390, 430] as const) {
