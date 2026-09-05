@@ -9,6 +9,7 @@ export interface MapZone {
   id: string;
   name: string;
   isActive: boolean;
+  isDraft?: boolean;
   geometry: { type: 'CIRCLE'; x: number; y: number; radiusMeters: number } | { type: 'POLYGON'; points: Point[] };
 }
 
@@ -23,17 +24,21 @@ function circlePoints(map: RadarMap, x: number, y: number, radiusMeters: number)
 function featureCollection(map: RadarMap, zones: MapZone[]) {
   return {
     type: 'FeatureCollection' as const,
-    features: zones.filter(zone => zone.geometry.type === 'CIRCLE' || zone.geometry.points.length >= 3).map(zone => ({
+    features: zones.map(zone => ({
       type: 'Feature' as const,
-      properties: { id: zone.id, name: zone.name, active: zone.isActive },
+      properties: { id: zone.id, name: zone.name, active: zone.isActive, draft: zone.isDraft === true },
       geometry: zone.geometry.type === 'CIRCLE'
         ? { type: 'Polygon' as const, coordinates: [circlePoints(map, zone.geometry.x, zone.geometry.y, zone.geometry.radiusMeters)] }
-        : { type: 'Polygon' as const, coordinates: [[...zone.geometry.points.map(point => dayzToMapLibre(map, point)), dayzToMapLibre(map, zone.geometry.points[0])]] },
+        : zone.geometry.points.length >= 3
+          ? { type: 'Polygon' as const, coordinates: [[...zone.geometry.points.map(point => dayzToMapLibre(map, point)), dayzToMapLibre(map, zone.geometry.points[0])]] }
+          : zone.geometry.points.length === 2
+            ? { type: 'LineString' as const, coordinates: zone.geometry.points.map(point => dayzToMapLibre(map, point)) }
+            : { type: 'Point' as const, coordinates: dayzToMapLibre(map, zone.geometry.points[0] ?? { x: 0, y: 0 }) },
     })),
   };
 }
 
-export function DayzRadarMap({ activeMap, zones, onMapClick }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void }) {
+export function DayzRadarMap({ activeMap, zones, onMapClick, onCircleRadiusChange }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void; onCircleRadiusChange?: (radiusMeters: number) => void }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
@@ -57,8 +62,9 @@ export function DayzRadarMap({ activeMap, zones, onMapClick }: { activeMap: Rada
       map.addSource('basemap', { type: 'image', url: `/radar/maps/${activeMap.toLowerCase()}.png`, coordinates: [northWest, [southEast[0], northWest[1]], southEast, [northWest[0], southEast[1]]] });
       map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' });
       map.addSource('zones', { type: 'geojson', data: featureCollection(activeMap, zonesRef.current) });
-      map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zones', paint: { 'fill-color': ['case', ['get', 'active'], '#ef4444', '#94a3b8'], 'fill-opacity': 0.2 } });
-      map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': ['case', ['get', 'active'], '#ef4444', '#94a3b8'], 'line-width': 2 } });
+      map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['case', ['get', 'draft'], 0.32, 0.2] } });
+      map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': '#ef4444', 'line-width': ['case', ['get', 'draft'], 3, 2] } });
+      map.addLayer({ id: 'zone-vertices', type: 'circle', source: 'zones', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 6, 'circle-color': '#ef4444', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
       map.on('click', event => {
         const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
         if (point && isPositionInsideMap(activeMap, point)) onMapClickRef.current?.(point);
@@ -72,6 +78,28 @@ export function DayzRadarMap({ activeMap, zones, onMapClick }: { activeMap: Rada
     const source = mapRef.current?.getSource('zones') as GeoJSONSource | undefined;
     source?.setData(featureCollection(activeMap, zones));
   }, [activeMap, zones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const draftCircle = zones.find((zone): zone is MapZone & { geometry: Extract<MapZone['geometry'], { type: 'CIRCLE' }> } => zone.isDraft === true && zone.geometry.type === 'CIRCLE');
+    if (!map || !draftCircle || !onCircleRadiusChange) return;
+
+    const calibration = RADAR_MAP_CALIBRATIONS[activeMap];
+    const radiusHandle = dayzToMapLibre(activeMap, {
+      x: Math.min(calibration.widthMeters, draftCircle.geometry.x + draftCircle.geometry.radiusMeters),
+      y: draftCircle.geometry.y,
+    });
+    const element = document.createElement('div');
+    element.className = 'h-5 w-5 cursor-ew-resize rounded-full border-2 border-white bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.45)]';
+    element.setAttribute('aria-label', 'Kreisradius ziehen');
+    element.setAttribute('role', 'slider');
+    const marker = new maplibregl.Marker({ element, draggable: true }).setLngLat([...radiusHandle] as [number, number]).addTo(map);
+    marker.on('dragend', () => {
+      const point = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat);
+      if (point) onCircleRadiusChange(Math.round(Math.max(1, Math.hypot(point.x - draftCircle.geometry.x, point.y - draftCircle.geometry.y))));
+    });
+    return () => { marker.remove(); };
+  }, [activeMap, onCircleRadiusChange, zones]);
 
   return <div className="relative h-[28rem] overflow-hidden border border-border/70"><div ref={container} className={`h-full w-full ${onMapClick ? 'cursor-crosshair' : ''}`} aria-label="DayZ Radar-Karte" /><p className="pointer-events-none absolute bottom-1 right-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">DayZ Central Economy · ADPL-SA</p>{error && <p role="alert" className="absolute inset-x-3 bottom-3 bg-bg/95 p-2 text-sm text-danger">{error}</p>}</div>;
 }

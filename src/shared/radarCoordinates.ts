@@ -49,6 +49,7 @@ const IZURVIVE_BASE_URL: Record<RadarMap, string> = {
 };
 
 const EARTH_RADIUS = 6378137;
+const COORDINATE_EPSILON = 1e-7;
 
 function finite(value: number): boolean {
   return Number.isFinite(value);
@@ -89,9 +90,11 @@ export function mapLibreToDayz(map: RadarMap, longitude: number, latitude: numbe
   const calibration = RADAR_MAP_CALIBRATIONS[map];
   const mercatorX = EARTH_RADIUS * longitude * Math.PI / 180;
   const mercatorY = EARTH_RADIUS * Math.log(Math.tan(Math.PI / 4 + (latitude * Math.PI / 180) / 2));
+  const x = mercatorX + calibration.widthMeters / 2;
+  const y = calibration.heightMeters / 2 - mercatorY;
   const position = {
-    x: mercatorX + calibration.widthMeters / 2,
-    y: calibration.heightMeters / 2 - mercatorY,
+    x: Math.abs(x) <= COORDINATE_EPSILON ? 0 : Math.abs(x - calibration.widthMeters) <= COORDINATE_EPSILON ? calibration.widthMeters : x,
+    y: Math.abs(y) <= COORDINATE_EPSILON ? 0 : Math.abs(y - calibration.heightMeters) <= COORDINATE_EPSILON ? calibration.heightMeters : y,
     altitude: null,
   };
   return isPositionInsideMap(map, position) ? position : null;
