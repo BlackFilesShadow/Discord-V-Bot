@@ -35,6 +35,7 @@ async function stubRadar(page: Page): Promise<Mutation[]> {
     if (path === `/api/v2/guilds/${GUILD_ID}/roles`) return json(route, { roles: [{ id: ROLE_ID, name: 'Wache', managed: false }] });
     if (path === `/api/v2/guilds/${GUILD_ID}/radar/config`) return json(route, { activeMap: 'CHERNARUS', nitradoConnId: CONNECTION_ID });
     if (path === `/api/v2/guilds/${GUILD_ID}/radar/functions`) return json(route, { functions: [{ key: 'PLAYER_DETECTION', label: 'Spieler-Erkennung', order: 10, defaultEnabled: true, sourceEvents: ['PLAYER_POSITION'] }] });
+    if (path === `/api/v2/guilds/${GUILD_ID}/radar/players`) return json(route, { players: [{ gameId: 'K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=', playerName: 'XboxWache' }] });
     if (path === `/api/v2/guilds/${GUILD_ID}/radar/zones` && method === 'GET') return json(route, { zones });
     if (method !== 'GET') {
       let body: unknown = null;
@@ -75,6 +76,9 @@ test.describe('Authenticated Radar', () => {
     await expect(editor.getByLabel('Mittelpunkt X')).toHaveValue(centerX);
     await expect(editor.getByLabel('Mittelpunkt Y')).toHaveValue(centerY);
     await expect(editor.getByText('Kreisradius', { exact: false })).toContainText(/(?!100 m)\d+ m/);
+    await editor.getByLabel('Bekannten Spieler auswählen').selectOption('K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=');
+    await editor.getByRole('button', { name: 'Ausgewählten Spieler zur Allowlist hinzufügen' }).click();
+    await expect(editor.getByText('XboxWache ·', { exact: false })).toBeVisible();
     await expect(editor.getByLabel('Zonenname')).toBeVisible();
     await editor.getByLabel('Zonenname').fill('Nordtor');
     await editor.locator('select').filter({ has: page.locator('option[value="523456789012345678"]') }).selectOption(CHANNEL_ID);
@@ -84,7 +88,7 @@ test.describe('Authenticated Radar', () => {
     await expect.poll(() => mutations.find(row => row.method === 'POST' && row.path.endsWith('/radar/zones'))).toBeTruthy();
     expect(mutations.find(row => row.method === 'POST' && row.path.endsWith('/radar/zones'))).toMatchObject({
       query: `?slot=${SLOT}`,
-      body: expect.objectContaining({ name: 'Nordtor', map: 'CHERNARUS', channelId: CHANNEL_ID }),
+      body: expect.objectContaining({ name: 'Nordtor', map: 'CHERNARUS', channelId: CHANNEL_ID, allowlist: [{ source: 'MANUAL', gameId: 'K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=', playerName: 'XboxWache' }] }),
     });
   });
 

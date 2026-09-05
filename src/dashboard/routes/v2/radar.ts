@@ -147,6 +147,25 @@ radarRouter.get('/config', requireGuildPermission('radar.view'), async (req, res
   res.json({ activeMap: config.activeMap, nitradoConnId: scope.connId });
 });
 
+radarRouter.get('/players', requireGuildPermission('radar.manage'), async (req, res) => {
+  const scope = await scopeFor(req, res); if (!scope) return;
+  const sessions = await prisma.playerSession.findMany({
+    where: { guildId: scope.guildId, nitradoConnId: scope.connId, playerName: { not: null } },
+    select: { gameId: true, playerName: true },
+    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+    take: 2000,
+  });
+  const gameIds = new Set<string>();
+  const players = sessions.flatMap(session => {
+    const gameId = session.gameId.trim();
+    const playerName = session.playerName?.trim();
+    if (!playerName || !isValidBattleyeGuid(gameId) || gameIds.has(gameId)) return [];
+    gameIds.add(gameId);
+    return [{ gameId, playerName }];
+  });
+  res.json({ players });
+});
+
 radarRouter.put('/config', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
   const activeMap = readMap(req.body?.activeMap); if (!activeMap) { res.status(400).json({ error: 'activeMap ist ungueltig.' }); return; }

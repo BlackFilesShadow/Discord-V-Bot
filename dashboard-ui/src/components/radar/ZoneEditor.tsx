@@ -38,12 +38,14 @@ const MAP_LABELS: Record<RadarMap, string> = {
 
 interface ChannelOption { id: string; name: string; type: number }
 interface RoleOption { id: string; name: string; managed: boolean }
+interface RadarPlayerOption { gameId: string; playerName: string }
 
 interface ZoneEditorProps {
   activeMap: RadarMap;
   functions: RadarFunctionDefinition[];
   channels: ChannelOption[];
   roles: RoleOption[];
+  players: RadarPlayerOption[];
   zone: EditableRadarZone | null;
   onSave: (zone: Omit<EditableRadarZone, 'id' | 'version'> & { version?: number }) => void;
   onDelete: (zone: EditableRadarZone) => void;
@@ -59,9 +61,10 @@ function freshZone(activeMap: RadarMap, functions: RadarFunctionDefinition[]): O
   };
 }
 
-export function ZoneEditor({ activeMap, functions, channels, roles, zone, onSave, onDelete, saving, deleting }: ZoneEditorProps) {
+export function ZoneEditor({ activeMap, functions, channels, roles, players, zone, onSave, onDelete, saving, deleting }: ZoneEditorProps) {
   const [draft, setDraft] = useState<Omit<EditableRadarZone, 'id' | 'version'>>(() => freshZone(activeMap, functions));
   const [guid, setGuid] = useState('');
+  const [selectedPlayerGameId, setSelectedPlayerGameId] = useState('');
   const [pointX, setPointX] = useState('');
   const [pointY, setPointY] = useState('');
   const [circleMode, setCircleMode] = useState<'CENTER' | 'RADIUS'>(zone ? 'RADIUS' : 'CENTER');
@@ -86,6 +89,12 @@ export function ZoneEditor({ activeMap, functions, channels, roles, zone, onSave
     if (!gameId || draft.allowlist.some(entry => entry.gameId === gameId)) return;
     update({ allowlist: [...draft.allowlist, { source: 'MANUAL', gameId, playerName: null }] });
     setGuid('');
+  };
+  const addSelectedPlayer = () => {
+    const player = players.find(item => item.gameId === selectedPlayerGameId);
+    if (!player || draft.allowlist.some(entry => entry.gameId === player.gameId)) return;
+    update({ allowlist: [...draft.allowlist, { source: 'MANUAL', gameId: player.gameId, playerName: player.playerName }] });
+    setSelectedPlayerGameId('');
   };
   const addPoint = () => {
     const x = Number(pointX); const y = Number(pointY);
@@ -138,7 +147,7 @@ export function ZoneEditor({ activeMap, functions, channels, roles, zone, onSave
 
       <fieldset className="space-y-3 border border-border/70 p-3"><legend className="px-1 text-sm font-medium text-white">Discord</legend><label className="space-y-1.5 text-sm text-muted"><span>Kanal</span><Select value={draft.channelId} onChange={event => update({ channelId: event.target.value })}><option value="">Kanal wählen</option>{channels.filter(channel => channel.type === 0 || channel.type === 5).map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</Select></label><Switch checked={draft.rolePingEnabled} onChange={rolePingEnabled => update({ rolePingEnabled })} label="Rollen-Ping" /><div className="grid gap-2 sm:grid-cols-2">{roles.filter(role => !role.managed).map(role => <label key={role.id} className="flex items-center gap-2 text-sm text-muted"><input type="checkbox" checked={draft.roleIds.includes(role.id)} disabled={!draft.rolePingEnabled || (!draft.roleIds.includes(role.id) && draft.roleIds.length >= 8)} onChange={() => toggleRole(role.id)} />@{role.name}</label>)}</div><label className="space-y-1.5 text-sm text-muted"><span>Embed-Farbe</span><Input value={draft.embedColor} onChange={event => update({ embedColor: event.target.value })} pattern="^#[0-9a-fA-F]{6}$" /></label></fieldset>
 
-      <fieldset className="space-y-3 border border-border/70 p-3"><legend className="px-1 text-sm font-medium text-white">Allowlist</legend><div className="flex gap-2"><Input aria-label="BattlEye GUID" value={guid} onChange={event => setGuid(event.target.value)} placeholder="BattlEye GUID" /><Button variant="outline" aria-label="GUID zur Allowlist hinzufügen" onClick={addAllowlist}><Plus className="h-4 w-4" /></Button></div><div className="space-y-1 text-xs text-muted">{draft.allowlist.map(entry => <div key={entry.gameId} className="flex items-center justify-between"><span>{entry.gameId}</span><Button variant="ghost" size="sm" aria-label={`GUID ${entry.gameId} entfernen`} onClick={() => update({ allowlist: draft.allowlist.filter(value => value.gameId !== entry.gameId) })}><Trash2 className="h-3.5 w-3.5" /></Button></div>)}</div></fieldset>
+      <fieldset className="space-y-3 border border-border/70 p-3"><legend className="px-1 text-sm font-medium text-white">Allowlist</legend><label className="space-y-1.5 text-sm text-muted"><span>Bekannten PSN-/Xbox-Spieler auswählen</span><div className="flex gap-2"><Select aria-label="Bekannten Spieler auswählen" value={selectedPlayerGameId} onChange={event => setSelectedPlayerGameId(event.target.value)}><option value="">Spieler auswählen</option>{players.map(player => <option key={player.gameId} value={player.gameId}>{player.playerName}</option>)}</Select><Button variant="outline" aria-label="Ausgewählten Spieler zur Allowlist hinzufügen" disabled={!selectedPlayerGameId} onClick={addSelectedPlayer}><Plus className="h-4 w-4" /></Button></div></label><label className="space-y-1.5 text-sm text-muted"><span>Oder BattlEye GUID manuell eintragen</span><div className="flex gap-2"><Input aria-label="BattlEye GUID" value={guid} onChange={event => setGuid(event.target.value)} placeholder="BattlEye GUID" /><Button variant="outline" aria-label="GUID zur Allowlist hinzufügen" onClick={addAllowlist}><Plus className="h-4 w-4" /></Button></div></label><div className="space-y-1 text-xs text-muted">{draft.allowlist.map(entry => <div key={entry.gameId} className="flex items-center justify-between"><span>{entry.playerName ? `${entry.playerName} · ` : ''}{entry.gameId}</span><Button variant="ghost" size="sm" aria-label={`GUID ${entry.gameId} entfernen`} onClick={() => update({ allowlist: draft.allowlist.filter(value => value.gameId !== entry.gameId) })}><Trash2 className="h-3.5 w-3.5" /></Button></div>)}</div></fieldset>
 
       <div className="flex flex-wrap gap-2"><Button loading={saving} onClick={submit}><Save className="h-4 w-4" />Speichern</Button>{zone && <Button variant="danger" loading={deleting} onClick={() => onDelete(zone)}><Trash2 className="h-4 w-4" />Löschen</Button>}</div>
     </div>

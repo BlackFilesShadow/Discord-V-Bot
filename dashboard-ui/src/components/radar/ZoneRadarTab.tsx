@@ -35,6 +35,7 @@ interface RadarZone {
 
 interface ChannelOption { id: string; name: string; type: number }
 interface RoleOption { id: string; name: string; managed: boolean }
+interface RadarPlayerOption { gameId: string; playerName: string }
 
 const MAP_LABELS: Record<RadarMap, string> = {
   CHERNARUS: 'Chernarus',
@@ -77,6 +78,7 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
   const detail = useQuery({ queryKey: ['radar-zone', guildId, slot, editorId], queryFn: () => api.get<{ zone: EditableRadarZone }>(`/api/v2/guilds/${guildId}/radar/zones/${editorId}${query}`), enabled: editorId !== null && editorId !== 'new', retry: false });
   const channels = useQuery({ queryKey: ['guild-channels', guildId], queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`), enabled: canManage && editorId !== null, retry: false });
   const roles = useQuery({ queryKey: ['guild-roles', guildId], queryFn: () => api.get<{ roles: RoleOption[] }>(`/api/v2/guilds/${guildId}/roles`), enabled: canManage && editorId !== null, retry: false });
+  const players = useQuery({ queryKey: ['radar-players', guildId, slot], queryFn: () => api.get<{ players: RadarPlayerOption[] }>(`/api/v2/guilds/${guildId}/radar/players${query}`), enabled: canManage && editorId !== null, retry: false });
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['radar-zones', guildId, slot] });
   const saveZone = useMutation({
     mutationFn: (payload: Omit<EditableRadarZone, 'id' | 'version'> & { version?: number }) => editorId && editorId !== 'new'
@@ -85,6 +87,11 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
     onSuccess: () => { refresh(); setEditorId(null); },
   });
   const deleteZone = useMutation({ mutationFn: (zone: EditableRadarZone) => api.del(`/api/v2/guilds/${guildId}/radar/zones/${zone.id}${query}`), onSuccess: () => { refresh(); setEditorId(null); } });
+  const openNewEditor = () => {
+    saveZone.reset();
+    deleteZone.reset();
+    setEditorId('new');
+  };
 
   if (config.isError || functions.isError || zones.isError) {
     const error = config.error ?? functions.error ?? zones.error;
@@ -126,7 +133,7 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
 
       {editing && canManage && <Card>
         <CardHeader><CardTitle>{editorId === 'new' ? 'Neue Radar-Zone' : 'Radar-Zone bearbeiten'}</CardTitle></CardHeader>
-        {detail.isLoading || channels.isLoading || roles.isLoading ? <p className="text-sm text-muted">Lade Editor...</p> : editorError ? <p role="alert" className="text-sm text-danger">{describeApiError(editorError).desc}</p> : <ZoneEditor activeMap={activeMap} functions={(functions.data?.functions ?? []) as RadarFunctionDefinition[]} channels={channels.data?.channels ?? []} roles={roles.data?.roles ?? []} zone={detail.data?.zone ?? null} saving={saveZone.isPending} deleting={deleteZone.isPending} onSave={payload => saveZone.mutate(payload)} onDelete={zone => deleteZone.mutate(zone)} />}
+        {detail.isLoading || channels.isLoading || roles.isLoading || players.isLoading ? <p className="text-sm text-muted">Lade Editor...</p> : editorError ? <p role="alert" className="text-sm text-danger">{describeApiError(editorError).desc}</p> : <ZoneEditor activeMap={activeMap} functions={(functions.data?.functions ?? []) as RadarFunctionDefinition[]} channels={channels.data?.channels ?? []} roles={roles.data?.roles ?? []} players={players.data?.players ?? []} zone={detail.data?.zone ?? null} saving={saveZone.isPending} deleting={deleteZone.isPending} onSave={payload => saveZone.mutate(payload)} onDelete={zone => deleteZone.mutate(zone)} />}
       </Card>}
 
       <Card>
@@ -143,7 +150,7 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Gespeicherte Zonen</CardTitle>{canManage && <Button size="sm" onClick={() => setEditorId('new')}><Plus className="h-4 w-4" />Zone</Button>}</CardHeader>
+        <CardHeader><CardTitle>Gespeicherte Zonen</CardTitle>{canManage && <Button size="sm" onClick={openNewEditor}><Plus className="h-4 w-4" />Zone</Button>}</CardHeader>
         {zones.isLoading ? <p className="text-sm text-muted">Lade Zonen...</p> : (zones.data?.zones.length ?? 0) === 0 ? <p className="text-sm text-muted">Noch keine Radar-Zone für diesen Slot gespeichert.</p> : (
           <div className="space-y-3">
             {zones.data?.zones.map(zone => (
