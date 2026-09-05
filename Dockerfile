@@ -12,6 +12,10 @@ COPY dashboard-ui/package*.json ./
 RUN npm ci --no-audit --no-fund
 
 COPY dashboard-ui/ ./
+# Das Dashboard importiert die kanonische Radar-Koordinatenquelle per Alias.
+# Der Alias zeigt aus /ui auf /src/shared und muss daher vor dem Vite-Build
+# als explizite Build-Eingabe vorhanden sein.
+COPY src/shared/ /src/shared/
 # vite.config.ts schreibt nach ../src/dashboard/public — das Verzeichnis
 # muss zur Build-Zeit existieren (sonst weicht Vite auf cwd aus).
 RUN mkdir -p /src/dashboard/public
