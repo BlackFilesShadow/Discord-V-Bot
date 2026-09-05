@@ -275,7 +275,9 @@ export function DayzRadarMap({
       });
 
       map.on('mouseenter', 'zone-fill', () => { if (interactionModeRef.current === 'POLYGON_EDIT') map.getCanvas().style.cursor = 'move'; });
-      map.on('mouseleave', 'zone-fill', () => { if (interactionModeRef.current !== 'POLYGON_EDIT') map.getCanvas().style.cursor = interactionModeRef.current === 'POLYGON_DRAW' || interactionModeRef.current === 'CIRCLE_CREATE' ? 'crosshair' : ''; });
+      map.on('mouseleave', 'zone-fill', () => {
+        map.getCanvas().style.cursor = interactionModeRef.current === 'POLYGON_DRAW' || interactionModeRef.current === 'CIRCLE_CREATE' ? 'crosshair' : '';
+      });
       map.getCanvas().addEventListener('mouseleave', () => {
         if (interactionModeRef.current === 'POLYGON_DRAW' && previewPointRef.current) {
           previewPointRef.current = undefined;
@@ -308,7 +310,7 @@ export function DayzRadarMap({
     const map = mapRef.current;
     if (!map || !mapReady || !focusPoint) return;
     map.easeTo({ center: [...dayzToMapLibre(activeMap, focusPoint)] as [number, number], zoom: Math.max(map.getZoom(), 13), duration: 350 });
-  }, [activeMap, focusPoint?.x, focusPoint?.y, mapReady]);
+  }, [activeMap, focusPoint, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -326,8 +328,26 @@ export function DayzRadarMap({
     const redraw = () => setZoneSourceData(map, activeMap, zonesRef.current, interactionModeRef.current, previewPointRef.current, transientGeometryRef.current);
 
     if (draft.geometry.type === 'CIRCLE' && interactionMode === 'CIRCLE_EDIT') {
-      let radiusMarker: maplibregl.Marker | undefined;
-      let latestCenter: Point = { x: draft.geometry.x, y: draft.geometry.y };
+      const circle = draft.geometry;
+      let latestRadius = circle.radiusMeters;
+      const radiusElement = document.createElement('div');
+      radiusElement.className = 'radar-zone-radius-handle';
+      radiusElement.title = 'Kreisradius ändern';
+      radiusElement.setAttribute('aria-label', 'Kreisradius ändern');
+      Object.assign(radiusElement.style, { width: '18px', height: '18px', borderRadius: '9999px', background: '#ffffff', border: '4px solid #dc2626', boxShadow: '0 0 0 3px rgba(127, 29, 29, 0.75)', cursor: 'ew-resize' });
+      const radiusMarker = new maplibregl.Marker({ element: radiusElement, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, { x: circle.x + circle.radiusMeters, y: circle.y })] as [number, number]).addTo(map);
+      radiusMarker.on('drag', () => {
+        const raw = mapLibreToDayz(activeMap, radiusMarker.getLngLat().lng, radiusMarker.getLngLat().lat);
+        if (!raw) return;
+        const center = { x: circle.x, y: circle.y };
+        const maxRadius = Math.floor(maxCircleRadius(activeMap, center));
+        latestRadius = Math.max(1, Math.min(Math.round(Math.hypot(raw.x - center.x, raw.y - center.y)), maxRadius));
+        transientGeometryRef.current = { type: 'CIRCLE', x: center.x, y: center.y, radiusMeters: latestRadius };
+        redraw();
+      });
+      radiusMarker.on('dragend', () => onCircleRadiusChangeRef.current?.(latestRadius));
+
+      let latestCenter: Point = { x: circle.x, y: circle.y };
       const centerElement = document.createElement('div');
       centerElement.className = 'radar-zone-point radar-zone-center-handle';
       centerElement.title = 'Kreismittelpunkt verschieben';
@@ -336,33 +356,14 @@ export function DayzRadarMap({
       centerMarker.on('drag', () => {
         const raw = mapLibreToDayz(activeMap, centerMarker.getLngLat().lng, centerMarker.getLngLat().lat);
         if (!raw) return;
-        latestCenter = clampCircleCenter(activeMap, raw, draft.geometry.radiusMeters);
+        latestCenter = clampCircleCenter(activeMap, raw, circle.radiusMeters);
         centerMarker.setLngLat([...dayzToMapLibre(activeMap, latestCenter)] as [number, number]);
-        transientGeometryRef.current = { type: 'CIRCLE', x: latestCenter.x, y: latestCenter.y, radiusMeters: draft.geometry.radiusMeters };
-        radiusMarker?.setLngLat([...dayzToMapLibre(activeMap, { x: latestCenter.x + draft.geometry.radiusMeters, y: latestCenter.y })] as [number, number]);
+        transientGeometryRef.current = { type: 'CIRCLE', x: latestCenter.x, y: latestCenter.y, radiusMeters: circle.radiusMeters };
+        radiusMarker.setLngLat([...dayzToMapLibre(activeMap, { x: latestCenter.x + circle.radiusMeters, y: latestCenter.y })] as [number, number]);
         redraw();
       });
       centerMarker.on('dragend', () => onCircleCenterChangeRef.current?.(latestCenter));
-      markers.push(centerMarker);
-
-      const radiusElement = document.createElement('div');
-      radiusElement.className = 'radar-zone-radius-handle';
-      radiusElement.title = 'Kreisradius ändern';
-      radiusElement.setAttribute('aria-label', 'Kreisradius ändern');
-      Object.assign(radiusElement.style, { width: '18px', height: '18px', borderRadius: '9999px', background: '#ffffff', border: '4px solid #dc2626', boxShadow: '0 0 0 3px rgba(127, 29, 29, 0.75)', cursor: 'ew-resize' });
-      let latestRadius = draft.geometry.radiusMeters;
-      radiusMarker = new maplibregl.Marker({ element: radiusElement, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, { x: draft.geometry.x + draft.geometry.radiusMeters, y: draft.geometry.y })] as [number, number]).addTo(map);
-      radiusMarker.on('drag', () => {
-        const raw = mapLibreToDayz(activeMap, radiusMarker!.getLngLat().lng, radiusMarker!.getLngLat().lat);
-        if (!raw) return;
-        const center = { x: draft.geometry.x, y: draft.geometry.y };
-        const maxRadius = Math.floor(maxCircleRadius(activeMap, center));
-        latestRadius = Math.max(1, Math.min(Math.round(Math.hypot(raw.x - center.x, raw.y - center.y)), maxRadius));
-        transientGeometryRef.current = { type: 'CIRCLE', x: center.x, y: center.y, radiusMeters: latestRadius };
-        redraw();
-      });
-      radiusMarker.on('dragend', () => onCircleRadiusChangeRef.current?.(latestRadius));
-      markers.push(radiusMarker);
+      markers.push(centerMarker, radiusMarker);
     }
 
     if (draft.geometry.type === 'POLYGON') {
