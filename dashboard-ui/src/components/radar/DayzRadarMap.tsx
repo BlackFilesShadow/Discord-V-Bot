@@ -28,6 +28,7 @@ function featureCollection(map: RadarMap, zones: MapZone[]): FeatureCollection {
     const properties = { id: zone.id, name: zone.name, active: zone.isActive, draft: zone.isDraft === true };
     if (zone.geometry.type === 'CIRCLE') {
       features.push({ type: 'Feature', properties, geometry: { type: 'Polygon', coordinates: [circlePoints(map, zone.geometry.x, zone.geometry.y, zone.geometry.radiusMeters)] } });
+      features.push({ type: 'Feature', properties: { ...properties, center: true }, geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, zone.geometry)] } });
       continue;
     }
     const points = zone.geometry.points.map(point => [...dayzToMapLibre(map, point)]);
@@ -47,7 +48,7 @@ function featureCollection(map: RadarMap, zones: MapZone[]): FeatureCollection {
   };
 }
 
-export function DayzRadarMap({ activeMap, zones, onMapClick }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void }) {
+export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void; focusPoint?: Point }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
@@ -87,6 +88,12 @@ export function DayzRadarMap({ activeMap, zones, onMapClick }: { activeMap: Rada
     const source = mapRef.current?.getSource('zones') as GeoJSONSource | undefined;
     source?.setData(featureCollection(activeMap, zones));
   }, [activeMap, zones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !focusPoint) return;
+    map.easeTo({ center: [...dayzToMapLibre(activeMap, focusPoint)] as [number, number], zoom: Math.max(map.getZoom(), 13), duration: 350 });
+  }, [activeMap, focusPoint?.x, focusPoint?.y]);
 
   return <div className="relative h-[28rem] overflow-hidden border border-border/70"><div ref={container} className={`h-full w-full ${onMapClick ? 'cursor-crosshair' : ''}`} aria-label="DayZ Radar-Karte" /><p className="pointer-events-none absolute bottom-1 right-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">DayZ Central Economy · ADPL-SA</p>{error && <p role="alert" className="absolute inset-x-3 bottom-3 bg-bg/95 p-2 text-sm text-danger">{error}</p>}</div>;
 }
