@@ -9,11 +9,16 @@ import {
 } from '../../src/shared/radarCoordinates';
 
 describe('Radar-Koordinatenkern', () => {
-  it('normalisiert native ADM-X-Hoehe-Z-Vektoren in horizontale x/y-Koordinaten', () => {
-    expect(parseAdmDayzPosition('<9662.8, 294.2, 8788.5>')).toEqual({
-      x: 9662.8,
-      y: 8788.5,
-      altitude: 294.2,
+  it('normalisiert echte ADM-X-Y-Hoehe-Vektoren in Radar-Koordinaten', () => {
+    expect(parseAdmDayzPosition('<4769.7, 9525.0, 340.4>')).toEqual({
+      x: 4769.7,
+      y: 9525,
+      altitude: 340.4,
+    });
+    expect(parseAdmDayzPosition('9805.7, 11606, 258.4')).toEqual({
+      x: 9805.7,
+      y: 11606,
+      altitude: 258.4,
     });
     expect(parseAdmDayzPosition('1,2')).toBeNull();
     expect(parseAdmDayzPosition('1,invalid,3')).toBeNull();
