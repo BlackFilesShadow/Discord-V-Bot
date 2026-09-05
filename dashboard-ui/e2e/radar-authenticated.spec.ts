@@ -102,13 +102,13 @@ test.describe('Authenticated Radar', () => {
     await expect(editor.getByLabel('Zonenname')).toBeVisible();
     await editor.getByLabel('Zonenname').fill('Nordtor');
     await editor.locator('select').filter({ has: page.locator('option[value="523456789012345678"]') }).selectOption(CHANNEL_ID);
-    await editor.getByRole('switch', { name: 'Rollen-Ping' }).click();
+    await expect(editor.getByRole('switch', { name: 'Rollen-Ping' })).not.toBeChecked();
     await editor.getByRole('button', { name: 'Speichern' }).click();
 
     await expect.poll(() => mutations.find(row => row.method === 'POST' && row.path.endsWith('/radar/zones'))).toBeTruthy();
     expect(mutations.find(row => row.method === 'POST' && row.path.endsWith('/radar/zones'))).toMatchObject({
       query: `?slot=${SLOT}`,
-      body: expect.objectContaining({ name: 'Nordtor', map: 'CHERNARUS', channelId: CHANNEL_ID, allowlist: [{ source: 'MANUAL', gameId: 'K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=', playerName: 'XboxWache' }] }),
+      body: expect.objectContaining({ name: 'Nordtor', map: 'CHERNARUS', channelId: CHANNEL_ID, rolePingEnabled: false, allowlist: [{ source: 'MANUAL', gameId: 'K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=', playerName: 'XboxWache' }] }),
     });
   });
 

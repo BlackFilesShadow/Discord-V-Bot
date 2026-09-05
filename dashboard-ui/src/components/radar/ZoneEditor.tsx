@@ -55,7 +55,7 @@ interface ZoneEditorProps {
 
 function freshZone(activeMap: RadarMap, functions: RadarFunctionDefinition[]): Omit<EditableRadarZone, 'id' | 'version'> {
   return {
-    name: '', map: activeMap, isActive: true, channelId: '', rolePingEnabled: true, roleIds: [], embedColor: '#dc2626',
+    name: '', map: activeMap, isActive: true, channelId: '', rolePingEnabled: false, roleIds: [], embedColor: '#dc2626',
     enabledFunctions: functions.filter(item => item.defaultEnabled).map(item => item.key), allowlist: [],
     geometry: { type: 'CIRCLE', x: 0, y: 0, radiusMeters: 100 },
   };
