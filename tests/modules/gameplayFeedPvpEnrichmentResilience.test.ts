@@ -67,7 +67,9 @@ function feedConfig() {
     kind: 'DEATH',
     channelId: CHANNEL_ID,
     isActive: true,
-    categories: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
+    // Production-facing PVP feed: the runtime must not rely on the other
+    // DEATH categories being enabled in order to enqueue/deliver PLAYER_KILLED.
+    categories: ['PVP'],
     showActorCoords: true,
     showTargetCoords: true,
     showTool: true,
