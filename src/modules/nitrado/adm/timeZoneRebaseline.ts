@@ -2,6 +2,7 @@ import prisma from '../../../database/prisma';
 import { newDateContext, parseAdmLine, resolveBaseDate } from './admLineParser';
 
 const DAY_MS = 86_400_000;
+const ADM_TIME_PREFIX_RE = /^\d{2}:\d{2}:\d{2}(?:\s*\|?\s*)/;
 
 export interface AdmTimeZoneRebaselineResult {
   updated: boolean;
@@ -15,6 +16,57 @@ function remoteModifiedAtToDate(value: number): Date | null {
   const milliseconds = value < 10_000_000_000 ? value * 1000 : value;
   const date = new Date(milliseconds);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+function wallClockPrefixFromInstant(occurredAt: Date, timeZone: string | null): string | null {
+  if (Number.isNaN(occurredAt.getTime())) return null;
+  if (!timeZone) {
+    return `${pad2(occurredAt.getUTCHours())}:${pad2(occurredAt.getUTCMinutes())}:${pad2(occurredAt.getUTCSeconds())}`;
+  }
+
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    });
+    const parts = formatter.formatToParts(occurredAt);
+    const value = (type: Intl.DateTimeFormatPartTypes): number =>
+      Number(parts.find(part => part.type === type)?.value ?? Number.NaN);
+    const hour = value('hour');
+    const minute = value('minute');
+    const second = value('second');
+    if (![hour, minute, second].every(Number.isFinite)) return null;
+    return `${pad2(hour)}:${pad2(minute)}:${pad2(second)}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AdmEvent.rawLine intentionally stores only the payload after the HH:mm:ss
+ * prefix. To re-interpret an already-consumed event under another timezone we
+ * reconstruct that original wall-clock prefix from its currently stored instant
+ * using the timezone that produced it. This also heals the production +24h
+ * continuation bug: even a day-shifted instant still retains the original
+ * wall-clock time-of-day, while resolveAdmWallClockNearReference selects the
+ * correct calendar day again from the real remote file mtime.
+ */
+export function restoreAdmWallClockLine(
+  rawLine: string,
+  occurredAt: Date | null,
+  sourceTimeZone: string | null,
+): string | null {
+  if (ADM_TIME_PREFIX_RE.test(rawLine)) return rawLine;
+  if (!occurredAt) return null;
+  const prefix = wallClockPrefixFromInstant(occurredAt, sourceTimeZone);
+  return prefix ? `${prefix} | ${rawLine}` : null;
 }
 
 /**
@@ -47,14 +99,15 @@ export function resolveAdmWallClockNearReference(
 }
 
 /**
- * Rebaselines only the latest already-consumed ADM event after an IANA timezone
- * change. The byte cursor, binding namespace and feed cursors are untouched, so
- * historical bytes cannot be replayed and already delivered events cannot be
- * emitted a second time. admLiveSyncCron will use this corrected latest event
- * as the continuation anchor for the next appended chunk.
+ * Rebaselines only the latest already-consumed ADM event after an explicit IANA
+ * timezone save. The byte cursor, binding namespace and feed cursors are
+ * untouched, so historical bytes cannot be replayed and already delivered
+ * events cannot be emitted a second time. admLiveSyncCron will use this corrected
+ * latest event as the continuation anchor for the next appended chunk.
  */
 export async function rebaselineAdmTimeZoneAnchor(
   scope: { guildId: string; nitradoConnId: string },
+  sourceTimeZone: string | null,
   timeZone: string | null,
 ): Promise<AdmTimeZoneRebaselineResult> {
   const cursor = await prisma.admSourceCursor.findFirst({
@@ -78,6 +131,7 @@ export async function rebaselineAdmTimeZoneAnchor(
       nitradoConnId: scope.nitradoConnId,
       sourceFile: cursor.fileIdentity,
       sourceByteEnd: { lte: cursor.processedByteOffset },
+      occurredAt: { not: null },
     },
     orderBy: [{ sourceByteEnd: 'desc' }, { id: 'desc' }],
     select: { id: true, rawLine: true, occurredAt: true },
@@ -87,8 +141,13 @@ export async function rebaselineAdmTimeZoneAnchor(
     return { updated: false, eventId: null, previousOccurredAt: null, occurredAt: null };
   }
 
+  const sourceLine = restoreAdmWallClockLine(event.rawLine, event.occurredAt, sourceTimeZone);
+  if (!sourceLine) {
+    return { updated: false, eventId: event.id, previousOccurredAt: event.occurredAt, occurredAt: null };
+  }
+
   const reference = remoteModifiedAtToDate(cursor.lastModifiedAt) ?? new Date();
-  const occurredAt = resolveAdmWallClockNearReference(event.rawLine, cursor.fileName, timeZone, reference);
+  const occurredAt = resolveAdmWallClockNearReference(sourceLine, cursor.fileName, timeZone, reference);
   if (!occurredAt) {
     return { updated: false, eventId: event.id, previousOccurredAt: event.occurredAt, occurredAt: null };
   }

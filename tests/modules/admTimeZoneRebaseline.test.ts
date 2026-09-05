@@ -13,6 +13,7 @@ jest.mock('../../src/database/prisma', () => ({
 import {
   rebaselineAdmTimeZoneAnchor,
   resolveAdmWallClockNearReference,
+  restoreAdmWallClockLine,
 } from '../../src/modules/nitrado/adm/timeZoneRebaseline';
 
 beforeEach(() => {
@@ -55,52 +56,93 @@ describe('ADM timezone normalization', () => {
     expect(occurredAt?.toISOString()).toBe('2026-09-05T22:05:10.000Z');
   });
 
-  it('korrigiert nur den letzten Zeitanker und laesst den Byte-Cursor unangetastet', async () => {
+  it('rekonstruiert aus produktiv gespeichertem rawLine den fehlenden ADM-Zeitpraefix', () => {
+    const rawLine = restoreAdmWallClockLine(
+      'Player "Balu_cleo" (id=abc) performed EmoteSitA',
+      new Date('2026-09-06T01:08:45.000Z'),
+      null,
+    );
+
+    expect(rawLine).toBe('01:08:45 | Player "Balu_cleo" (id=abc) performed EmoteSitA');
+  });
+
+  it('korrigiert den produktiven Null-Zeitzonen-Anchor ohne Timestamp im rawLine', async () => {
     cursorFindFirst.mockResolvedValue({
-      fileIdentity: 'adm-binding:7:DayZServer_PS4_x64_2026-09-05_21-04-11.ADM',
-      fileName: 'DayZServer_PS4_x64_2026-09-05_21-04-11.ADM',
-      lastModifiedAt: Math.floor(new Date('2026-09-05T20:43:10.000Z').getTime() / 1000),
-      processedByteOffset: 45_383n,
+      fileIdentity: 'DayZServer_PS4_x64_2026-09-06_00-06-46.ADM',
+      fileName: 'DayZServer_PS4_x64_2026-09-06_00-06-46.ADM',
+      lastModifiedAt: Math.floor(new Date('2026-09-05T23:08:50.000Z').getTime() / 1000),
+      processedByteOffset: 27_320n,
     });
     eventFindFirst.mockResolvedValue({
       id: 'event-last',
-      rawLine: '22:43:05 | Player "Void"(id=abc) pos=<7808.7, 5138.3, 215.7>',
-      occurredAt: new Date('2026-09-05T22:43:05.000Z'),
+      rawLine: 'Player "Balu_cleo" (id=abc) performed EmoteSitA',
+      // Vor dem Fix wurde die Server-Wanduhr 01:08:45 bei timeZone=null als UTC gespeichert.
+      occurredAt: new Date('2026-09-06T01:08:45.000Z'),
     });
 
     const result = await rebaselineAdmTimeZoneAnchor(
       { guildId: 'guild-1', nitradoConnId: 'conn-1' },
+      null,
       'Europe/Berlin',
     );
 
     expect(result.updated).toBe(true);
-    expect(result.occurredAt?.toISOString()).toBe('2026-09-05T20:43:05.000Z');
+    expect(result.occurredAt?.toISOString()).toBe('2026-09-05T23:08:45.000Z');
     expect(eventUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'event-last', guildId: 'guild-1', nitradoConnId: 'conn-1' }),
-      data: { occurredAt: new Date('2026-09-05T20:43:05.000Z') },
+      data: { occurredAt: new Date('2026-09-05T23:08:45.000Z') },
     }));
     expect(cursorFindFirst).toHaveBeenCalledTimes(1);
   });
 
-  it('schreibt nichts erneut wenn der letzte Zeitanker bereits zur Zeitzone passt', async () => {
+  it('heilt einen bereits um +24h verschobenen Europe/Berlin-Continuation-Anchor idempotent', async () => {
     cursorFindFirst.mockResolvedValue({
-      fileIdentity: 'adm-binding:7:DayZServer_PS4_x64_2026-09-05_21-04-11.ADM',
-      fileName: 'DayZServer_PS4_x64_2026-09-05_21-04-11.ADM',
-      lastModifiedAt: Math.floor(new Date('2026-09-05T20:43:10.000Z').getTime() / 1000),
-      processedByteOffset: 45_383n,
+      fileIdentity: 'DayZServer_PS4_x64_2026-09-06_00-06-46.ADM',
+      fileName: 'DayZServer_PS4_x64_2026-09-06_00-06-46.ADM',
+      lastModifiedAt: Math.floor(new Date('2026-09-05T23:23:55.000Z').getTime() / 1000),
+      processedByteOffset: 32_377n,
     });
     eventFindFirst.mockResolvedValue({
-      id: 'event-last',
-      rawLine: '22:43:05 | Player "Void"(id=abc) pos=<7808.7, 5138.3, 215.7>',
-      occurredAt: new Date('2026-09-05T20:43:05.000Z'),
+      id: 'event-day-shifted',
+      rawLine: 'Player "x12GoldenYearsx" (id=abc)[HP: 88] hit by Player "SchmutzfussRICK" (id=def)',
+      // Produktionsbefund nach dem ersten Fix: korrekte Uhrzeit, aber exakt +24h.
+      occurredAt: new Date('2026-09-06T23:23:54.000Z'),
     });
 
     const result = await rebaselineAdmTimeZoneAnchor(
       { guildId: 'guild-1', nitradoConnId: 'conn-1' },
       'Europe/Berlin',
+      'Europe/Berlin',
+    );
+
+    expect(result.updated).toBe(true);
+    expect(result.occurredAt?.toISOString()).toBe('2026-09-05T23:23:54.000Z');
+    expect(eventUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { occurredAt: new Date('2026-09-05T23:23:54.000Z') },
+    }));
+  });
+
+  it('schreibt nichts erneut wenn der letzte produktive Anchor bereits zur Zeitzone passt', async () => {
+    cursorFindFirst.mockResolvedValue({
+      fileIdentity: 'DayZServer_PS4_x64_2026-09-06_00-06-46.ADM',
+      fileName: 'DayZServer_PS4_x64_2026-09-06_00-06-46.ADM',
+      lastModifiedAt: Math.floor(new Date('2026-09-05T23:23:55.000Z').getTime() / 1000),
+      processedByteOffset: 32_377n,
+    });
+    eventFindFirst.mockResolvedValue({
+      id: 'event-correct',
+      rawLine: 'Player "x12GoldenYearsx" (id=abc)[HP: 88] hit by Player "SchmutzfussRICK" (id=def)',
+      occurredAt: new Date('2026-09-05T23:23:54.000Z'),
+    });
+
+    const result = await rebaselineAdmTimeZoneAnchor(
+      { guildId: 'guild-1', nitradoConnId: 'conn-1' },
+      'Europe/Berlin',
+      'Europe/Berlin',
     );
 
     expect(result.updated).toBe(false);
+    expect(result.occurredAt?.toISOString()).toBe('2026-09-05T23:23:54.000Z');
     expect(eventUpdateMany).not.toHaveBeenCalled();
   });
 });
