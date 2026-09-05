@@ -9,11 +9,12 @@ import {
 } from '../../src/shared/radarCoordinates';
 
 describe('Radar-Koordinatenkern', () => {
-  it('normalisiert native ADM-X-Hoehe-Z-Vektoren in horizontale x/y-Koordinaten', () => {
-    expect(parseAdmDayzPosition('<9662.8, 294.2, 8788.5>')).toEqual({
-      x: 9662.8,
-      y: 8788.5,
-      altitude: 294.2,
+  it('normalisiert kanonische ADM-X-Y-Hoehe-Positionen in horizontale x/y-Koordinaten', () => {
+    // Bohemia Administration Log shape: pos=<map X, map Y, altitude>.
+    expect(parseAdmDayzPosition('<13212.8, 10124.8, 6.0>')).toEqual({
+      x: 13212.8,
+      y: 10124.8,
+      altitude: 6,
     });
     expect(parseAdmDayzPosition('1,2')).toBeNull();
     expect(parseAdmDayzPosition('1,invalid,3')).toBeNull();
