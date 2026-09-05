@@ -7,6 +7,15 @@ import path from 'node:path';
 // an den Bot (Port 3000), damit Cookies/Sessions nahtlos weiterreichen.
 export default defineConfig({
   plugins: [react()],
+  // MapLibre GL v6 ships its worker as ESM. Vite dependency pre-bundling can
+  // rewrite that worker import in a way that leaves runtime GeoJSON sources
+  // alive but their fill/line layers invisible. DOM markers still render,
+  // which made the radar editor look as if only its handles existed.
+  // Keep MapLibre out of optimizeDeps so Vite preserves the package's worker
+  // boundary exactly as published.
+  optimizeDeps: {
+    exclude: ['maplibre-gl'],
+  },
   resolve: {
     alias: { '@': path.resolve(__dirname, './src'), '@radar-coordinates': path.resolve(__dirname, '../src/shared/radarCoordinates.ts') },
   },
