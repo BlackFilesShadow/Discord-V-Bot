@@ -3,6 +3,8 @@ import { NitradoClient } from '../nitradoClient';
 
 const VERIFY_CACHE_MS = 10 * 60_000;
 
+type AdmFileListing = Awaited<ReturnType<NitradoClient['listAdmFiles']>>;
+
 export interface AdmConnectionScope {
   id: string;
   guildId: string;
@@ -59,13 +61,22 @@ async function dirWorks(client: NitradoClient, serviceId: string, dir: string): 
   }
 }
 
-async function admDirHasFiles(client: NitradoClient, serviceId: string, dir: string): Promise<boolean> {
+async function listAdmFilesSafe(
+  client: NitradoClient,
+  serviceId: string,
+  dir: string,
+): Promise<AdmFileListing | null> {
   try {
-    const files = await client.listAdmFiles(serviceId, dir);
-    return files.length > 0;
+    return await client.listAdmFiles(serviceId, dir);
   } catch {
-    return false;
+    return null;
   }
+}
+
+function latestAdmFile(files: AdmFileListing): AdmFileListing[number] | null {
+  return [...files]
+    .filter(file => Number.isSafeInteger(file.modified_at) && Number.isSafeInteger(file.size) && file.size >= 0)
+    .sort((a, b) => b.modified_at - a.modified_at || b.name.localeCompare(a.name))[0] ?? null;
 }
 
 async function persistResolved(
@@ -112,9 +123,12 @@ export async function recordAdmSourceError(
 
 /**
  * Loest das ADM-Verzeichnis strikt pro Nitrado-Connection auf und persistiert
- * es. Manuelle Konfiguration gewinnt. AUTO-Eintraege werden nur wiederverwendet,
- * solange dort tatsaechlich ADM-Dateien liegen; dadurch heilt die Runtime auch
- * einen zuvor falsch erkannten, aber erreichbaren Leer-Pfad selbststaendig.
+ * es. Manuelle Konfiguration gewinnt. AUTO/AUTO_SEARCH werden sofort neu
+ * gesucht, wenn der gespeicherte Pfad keine ADM-Datei mehr enthaelt. Solange
+ * dort Dateien liegen, wird der Pfad kurzfristig gecacht; nach VERIFY_CACHE_MS
+ * werden jedoch alle bekannten DayZ-Verzeichnisse verglichen und die Quelle mit
+ * der frischesten ADM-Datei gewaehlt. Dadurch kann ein alter, weiterhin
+ * existierender Log-Ordner die Live-Ingestion nicht dauerhaft stilllegen.
  * Eine globale ENV-Pfadquelle gibt es absichtlich nicht mehr.
  */
 export async function resolveAdmProfile(
@@ -126,40 +140,42 @@ export async function resolveAdmProfile(
     where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.id } },
   });
 
-  if (existing) {
-    const configured = cleanRemoteDir(existing.profileDir);
-    const recentlyVerified = existing.lastVerifiedAt !== null
-      && Date.now() - existing.lastVerifiedAt.getTime() < VERIFY_CACHE_MS;
+  const configured = existing ? cleanRemoteDir(existing.profileDir) : null;
+  const recentlyVerified = existing?.lastVerifiedAt !== null && existing?.lastVerifiedAt !== undefined
+    && Date.now() - existing.lastVerifiedAt.getTime() < VERIFY_CACHE_MS;
 
-    if (existing.source === 'MANUAL') {
-      if (configured && recentlyVerified) {
-        return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
-      }
-      if (configured && await dirWorks(client, scope.nitradoServerId, configured)) {
-        await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
-          where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
-          data: { profileDir: configured, lastVerifiedAt: new Date(), lastError: null },
-        }));
-        return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
-      }
-      const message = 'Manuell konfiguriertes ADM-Verzeichnis ist bei Nitrado nicht erreichbar.';
-      await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
-        where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
-        data: { lastError: message },
-      }));
-      throw new Error(message);
+  if (existing?.source === 'MANUAL') {
+    if (configured && recentlyVerified) {
+      return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
     }
-
-    // AUTO/AUTO_SEARCH darf einen vorhandenen, aber leeren Pfad nicht dauerhaft
-    // cachen. Genau das passiert z.B. bei DayZ PS, wenn /logs existiert, die
-    // echten DayZServer_*.ADM-Dateien aber unter <gamePath>/config liegen.
-    if (configured && await admDirHasFiles(client, scope.nitradoServerId, configured)) {
+    if (configured && await dirWorks(client, scope.nitradoServerId, configured)) {
       await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
         where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
         data: { profileDir: configured, lastVerifiedAt: new Date(), lastError: null },
       }));
       return { profileDir: configured, timeZone: existing.timeZone, source: existing.source };
     }
+    const message = 'Manuell konfiguriertes ADM-Verzeichnis ist bei Nitrado nicht erreichbar.';
+    await runProfileWrite(writeFence, () => prisma.nitradoAdmProfileConfig.updateMany({
+      where: { id: existing.id, guildId: scope.guildId, nitradoConnId: scope.id },
+      data: { lastError: message },
+    }));
+    throw new Error(message);
+  }
+
+  // Den aktuell gespeicherten AUTO-Pfad weiterhin bei jedem Poll auf echte
+  // ADM-Dateien pruefen. Bei leerem/unerreichbarem Pfad erfolgt sofortige
+  // Heilung. Bei einem noch nicht abgelaufenen Freshness-Fenster vermeiden wir
+  // dagegen den teuren Vergleich aller bekannten Verzeichnisse.
+  const configuredFiles = configured
+    ? await listAdmFilesSafe(client, scope.nitradoServerId, configured)
+    : null;
+  if (configured && configuredFiles && configuredFiles.length > 0 && recentlyVerified) {
+    return {
+      profileDir: configured,
+      timeZone: existing?.timeZone ?? null,
+      source: existing?.source ?? 'AUTO',
+    };
   }
 
   const info = await client.getGameserverInfo(scope.nitradoServerId);
@@ -168,6 +184,10 @@ export async function resolveAdmProfile(
   const userRoot = username ? cleanRemoteDir(`/games/${username}`) : null;
 
   const candidates = unique([
+    // Ein bereits automatisch gefundener Custom-Pfad bleibt Kandidat, wird aber
+    // nach Ablauf des Freshness-Fensters nicht blind gegen frischere bekannte
+    // DayZ-Verzeichnisse bevorzugt.
+    configured,
     // Nitrado DayZ console layouts (PS/Xbox) commonly store DayZServer_*.ADM
     // directly in the config folder beneath game_specific.path.
     gamePath ? joinRemote(gamePath, 'config') : null,
@@ -183,25 +203,41 @@ export async function resolveAdmProfile(
   ]);
 
   let firstExisting: string | null = null;
+  let freshest: { dir: string; file: AdmFileListing[number] } | null = null;
   for (const candidate of candidates) {
-    try {
-      const entries = await client.listAdmFiles(scope.nitradoServerId, candidate);
-      if (!firstExisting) firstExisting = candidate;
-      if (entries.length > 0) {
-        return persistResolved(scope, candidate, 'AUTO', existing?.timeZone ?? null, writeFence);
-      }
-    } catch {
-      // Try next known DayZ layout.
+    const entries = candidate === configured && configuredFiles !== null
+      ? configuredFiles
+      : await listAdmFilesSafe(client, scope.nitradoServerId, candidate);
+    if (entries === null) continue;
+    if (!firstExisting) firstExisting = candidate;
+    const latest = latestAdmFile(entries);
+    if (!latest) continue;
+    if (
+      !freshest
+      || latest.modified_at > freshest.file.modified_at
+      || (latest.modified_at === freshest.file.modified_at && latest.name > freshest.file.name)
+    ) {
+      freshest = { dir: candidate, file: latest };
     }
   }
 
+  if (freshest) {
+    const source = existing && freshest.dir === configured ? existing.source : 'AUTO';
+    return persistResolved(scope, freshest.dir, source, existing?.timeZone ?? null, writeFence);
+  }
+
   // Ein vorhandenes, aber leeres Kandidatenverzeichnis darf die echte Suche
-  // nicht mehr kurzschliessen. Erst die rekursive Suche nach .ADM versuchen.
+  // nicht kurzschliessen. Erst die rekursive Suche nach .ADM versuchen.
   const roots = unique([gamePath, userRoot, '/games']);
   for (const root of roots) {
     try {
       const matches = await client.searchFiles(scope.nitradoServerId, root, '.ADM');
-      for (const match of matches) {
+      const sortedMatches = [...matches].sort((a, b) => {
+        const aModified = Number.isSafeInteger(a.modified_at) ? a.modified_at : -1;
+        const bModified = Number.isSafeInteger(b.modified_at) ? b.modified_at : -1;
+        return bModified - aModified || b.name.localeCompare(a.name);
+      });
+      for (const match of sortedMatches) {
         const location = match.path || match.name;
         if (!location.toLowerCase().includes('.adm')) continue;
         const normalized = cleanRemoteDir(location);
