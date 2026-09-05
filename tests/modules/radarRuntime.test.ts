@@ -50,7 +50,8 @@ function scannedEvent(id = 'adm-event-1') {
     id, eventType: 'PLAYER_POSITION', occurredAt: new Date('2026-09-04T10:01:00.000Z'),
     createdAt: new Date('2026-09-04T10:01:01.000Z'), actorGameId: 'guid-1', actorName: 'Player One',
     targetGameId: null, targetName: null, objectType: null, toolOrWeapon: null, distanceMeters: null,
-    actorPosition: '100, 12, 200', targetPosition: null,
+    // Standard DayZ ADM: map X, map Y, altitude.
+    actorPosition: '100, 200, 12', targetPosition: null,
   };
 }
 
