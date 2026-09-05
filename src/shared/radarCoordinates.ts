@@ -56,14 +56,15 @@ function finite(value: number): boolean {
 }
 
 /**
- * DayZ ADM positions use the engine vector order X, altitude, Z. Radar calls
- * the two horizontal values x/y so geometry never accidentally uses altitude.
+ * Canonical DayZ administration-log positions are written as map X, map Y,
+ * altitude (for example pos=<13212.8, 10124.8, 6.0>). Radar geometry uses the
+ * first two map coordinates and keeps the third value only as altitude.
  */
 export function parseAdmDayzPosition(raw: string | null | undefined): DayzPosition | null {
   if (!raw) return null;
   const values = raw.replace(/[<>]/g, '').split(',').map(part => Number(part.trim()));
   if (values.length !== 3 || values.some(value => !finite(value))) return null;
-  return { x: values[0], y: values[2], altitude: values[1] };
+  return { x: values[0], y: values[1], altitude: values[2] };
 }
 
 export function isPositionInsideMap(map: RadarMap, position: Pick<DayzPosition, 'x' | 'y'>): boolean {
