@@ -212,7 +212,7 @@ export function buildGameplayFeedEmbed(
       value: personWithPosition(view.actorName, view.actorPosition),
       inline: false,
     });
-    if (view.pvpHit?.weapon) addPvpHitFields(embed, view);
+    if (view.pvpHit) addPvpHitFields(embed, view);
     else addWeaponField(embed, view);
     if (typeof view.distanceMeters === 'number' && Number.isFinite(view.distanceMeters)) {
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
