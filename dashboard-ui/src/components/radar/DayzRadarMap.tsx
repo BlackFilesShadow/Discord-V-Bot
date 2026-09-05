@@ -53,12 +53,14 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { act
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
   const onMapClickRef = useRef(onMapClick);
+  const [mapReady, setMapReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
 
   useEffect(() => {
+    setMapReady(false);
     const calibration = RADAR_MAP_CALIBRATIONS[activeMap];
     const northWest = [...dayzToMapLibre(activeMap, { x: 0, y: 0 })] as [number, number];
     const southEast = [...dayzToMapLibre(activeMap, { x: calibration.widthMeters, y: calibration.heightMeters })] as [number, number];
@@ -80,6 +82,7 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { act
         if (point && isPositionInsideMap(activeMap, point)) onMapClickRef.current?.(point);
       });
       map.fitBounds([northWest, southEast], { padding: 24, duration: 0 });
+      setMapReady(true);
     });
     return () => { mapRef.current = null; map.remove(); };
   }, [activeMap]);
@@ -91,9 +94,31 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { act
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !focusPoint) return;
+    if (!map || !mapReady || !focusPoint) return;
     map.easeTo({ center: [...dayzToMapLibre(activeMap, focusPoint)] as [number, number], zoom: Math.max(map.getZoom(), 13), duration: 350 });
-  }, [activeMap, focusPoint?.x, focusPoint?.y]);
+  }, [activeMap, focusPoint?.x, focusPoint?.y, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const markers = zones.filter(zone => zone.isDraft).flatMap(zone => {
+      const points = zone.geometry.type === 'CIRCLE'
+        ? [{ x: zone.geometry.x, y: zone.geometry.y }]
+        : zone.geometry.points;
+      return points.map((point, index) => {
+        const element = document.createElement('div');
+        element.className = 'radar-zone-point';
+        element.title = zone.geometry.type === 'CIRCLE' ? 'Kreismittelpunkt' : `Polygonpunkt ${index + 1}`;
+        element.setAttribute('aria-hidden', 'true');
+        Object.assign(element.style, {
+          width: '22px', height: '22px', borderRadius: '9999px', background: '#dc2626', border: '3px solid #ffffff',
+          boxShadow: '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)', pointerEvents: 'none',
+        });
+        return new maplibregl.Marker({ element, anchor: 'center' }).setLngLat([...dayzToMapLibre(activeMap, point)] as [number, number]).addTo(map);
+      });
+    });
+    return () => { markers.forEach(marker => marker.remove()); };
+  }, [activeMap, mapReady, zones]);
 
   return <div className="relative h-[28rem] overflow-hidden border border-border/70"><div ref={container} className={`h-full w-full ${onMapClick ? 'cursor-crosshair' : ''}`} aria-label="DayZ Radar-Karte" /><p className="pointer-events-none absolute bottom-1 right-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">DayZ Central Economy · ADPL-SA</p>{error && <p role="alert" className="absolute inset-x-3 bottom-3 bg-bg/95 p-2 text-sm text-danger">{error}</p>}</div>;
 }

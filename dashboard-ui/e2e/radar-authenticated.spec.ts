@@ -68,6 +68,7 @@ test.describe('Authenticated Radar', () => {
     const editor = page.getByLabel('Radar-Zoneneditor');
     await expect(editor.getByLabel('DayZ Radar-Karte')).toBeVisible();
     await editor.getByLabel('DayZ Radar-Karte').click({ position: { x: 150, y: 150 } });
+    await expect(editor.locator('.radar-zone-point')).toHaveCount(1);
     const centerX = await editor.getByLabel('Mittelpunkt X').inputValue();
     const centerY = await editor.getByLabel('Mittelpunkt Y').inputValue();
     await editor.getByLabel('DayZ Radar-Karte').click({ position: { x: 250, y: 150 } });
@@ -98,6 +99,7 @@ test.describe('Authenticated Radar', () => {
     await map.click({ position: { x: 220, y: 120 } });
     await map.click({ position: { x: 180, y: 220 } });
     await expect(editor.getByText('3 Punkte gesetzt')).toBeVisible();
+    await expect(editor.locator('.radar-zone-point')).toHaveCount(3);
     await expect(editor.locator('ol li')).toHaveCount(3);
   });
 
