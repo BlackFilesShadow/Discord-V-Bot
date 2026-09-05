@@ -60,10 +60,24 @@ test.describe('Radar MapLibre GeoJSON rendering', () => {
     test.skip(testInfo.project.name === 'mobile-chrome', 'Dieser Rendervertrag verwendet explizite Desktop-Mausgesten.');
     await stubRadar(page);
 
+    let workerResponse: { status: number; contentType: string } | undefined;
+    page.on('response', response => {
+      const pathname = new URL(response.url()).pathname;
+      if (!pathname.endsWith('/maplibre-gl-worker.mjs')) return;
+      workerResponse = {
+        status: response.status(),
+        contentType: response.headers()['content-type'] ?? '',
+      };
+    });
+
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await editor.getByRole('button', { name: 'Polygon' }).click();
+
+    await expect.poll(() => workerResponse).toMatchObject({ status: 200 });
+    expect(workerResponse?.contentType).toMatch(/javascript|ecmascript/i);
+    expect(workerResponse?.contentType).not.toContain('text/html');
 
     const map = editor.getByLabel('DayZ Radar-Karte');
     await map.scrollIntoViewIfNeeded();
