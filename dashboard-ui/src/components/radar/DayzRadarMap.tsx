@@ -22,7 +22,7 @@ function circlePoints(map: RadarMap, x: number, y: number, radiusMeters: number)
   });
 }
 
-function featureCollection(map: RadarMap, zones: MapZone[]): FeatureCollection {
+function featureCollection(map: RadarMap, zones: MapZone[], previewPoint?: Point): FeatureCollection {
   const features: Feature[] = [];
   for (const zone of zones) {
     const properties = { id: zone.id, name: zone.name, active: zone.isActive, draft: zone.isDraft === true };
@@ -40,6 +40,10 @@ function featureCollection(map: RadarMap, zones: MapZone[]): FeatureCollection {
           ? { type: 'LineString', coordinates: points }
           : { type: 'Point', coordinates: points[0] ?? [0, 0] },
     });
+    if (zone.isDraft && points.length > 0 && previewPoint) {
+      const previewLine = [...points, [...dayzToMapLibre(map, previewPoint)]];
+      if (previewLine.length >= 2) features.push({ type: 'Feature', properties: { ...properties, drawing: true }, geometry: { type: 'LineString', coordinates: previewLine } });
+    }
     zone.geometry.points.forEach((point, index) => features.push({ type: 'Feature', properties: { ...properties, vertex: index + 1 }, geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, point)] } }));
   }
   return {
@@ -48,16 +52,24 @@ function featureCollection(map: RadarMap, zones: MapZone[]): FeatureCollection {
   };
 }
 
-export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void; focusPoint?: Point }) {
+export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoint, circleCenter, circleRadiusMode, onCircleRadiusChange, previewPoint }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void; onMapMove?: (point: Point) => void; focusPoint?: Point; circleCenter?: Point; circleRadiusMode?: boolean; onCircleRadiusChange?: (radiusMeters: number) => void; previewPoint?: Point }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
   const onMapClickRef = useRef(onMapClick);
+  const onMapMoveRef = useRef(onMapMove);
+  const circleCenterRef = useRef(circleCenter);
+  const circleRadiusModeRef = useRef(circleRadiusMode);
+  const onCircleRadiusChangeRef = useRef(onCircleRadiusChange);
   const [mapReady, setMapReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
+  useEffect(() => { onMapMoveRef.current = onMapMove; }, [onMapMove]);
+  useEffect(() => { circleCenterRef.current = circleCenter; }, [circleCenter]);
+  useEffect(() => { circleRadiusModeRef.current = circleRadiusMode; }, [circleRadiusMode]);
+  useEffect(() => { onCircleRadiusChangeRef.current = onCircleRadiusChange; }, [onCircleRadiusChange]);
 
   useEffect(() => {
     setMapReady(false);
@@ -73,13 +85,46 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { act
     map.on('load', () => {
       map.addSource('basemap', { type: 'image', url: `/radar/maps/${activeMap.toLowerCase()}.png`, coordinates: [northWest, [southEast[0], northWest[1]], southEast, [northWest[0], southEast[1]]] });
       map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' });
-      map.addSource('zones', { type: 'geojson', data: featureCollection(activeMap, zonesRef.current) });
+      map.addSource('zones', { type: 'geojson', data: featureCollection(activeMap, zonesRef.current, previewPoint) });
       map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['case', ['get', 'draft'], 0.3, 0.22] } });
       map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': '#dc2626', 'line-width': ['case', ['get', 'draft'], 4, 3] } });
       map.addLayer({ id: 'zone-vertices', type: 'circle', source: 'zones', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 9, 'circle-color': '#dc2626', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
       map.on('click', event => {
         const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
         if (point && isPositionInsideMap(activeMap, point)) onMapClickRef.current?.(point);
+      });
+      let resizingCircle = false;
+      let previewFrame: number | undefined;
+      let queuedPreviewPoint: Point | undefined;
+      const setCircleRadius = (event: maplibregl.MapMouseEvent) => {
+        const center = circleCenterRef.current;
+        const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
+        if (center && point && isPositionInsideMap(activeMap, point)) onCircleRadiusChangeRef.current?.(Math.max(1, Math.round(Math.hypot(point.x - center.x, point.y - center.y))));
+      };
+      map.on('mousedown', event => {
+        if (!circleRadiusModeRef.current || !circleCenterRef.current || !onCircleRadiusChangeRef.current) return;
+        resizingCircle = true;
+        map.dragPan.disable();
+        setCircleRadius(event);
+      });
+      map.on('mousemove', event => {
+        const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
+        const hasPolygonPoint = zonesRef.current.some(zone => zone.isDraft && zone.geometry.type === 'POLYGON' && zone.geometry.points.length > 0);
+        if (point && hasPolygonPoint && isPositionInsideMap(activeMap, point)) {
+          queuedPreviewPoint = point;
+          if (previewFrame === undefined) {
+            previewFrame = requestAnimationFrame(() => {
+              previewFrame = undefined;
+              if (queuedPreviewPoint) onMapMoveRef.current?.(queuedPreviewPoint);
+            });
+          }
+        }
+        if (resizingCircle) setCircleRadius(event);
+      });
+      map.on('mouseup', () => {
+        if (!resizingCircle) return;
+        resizingCircle = false;
+        map.dragPan.enable();
       });
       map.fitBounds([northWest, southEast], { padding: 24, duration: 0 });
       setMapReady(true);
@@ -89,8 +134,8 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, focusPoint }: { act
 
   useEffect(() => {
     const source = mapRef.current?.getSource('zones') as GeoJSONSource | undefined;
-    source?.setData(featureCollection(activeMap, zones));
-  }, [activeMap, zones]);
+    source?.setData(featureCollection(activeMap, zones, previewPoint));
+  }, [activeMap, previewPoint?.x, previewPoint?.y, zones]);
 
   useEffect(() => {
     const map = mapRef.current;

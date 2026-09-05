@@ -72,7 +72,14 @@ test.describe('Authenticated Radar', () => {
     await expect(editor.locator('.radar-zone-point')).toHaveCount(1);
     const centerX = await editor.getByLabel('Mittelpunkt X').inputValue();
     const centerY = await editor.getByLabel('Mittelpunkt Y').inputValue();
-    await editor.getByLabel('DayZ Radar-Karte').click({ position: { x: 250, y: 150 } });
+    const mapBox = await editor.getByLabel('DayZ Radar-Karte').boundingBox();
+    expect(mapBox).not.toBeNull();
+    if (mapBox) {
+      await page.mouse.move(mapBox.x + 170, mapBox.y + 180);
+      await page.mouse.down();
+      await page.mouse.move(mapBox.x + 300, mapBox.y + 250, { steps: 5 });
+      await page.mouse.up();
+    }
     await expect(editor.getByLabel('Mittelpunkt X')).toHaveValue(centerX);
     await expect(editor.getByLabel('Mittelpunkt Y')).toHaveValue(centerY);
     await expect(editor.getByText('Kreisradius', { exact: false })).toContainText(/(?!100 m)\d+ m/);
