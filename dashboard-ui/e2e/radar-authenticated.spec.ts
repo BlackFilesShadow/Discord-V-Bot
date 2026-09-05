@@ -5,6 +5,7 @@ const SLOT = '1';
 const CONNECTION_ID = 'c123456789012345678901234';
 const CHANNEL_ID = '523456789012345678';
 const ROLE_ID = '623456789012345678';
+const USER_DISCORD_ID = 'radar-e2e-user';
 
 interface Mutation { method: string; path: string; query: string; body: unknown }
 
@@ -15,8 +16,8 @@ async function json(route: Route, body: unknown, status = 200): Promise<void> {
 async function stubRadar(page: Page): Promise<Mutation[]> {
   const mutations: Mutation[] = [];
   let zones: Array<Record<string, unknown>> = [];
-  await page.route('**/api/me', route => json(route, { user: { discordId: '437718598876268545', username: 'radar-e2e', avatar: null, role: 'DEVELOPER' } }));
-  await page.route('**/auth/status', route => json(route, { authenticated: true, user: { discordId: '437718598876268545', username: 'radar-e2e', avatar: null, role: 'DEVELOPER' } }));
+  await page.route('**/api/me', route => json(route, { user: { discordId: USER_DISCORD_ID, username: 'radar-e2e', avatar: null, role: 'DEVELOPER' } }));
+  await page.route('**/auth/status', route => json(route, { authenticated: true, user: { discordId: USER_DISCORD_ID, username: 'radar-e2e', avatar: null, role: 'DEVELOPER' } }));
   await page.route('**/api/v2/**', async route => {
     const request = route.request();
     const url = new URL(request.url());

@@ -50,7 +50,8 @@ log "System aktualisiert"
 
 # ----- Abhängigkeiten installieren -----
 info "Abhängigkeiten werden installiert..."
-apt-get install -y -qq curl git build-essential ca-certificates gnupg lsb-release ufw fail2ban logrotate
+apt-get install -y -qq curl git git-lfs build-essential ca-certificates gnupg lsb-release ufw fail2ban logrotate
+git lfs install --system
 log "Abhängigkeiten installiert"
 
 # ----- Node.js 22 LTS installieren -----

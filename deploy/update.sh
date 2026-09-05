@@ -40,6 +40,10 @@ info "Git fetch + reset auf origin/main..."
 OLD_COMMIT=$(git rev-parse --short HEAD || echo "unknown")
 git fetch origin main
 git reset --hard origin/main
+if ! command -v git-lfs >/dev/null 2>&1; then
+  err "Git LFS fehlt. Vor dem Deployment git-lfs installieren; Radar-Kartenassets werden sonst nicht vollstaendig ausgecheckt."
+fi
+git lfs pull || err "Git-LFS-Assets konnten nicht geladen werden. Deployment abgebrochen."
 NEW_COMMIT=$(git rev-parse --short HEAD)
 
 if [[ "$OLD_COMMIT" == "$NEW_COMMIT" ]]; then
