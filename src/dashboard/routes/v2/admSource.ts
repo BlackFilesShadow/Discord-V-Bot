@@ -135,9 +135,14 @@ admSourceRouter.patch('/', requireGuildPermission('killfeed.manage'), async (req
     }
 
     const timeZoneChanged = before.timeZone !== saved.timeZone;
-    const timeRebaseline = timeZoneChanged
+    // Ein explizites reines Zeitzonen-Speichern rebaselined auch bei gleichem
+    // Wert. Das ist idempotent, repariert aber bereits durch den alten Bug um
+    // +24h verschobene Continuation-Anker ohne Cursor-/Feed-Reset.
+    const shouldRebaselineTimeZone = hasTimeZone && (!hasProfileDir || timeZoneChanged);
+    const timeRebaseline = shouldRebaselineTimeZone
       ? await writeFence(() => rebaselineAdmTimeZoneAnchor(
           { guildId: ctx.guildId, nitradoConnId: ctx.binding.id },
+          before.timeZone,
           saved.timeZone,
         ))
       : null;
