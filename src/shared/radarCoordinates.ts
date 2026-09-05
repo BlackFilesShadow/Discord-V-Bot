@@ -56,14 +56,17 @@ function finite(value: number): boolean {
 }
 
 /**
- * DayZ ADM positions use the engine vector order X, altitude, Z. Radar calls
- * the two horizontal values x/y so geometry never accidentally uses altitude.
+ * DayZ console ADM positions are emitted as X, map-Y, altitude. Radar keeps
+ * the first two values as the horizontal map coordinates and stores the third
+ * value separately as altitude. Production examples such as
+ * `4769.7, 9525.0, 340.4` make this distinction observable: 9525 is a valid
+ * Chernarus map coordinate while 340.4 is the plausible terrain altitude.
  */
 export function parseAdmDayzPosition(raw: string | null | undefined): DayzPosition | null {
   if (!raw) return null;
   const values = raw.replace(/[<>]/g, '').split(',').map(part => Number(part.trim()));
   if (values.length !== 3 || values.some(value => !finite(value))) return null;
-  return { x: values[0], y: values[2], altitude: values[1] };
+  return { x: values[0], y: values[1], altitude: values[2] };
 }
 
 export function isPositionInsideMap(map: RadarMap, position: Pick<DayzPosition, 'x' | 'y'>): boolean {

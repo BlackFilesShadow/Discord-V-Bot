@@ -50,7 +50,7 @@ function scannedEvent(id = 'adm-event-1') {
     id, eventType: 'PLAYER_POSITION', occurredAt: new Date('2026-09-04T10:01:00.000Z'),
     createdAt: new Date('2026-09-04T10:01:01.000Z'), actorGameId: 'guid-1', actorName: 'Player One',
     targetGameId: null, targetName: null, objectType: null, toolOrWeapon: null, distanceMeters: null,
-    actorPosition: '100, 12, 200', targetPosition: null,
+    actorPosition: '100, 200, 12', targetPosition: null,
   };
 }
 
@@ -117,6 +117,39 @@ describe('Radar-Worker', () => {
     expect(radarEventCreate).toHaveBeenCalledTimes(2);
     expect(realtimeEmit).toHaveBeenCalledWith(expect.objectContaining({
       radarEventId: 'radar-event-1', functionKey: 'PLAYER_DETECTION', x: 100, y: 200,
+    }));
+  });
+
+  it('matched reale Chernarus-ADM-Koordinaten gegen die gespeicherte Produktionszone', async () => {
+    const event = {
+      ...scannedEvent('adm-production-1'),
+      actorName: 'Oo_KirscHi_oO',
+      actorGameId: 'bNlNN_3Pu14USUjUdElHfo-HzSPmpZtIGndfOqCo2l8=',
+      actorPosition: '7808.7, 5138.3, 215.7',
+    };
+    admEventFind.mockResolvedValue([event]);
+    radarZoneFind.mockResolvedValue([circleZone({
+      id: 'prod-zone-test1',
+      centerX: 5287.122,
+      centerY: 5893.028,
+      radiusMeters: 4774,
+      minX: 513.122,
+      minY: 1119.028,
+      maxX: 10061.122,
+      maxY: 10667.028,
+    })]);
+
+    await runRadarRuntimeOnce();
+
+    expect(radarEventCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        zoneId: 'prod-zone-test1',
+        admEventId: 'adm-production-1',
+        functionKey: 'PLAYER_DETECTION',
+        x: 7808.7,
+        y: 5138.3,
+        altitude: 215.7,
+      }),
     }));
   });
 

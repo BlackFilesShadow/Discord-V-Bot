@@ -13,7 +13,7 @@ function event(overrides: Partial<RadarAdmEvent> = {}): RadarAdmEvent {
     objectType: null,
     toolOrWeapon: null,
     distanceMeters: null,
-    actorPosition: '4382.5, 213.6, 10216.4',
+    actorPosition: '4382.5, 10216.4, 213.6',
     targetPosition: null,
     ...overrides,
   };
