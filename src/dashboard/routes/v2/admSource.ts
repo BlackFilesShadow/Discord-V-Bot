@@ -10,6 +10,7 @@ import {
   resolveAdmProfile,
   setManualAdmProfile,
 } from '../../../modules/nitrado/adm/profileResolver';
+import { rebaselineAdmTimeZoneAnchor } from '../../../modules/nitrado/adm/timeZoneRebaseline';
 import {
   isAdmBindingFenceError,
   readCurrentAdmBinding,
@@ -95,25 +96,52 @@ admSourceRouter.patch('/', requireGuildPermission('killfeed.manage'), async (req
   try {
     const ctx = await resolveSlotContext(req, res);
     if (!ctx) return;
-    const profileDir = req.body?.profileDir;
-    const timeZoneRaw = req.body?.timeZone;
-    if (typeof profileDir !== 'string' || !profileDir.trim()) {
-      res.status(400).json({ error: 'profileDir ist erforderlich.' });
+
+    const body = req.body ?? {};
+    const profileDirRaw = body.profileDir;
+    const hasProfileDir = typeof profileDirRaw === 'string' && profileDirRaw.trim().length > 0;
+    const hasTimeZone = Object.prototype.hasOwnProperty.call(body, 'timeZone');
+    if (!hasProfileDir && !hasTimeZone) {
+      res.status(400).json({ error: 'profileDir oder timeZone ist erforderlich.' });
       return;
     }
+
+    const timeZoneRaw = body.timeZone;
     const timeZone = timeZoneRaw == null || String(timeZoneRaw).trim() === '' ? null : String(timeZoneRaw).trim();
     if (timeZone && !isValidIanaTimeZone(timeZone)) {
       res.status(400).json({ error: 'timeZone muss eine gueltige IANA-Zeitzone sein, z.B. Europe/Berlin.' });
       return;
     }
+
     const writeFence = <T>(work: () => Promise<T>): Promise<T> => withFreshAdmBinding(ctx.binding, work);
-    const saved = await setManualAdmProfile(
-      { id: ctx.binding.id, guildId: ctx.guildId, nitradoServerId: ctx.binding.nitradoServerId },
-      ctx.client,
-      profileDir,
-      timeZone,
-      writeFence,
-    );
+    const scope = { id: ctx.binding.id, guildId: ctx.guildId, nitradoServerId: ctx.binding.nitradoServerId };
+    const before = await resolveAdmProfile(scope, ctx.client, writeFence);
+
+    let saved = before;
+    if (hasProfileDir) {
+      saved = await setManualAdmProfile(
+        scope,
+        ctx.client,
+        String(profileDirRaw).trim(),
+        timeZone,
+        writeFence,
+      );
+    } else {
+      await writeFence(() => prisma.nitradoAdmProfileConfig.updateMany({
+        where: { guildId: ctx.guildId, nitradoConnId: ctx.binding.id },
+        data: { timeZone, lastVerifiedAt: new Date(), lastError: null },
+      }));
+      saved = { ...before, timeZone };
+    }
+
+    const timeZoneChanged = before.timeZone !== saved.timeZone;
+    const timeRebaseline = timeZoneChanged
+      ? await writeFence(() => rebaselineAdmTimeZoneAnchor(
+          { guildId: ctx.guildId, nitradoConnId: ctx.binding.id },
+          saved.timeZone,
+        ))
+      : null;
+
     logAuditDb('NITRADO_ADM_SOURCE_UPDATED', 'NITRADO', {
       actorUserId: req.auth!.userId,
       guildId: ctx.guildId,
@@ -122,10 +150,13 @@ admSourceRouter.patch('/', requireGuildPermission('killfeed.manage'), async (req
         nitradoConnId: ctx.binding.id,
         bindingVersion: ctx.binding.bindingVersion,
         profileDir: saved.profileDir,
+        source: saved.source,
+        previousTimeZone: before.timeZone,
         timeZone: saved.timeZone,
+        timeRebaseline,
       },
     });
-    res.json({ ok: true, ...saved });
+    res.json({ ok: true, ...saved, timeRebaseline });
   } catch (error) {
     sendAdmError(res, error, 400);
   }

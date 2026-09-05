@@ -56,6 +56,7 @@ const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMar
 const CURRENT_BLACK_MARKET_DISCORD_SETTINGS = 'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx';
 const CURRENT_NITRADO_DRIFT_BANNER = 'dashboard-ui/src/components/NitradoDriftBanner.tsx';
 const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
+const CURRENT_ADM_TIME_ZONE_CARD = 'dashboard-ui/src/components/AdmTimeZoneCard.tsx';
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_SERVER_SLOT = 'dashboard-ui/src/pages/ServerSlot.tsx';
 const CURRENT_FUNCTION_HELP_BUTTON = 'dashboard-ui/src/components/ui/FunctionHelpButton.tsx';
@@ -70,6 +71,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_BLACK_MARKET_DISCORD_SETTINGS,
   CURRENT_NITRADO_DRIFT_BANNER,
   CURRENT_KILLFEED_PANEL,
+  CURRENT_ADM_TIME_ZONE_CARD,
   CURRENT_GOODBYE_PANEL,
   CURRENT_SERVER_SLOT,
   CURRENT_FUNCTION_HELP_BUTTON,

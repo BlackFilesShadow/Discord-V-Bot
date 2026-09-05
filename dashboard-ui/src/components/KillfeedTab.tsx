@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
 import { useToast } from '@/components/ui/Toast';
 import { useModalA11y } from '@/lib/useModalA11y';
+import { AdmTimeZoneCard } from '@/components/AdmTimeZoneCard';
 
 type FeedKind = 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
 type DeathCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
@@ -173,6 +174,8 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
           </Button>
         </div>
       </div>
+
+      <AdmTimeZoneCard guildId={guildId} slot={activeSlot} />
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 max-w-5xl">
         <button type="button" onClick={() => { setKind('DEATH'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'DEATH' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>💀 Deathfeed</button>
