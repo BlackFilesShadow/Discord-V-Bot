@@ -1,18 +1,35 @@
-import { defineConfig } from 'vite';
+import { readFileSync } from 'node:fs';
+import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+
+const MAPLIBRE_WORKER_FILES = ['maplibre-gl-worker.mjs', 'maplibre-gl-shared.mjs'] as const;
+const MAPLIBRE_DIST_DIR = path.resolve(__dirname, 'node_modules/maplibre-gl/dist');
+
+function maplibreWorkerAssets(): Plugin {
+  return {
+    name: 'maplibre-worker-assets',
+    apply: 'build',
+    generateBundle() {
+      for (const fileName of MAPLIBRE_WORKER_FILES) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `assets/${fileName}`,
+          source: readFileSync(path.join(MAPLIBRE_DIST_DIR, fileName)),
+        });
+      }
+    },
+  };
+}
 
 // Build-Output direkt ins Express-static-Verzeichnis des Bots.
 // Im Dev-Mode laeuft Vite auf Port 5173 und proxied /api + /auth + /socket.io
 // an den Bot (Port 3000), damit Cookies/Sessions nahtlos weiterreichen.
 export default defineConfig({
-  plugins: [react()],
-  // MapLibre GL v6 ships its worker as ESM. Vite dependency pre-bundling can
-  // rewrite that worker import in a way that leaves runtime GeoJSON sources
-  // alive but their fill/line layers invisible. DOM markers still render,
-  // which made the radar editor look as if only its handles existed.
-  // Keep MapLibre out of optimizeDeps so Vite preserves the package's worker
-  // boundary exactly as published.
+  plugins: [react(), maplibreWorkerAssets()],
+  // Im Dev-Server bleibt MapLibre ausserhalb des Dependency-Prebundlings,
+  // damit sein ESM-Worker als echtes Paket-Sibling aufloesbar bleibt. Der
+  // Production-Build wird separat durch maplibreWorkerAssets() abgesichert.
   optimizeDeps: {
     exclude: ['maplibre-gl'],
   },
