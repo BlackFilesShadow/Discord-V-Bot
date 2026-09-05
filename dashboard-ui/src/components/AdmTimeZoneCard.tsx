@@ -47,6 +47,8 @@ export function AdmTimeZoneCard({ guildId, slot }: { guildId: string; slot: numb
   const normalized = timeZone.trim();
   const stored = sourceQuery.data?.timeZone ?? '';
   const dirty = normalized !== stored;
+  const rebaselineOnly = !dirty && stored.length > 0;
+  const canSubmit = dirty || rebaselineOnly;
 
   const save = async () => {
     setSaving(true);
@@ -55,7 +57,9 @@ export function AdmTimeZoneCard({ guildId, slot }: { guildId: string; slot: numb
         timeZone: normalized || null,
       });
       await sourceQuery.refetch();
-      toast.success('ADM-Zeitzone gespeichert. Neue Ereignisse werden mit der korrigierten Zeitbasis verarbeitet.');
+      toast.success(rebaselineOnly
+        ? 'ADM-Zeitbasis neu geprüft. Der aktuelle Fortsetzungsanker wurde sicher rebaselined.'
+        : 'ADM-Zeitzone gespeichert. Neue Ereignisse werden mit der korrigierten Zeitbasis verarbeitet.');
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : 'ADM-Zeitzone konnte nicht gespeichert werden.');
     } finally {
@@ -107,8 +111,8 @@ export function AdmTimeZoneCard({ guildId, slot }: { guildId: string; slot: numb
                 {COMMON_TIME_ZONES.map(zone => <option key={zone} value={zone} />)}
               </datalist>
             </label>
-            <Button onClick={() => void save()} loading={saving} disabled={saving || !dirty}>
-              Zeitzone speichern
+            <Button onClick={() => void save()} loading={saving} disabled={saving || !canSubmit}>
+              {rebaselineOnly ? 'Zeitbasis neu prüfen' : 'Zeitzone speichern'}
             </Button>
           </div>
 
