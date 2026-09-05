@@ -100,14 +100,16 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
 
   const activeMap = config.data?.activeMap ?? 'CHERNARUS';
   const editing = editorId === 'new' || typeof editorId === 'string';
-  const editorError = detail.error ?? channels.error ?? roles.error ?? saveZone.error ?? deleteZone.error;
+  const editorLoadError = detail.error ?? channels.error ?? roles.error ?? players.error;
+  const mutationError = saveZone.error ?? deleteZone.error;
+  const editorLoading = detail.isLoading || channels.isLoading || roles.isLoading || players.isLoading;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       <Card>
         <CardHeader><CardTitle>Radar-Karte</CardTitle></CardHeader>
-        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-          <label className="space-y-1.5 text-sm text-muted">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+          <label className="space-y-2 text-sm text-muted">
             <span>Aktive Karte dieses Slots</span>
             <Select
               aria-label="Aktive Radar-Karte"
@@ -120,10 +122,10 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
           </label>
           <Badge variant="info">2.5D vorbereitet</Badge>
         </div>
-        <p className="mt-3 text-xs text-muted">Zonen anderer Karten bleiben gespeichert und werden erst mit ihrer aktiven Karte ausgewertet.</p>
-        {updateConfig.isError && <p role="alert" className="mt-3 text-sm text-danger">{describeApiError(updateConfig.error).desc}</p>}
-        <div className="mt-4">
-          <Suspense fallback={<div className="h-[28rem] border border-border/70" aria-label="Radar-Karte wird geladen" />}>
+        <p className="mt-4 text-xs leading-relaxed text-muted">Zonen anderer Karten bleiben gespeichert und werden erst mit ihrer aktiven Karte ausgewertet.</p>
+        {updateConfig.isError && <p role="alert" className="mt-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(updateConfig.error).desc}</p>}
+        <div className="mt-5">
+          <Suspense fallback={<div className="h-[28rem] rounded-lg border border-border/70" aria-label="Radar-Karte wird geladen" />}>
             <DayzRadarMap activeMap={activeMap} zones={(zones.data?.zones ?? [])
               .filter(zone => zone.map === activeMap)
               .map(zone => ({ id: zone.id, name: zone.name, isActive: zone.isActive, geometry: zone.geometry }))} />
@@ -131,33 +133,36 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
         </div>
       </Card>
 
-      {editing && canManage && <Card>
+      {editing && canManage && <Card className="p-5 sm:p-6">
         <CardHeader><CardTitle>{editorId === 'new' ? 'Neue Radar-Zone' : 'Radar-Zone bearbeiten'}</CardTitle></CardHeader>
-        {detail.isLoading || channels.isLoading || roles.isLoading || players.isLoading ? <p className="text-sm text-muted">Lade Editor...</p> : editorError ? <p role="alert" className="text-sm text-danger">{describeApiError(editorError).desc}</p> : <ZoneEditor activeMap={activeMap} functions={(functions.data?.functions ?? []) as RadarFunctionDefinition[]} channels={channels.data?.channels ?? []} roles={roles.data?.roles ?? []} players={players.data?.players ?? []} zone={detail.data?.zone ?? null} saving={saveZone.isPending} deleting={deleteZone.isPending} onSave={payload => saveZone.mutate(payload)} onDelete={zone => deleteZone.mutate(zone)} />}
+        {editorLoading ? <p className="text-sm text-muted">Lade Editor...</p> : editorLoadError ? <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(editorLoadError).desc}</p> : <>
+          {mutationError && <p role="alert" className="mb-5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(mutationError).desc}</p>}
+          <ZoneEditor activeMap={activeMap} functions={(functions.data?.functions ?? []) as RadarFunctionDefinition[]} channels={channels.data?.channels ?? []} roles={roles.data?.roles ?? []} players={players.data?.players ?? []} zone={detail.data?.zone ?? null} saving={saveZone.isPending} deleting={deleteZone.isPending} onSave={payload => saveZone.mutate(payload)} onDelete={zone => deleteZone.mutate(zone)} />
+        </>}
       </Card>}
 
       <Card>
         <CardHeader><CardTitle>Radar-Funktionen</CardTitle></CardHeader>
-        <div className="grid grid-cols-6 gap-3 overflow-x-auto" aria-label="Radar-Funktionen">
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))]" aria-label="Radar-Funktionen">
           {(functions.data?.functions ?? []).map(definition => (
-            <div key={definition.key} className="min-w-28 border border-border/70 bg-bg-elev/40 p-3 text-center text-xs text-white">
+            <div key={definition.key} className="min-w-0 rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-center text-xs text-white">
               <MapPinned className="mx-auto mb-2 h-4 w-4 text-accent" aria-hidden="true" />
-              <p className="break-words">{definition.label}</p>
-              <p className="mt-1 text-[10px] text-muted">{definition.defaultEnabled ? 'Standard: AN' : 'Standard: AUS'}</p>
+              <p className="break-words font-medium">{definition.label}</p>
+              <p className="mt-1.5 text-[10px] text-muted">{definition.defaultEnabled ? 'Standard: AN' : 'Standard: AUS'}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Gespeicherte Zonen</CardTitle>{canManage && <Button size="sm" onClick={openNewEditor}><Plus className="h-4 w-4" />Zone</Button>}</CardHeader>
+        <CardHeader className="justify-between gap-4"><CardTitle>Gespeicherte Zonen</CardTitle>{canManage && <Button size="sm" onClick={openNewEditor}><Plus className="h-4 w-4" />Zone</Button>}</CardHeader>
         {zones.isLoading ? <p className="text-sm text-muted">Lade Zonen...</p> : (zones.data?.zones.length ?? 0) === 0 ? <p className="text-sm text-muted">Noch keine Radar-Zone für diesen Slot gespeichert.</p> : (
           <div className="space-y-3">
             {zones.data?.zones.map(zone => (
-              <div key={zone.id} className="border border-border/70 bg-bg-elev/40 p-3 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
-                <p className="mt-1 text-muted">{MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`}</p>
-                <p className="mt-1 text-muted">Funktionen: {zone.enabledFunctions.length} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}</p>
+              <div key={zone.id} className="rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
+                <p className="mt-2 text-muted">{MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`}</p>
+                <p className="mt-1.5 text-muted">Funktionen: {zone.enabledFunctions.length} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}</p>
               </div>
             ))}
           </div>
