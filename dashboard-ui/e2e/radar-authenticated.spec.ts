@@ -70,7 +70,8 @@ function overflow(page: Page): Promise<number> {
 }
 
 test.describe('Authenticated Radar', () => {
-  test('rendert die lokale Basemap, zieht einen stabilen Kreis und speichert im exakten Slot-Scope', async ({ page }) => {
+  test('rendert die lokale Basemap, zieht einen stabilen Kreis und speichert im exakten Slot-Scope', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile-chrome', 'Dieser Vertrag simuliert explizit eine Desktop-Maus. Mobile Rendering- und Layout-Verträge werden separat geprüft.');
     const mutations = await stubRadar(page);
     const image = page.waitForResponse(response => response.url().endsWith('/radar/maps/chernarus.png') && response.status() === 200);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
@@ -128,7 +129,8 @@ test.describe('Authenticated Radar', () => {
     });
   });
 
-  test('hält ein Polygon bis zum bewussten Klick auf den ersten Punkt offen und verfeinert es danach', async ({ page }) => {
+  test('hält ein Polygon bis zum bewussten Klick auf den ersten Punkt offen und verfeinert es danach', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name === 'mobile-chrome', 'Dieser Vertrag simuliert explizit Desktop-Maus-Drag auf MapLibre-Markern. Mobile Rendering- und Layout-Verträge werden separat geprüft.');
     await stubRadar(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
