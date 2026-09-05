@@ -68,21 +68,34 @@ test.describe('Authenticated Radar', () => {
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await expect(editor.getByLabel('DayZ Radar-Karte')).toBeVisible();
-    await editor.getByLabel('DayZ Radar-Karte').click({ position: { x: 150, y: 150 } });
-    await expect(editor.locator('.radar-zone-point')).toHaveCount(1);
-    const centerX = await editor.getByLabel('Mittelpunkt X').inputValue();
-    const centerY = await editor.getByLabel('Mittelpunkt Y').inputValue();
+    const map = editor.getByLabel('DayZ Radar-Karte');
+    await map.scrollIntoViewIfNeeded();
     const mapBox = await editor.getByLabel('DayZ Radar-Karte').boundingBox();
     expect(mapBox).not.toBeNull();
     if (mapBox) {
-      await page.mouse.move(mapBox.x + 170, mapBox.y + 180);
+      await page.mouse.move(mapBox.x + 150, mapBox.y + 150);
       await page.mouse.down();
       await page.mouse.move(mapBox.x + 300, mapBox.y + 250, { steps: 5 });
       await page.mouse.up();
     }
+    await expect(editor.locator('.radar-zone-point')).toHaveCount(1);
+    const centerX = await editor.getByLabel('Mittelpunkt X').inputValue();
+    const centerY = await editor.getByLabel('Mittelpunkt Y').inputValue();
+    const radiusHandle = page.locator('.radar-zone-radius-handle');
+    await expect(radiusHandle).toBeVisible();
+    const handleBox = await radiusHandle.boundingBox();
+    expect(handleBox).not.toBeNull();
+    if (handleBox) {
+      await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(handleBox.x + 50, handleBox.y + 35, { steps: 5 });
+      await page.mouse.up();
+    }
     await expect(editor.getByLabel('Mittelpunkt X')).toHaveValue(centerX);
     await expect(editor.getByLabel('Mittelpunkt Y')).toHaveValue(centerY);
-    await expect(editor.getByText('Kreisradius', { exact: false })).toContainText(/(?!100 m)\d+ m/);
+    await expect(editor.getByText(/^Kreisradius \d+ m$/)).not.toHaveText('Kreisradius 100 m');
+    await editor.getByLabel('Kreisradius in Metern').fill('275');
+    await expect(editor.getByText('Kreisradius 275 m')).toBeVisible();
     await editor.getByLabel('Bekannten Spieler auswählen').selectOption('K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=');
     await editor.getByRole('button', { name: 'Ausgewählten Spieler zur Allowlist hinzufügen' }).click();
     await expect(editor.getByText('XboxWache ·', { exact: false })).toBeVisible();
@@ -99,19 +112,43 @@ test.describe('Authenticated Radar', () => {
     });
   });
 
-  test('zeichnet eine Polygonzone präzise Punkt für Punkt auf der Karte', async ({ page }) => {
+  test('zeichnet, schließt und verfeinert eine Polygonzone auf der Karte', async ({ page }) => {
     await stubRadar(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await editor.getByRole('button', { name: 'Polygon' }).click();
     const map = editor.getByLabel('DayZ Radar-Karte');
+    await map.scrollIntoViewIfNeeded();
     await map.click({ position: { x: 120, y: 120 } });
     await map.click({ position: { x: 220, y: 120 } });
     await map.click({ position: { x: 180, y: 220 } });
     await expect(editor.getByText('3 Punkte gesetzt')).toBeVisible();
     await expect(editor.locator('.radar-zone-point')).toHaveCount(3);
     await expect(editor.locator('ol li')).toHaveCount(3);
+    await expect(editor.getByRole('button', { name: 'Polygonpunkt 1 entfernen' })).toBeDisabled();
+    await editor.locator('.radar-zone-point').first().click();
+    await expect(editor.getByText('Ziehe rote Eckpunkte zum Bearbeiten', { exact: false })).toBeVisible();
+    const vertex = page.locator('.radar-zone-point').nth(1);
+    const vertexBox = await vertex.boundingBox();
+    expect(vertexBox).not.toBeNull();
+    if (vertexBox) {
+      await page.mouse.move(vertexBox.x + vertexBox.width / 2, vertexBox.y + vertexBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(vertexBox.x + 30, vertexBox.y + 20, { steps: 4 });
+      await page.mouse.up();
+    }
+    const insertHandle = page.locator('.maplibregl-marker').nth(3);
+    const insertBox = await insertHandle.boundingBox();
+    expect(insertBox).not.toBeNull();
+    if (insertBox) {
+      await page.mouse.move(insertBox.x + insertBox.width / 2, insertBox.y + insertBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(insertBox.x + 15, insertBox.y + 15, { steps: 3 });
+      await page.mouse.up();
+    }
+    await expect(editor.locator('ol li')).toHaveCount(4);
+    await expect(editor.getByRole('button', { name: 'Polygonpunkt 1 entfernen' })).toBeEnabled();
   });
 
   for (const width of [320, 360, 375, 390, 430] as const) {

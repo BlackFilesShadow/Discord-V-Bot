@@ -52,24 +52,28 @@ function featureCollection(map: RadarMap, zones: MapZone[], previewPoint?: Point
   };
 }
 
-export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoint, circleCenter, circleRadiusMode, onCircleRadiusChange, previewPoint }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void; onMapMove?: (point: Point) => void; focusPoint?: Point; circleCenter?: Point; circleRadiusMode?: boolean; onCircleRadiusChange?: (radiusMeters: number) => void; previewPoint?: Point }) {
+export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoint, onCircleRadiusChange, previewPoint, circleCreateMode, onCircleCenterChange, onCircleCreateEnd, polygonDrawing, onPolygonClose, onPolygonVertexChange, onPolygonInsert, onPolygonMove }: { activeMap: RadarMap; zones: MapZone[]; onMapClick?: (point: Point) => void; onMapMove?: (point: Point) => void; focusPoint?: Point; onCircleRadiusChange?: (radiusMeters: number) => void; previewPoint?: Point; circleCreateMode?: boolean; onCircleCenterChange?: (point: Point) => void; onCircleCreateEnd?: () => void; polygonDrawing?: boolean; onPolygonClose?: () => void; onPolygonVertexChange?: (index: number, point: Point) => void; onPolygonInsert?: (index: number, point: Point) => void; onPolygonMove?: (points: Point[]) => void }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
   const onMapClickRef = useRef(onMapClick);
   const onMapMoveRef = useRef(onMapMove);
-  const circleCenterRef = useRef(circleCenter);
-  const circleRadiusModeRef = useRef(circleRadiusMode);
   const onCircleRadiusChangeRef = useRef(onCircleRadiusChange);
+  const circleCreateModeRef = useRef(circleCreateMode);
+  const onCircleCenterChangeRef = useRef(onCircleCenterChange);
+  const onCircleCreateEndRef = useRef(onCircleCreateEnd);
+  const onPolygonMoveRef = useRef(onPolygonMove);
   const [mapReady, setMapReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
   useEffect(() => { onMapMoveRef.current = onMapMove; }, [onMapMove]);
-  useEffect(() => { circleCenterRef.current = circleCenter; }, [circleCenter]);
-  useEffect(() => { circleRadiusModeRef.current = circleRadiusMode; }, [circleRadiusMode]);
   useEffect(() => { onCircleRadiusChangeRef.current = onCircleRadiusChange; }, [onCircleRadiusChange]);
+  useEffect(() => { circleCreateModeRef.current = circleCreateMode; }, [circleCreateMode]);
+  useEffect(() => { onCircleCenterChangeRef.current = onCircleCenterChange; }, [onCircleCenterChange]);
+  useEffect(() => { onCircleCreateEndRef.current = onCircleCreateEnd; }, [onCircleCreateEnd]);
+  useEffect(() => { onPolygonMoveRef.current = onPolygonMove; }, [onPolygonMove]);
 
   useEffect(() => {
     setMapReady(false);
@@ -90,22 +94,36 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoi
       map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': '#dc2626', 'line-width': ['case', ['get', 'draft'], 4, 3] } });
       map.addLayer({ id: 'zone-vertices', type: 'circle', source: 'zones', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 9, 'circle-color': '#dc2626', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
       map.on('click', event => {
+        if (drawingCircle) return;
         const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
         if (point && isPositionInsideMap(activeMap, point)) onMapClickRef.current?.(point);
       });
-      let resizingCircle = false;
+      let drawingCircle = false;
+      let drawnCenter: Point | undefined;
+      let polygonDragStart: Point | undefined;
+      let polygonDragPoints: Point[] | undefined;
       let previewFrame: number | undefined;
       let queuedPreviewPoint: Point | undefined;
-      const setCircleRadius = (event: maplibregl.MapMouseEvent) => {
-        const center = circleCenterRef.current;
-        const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
-        if (center && point && isPositionInsideMap(activeMap, point)) onCircleRadiusChangeRef.current?.(Math.max(1, Math.round(Math.hypot(point.x - center.x, point.y - center.y))));
-      };
       map.on('mousedown', event => {
-        if (!circleRadiusModeRef.current || !circleCenterRef.current || !onCircleRadiusChangeRef.current) return;
-        resizingCircle = true;
+        const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
+        if (circleCreateModeRef.current && point && isPositionInsideMap(activeMap, point)) {
+          drawingCircle = true;
+          drawnCenter = point;
+          map.dragPan.disable();
+          onCircleCenterChangeRef.current?.(point);
+          onCircleRadiusChangeRef.current?.(1);
+          return;
+        }
+      });
+      map.on('mousedown', 'zone-fill', event => {
+        if (polygonDrawing || circleCreateModeRef.current || !onPolygonMoveRef.current) return;
+        const zoneId = event.features?.[0]?.properties?.id;
+        const zone = zonesRef.current.find(item => item.id === zoneId && item.isDraft && item.geometry.type === 'POLYGON');
+        const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
+        if (!zone || zone.geometry.type !== 'POLYGON' || !point) return;
+        polygonDragStart = point;
+        polygonDragPoints = zone.geometry.points;
         map.dragPan.disable();
-        setCircleRadius(event);
       });
       map.on('mousemove', event => {
         const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
@@ -119,13 +137,28 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoi
             });
           }
         }
-        if (resizingCircle) setCircleRadius(event);
+        if (drawingCircle && drawnCenter && point) onCircleRadiusChangeRef.current?.(Math.max(1, Math.round(Math.hypot(point.x - drawnCenter.x, point.y - drawnCenter.y))));
+        if (polygonDragStart && polygonDragPoints && point) {
+          const movedPoints = polygonDragPoints.map(vertex => ({ x: vertex.x + point.x - polygonDragStart!.x, y: vertex.y + point.y - polygonDragStart!.y }));
+          if (movedPoints.every(vertex => isPositionInsideMap(activeMap, vertex))) onPolygonMoveRef.current?.(movedPoints);
+        }
       });
       map.on('mouseup', () => {
-        if (!resizingCircle) return;
-        resizingCircle = false;
-        map.dragPan.enable();
+        if (drawingCircle) {
+          drawingCircle = false;
+          drawnCenter = undefined;
+          map.dragPan.enable();
+          onCircleCreateEndRef.current?.();
+          return;
+        }
+        if (polygonDragStart) {
+          polygonDragStart = undefined;
+          polygonDragPoints = undefined;
+          map.dragPan.enable();
+        }
       });
+      map.on('mouseenter', 'zone-fill', () => { if (!polygonDrawing && !circleCreateModeRef.current) map.getCanvas().style.cursor = 'move'; });
+      map.on('mouseleave', 'zone-fill', () => { map.getCanvas().style.cursor = ''; });
       map.fitBounds([northWest, southEast], { padding: 24, duration: 0 });
       setMapReady(true);
     });
@@ -147,9 +180,7 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoi
     const map = mapRef.current;
     if (!map || !mapReady) return;
     const markers = zones.filter(zone => zone.isDraft).flatMap(zone => {
-      const points = zone.geometry.type === 'CIRCLE'
-        ? [{ x: zone.geometry.x, y: zone.geometry.y }]
-        : zone.geometry.points;
+      const points = zone.geometry.type === 'CIRCLE' ? [{ x: zone.geometry.x, y: zone.geometry.y }] : zone.geometry.points;
       return points.map((point, index) => {
         const element = document.createElement('div');
         element.className = 'radar-zone-point';
@@ -157,13 +188,46 @@ export function DayzRadarMap({ activeMap, zones, onMapClick, onMapMove, focusPoi
         element.setAttribute('aria-hidden', 'true');
         Object.assign(element.style, {
           width: '22px', height: '22px', borderRadius: '9999px', background: '#dc2626', border: '3px solid #ffffff',
-          boxShadow: '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)', pointerEvents: 'none',
+          boxShadow: '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)', cursor: 'move',
         });
-        return new maplibregl.Marker({ element, anchor: 'center' }).setLngLat([...dayzToMapLibre(activeMap, point)] as [number, number]).addTo(map);
+        const marker = new maplibregl.Marker({ element, anchor: 'center', draggable: zone.geometry.type === 'CIRCLE' || !polygonDrawing }).setLngLat([...dayzToMapLibre(activeMap, point)] as [number, number]).addTo(map);
+        if (zone.geometry.type === 'POLYGON') {
+          element.addEventListener('click', event => { event.stopPropagation(); if (polygonDrawing && index === 0 && points.length >= 3) onPolygonClose?.(); });
+          marker.on('dragend', () => { const position = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat); if (position) onPolygonVertexChange?.(index, position); });
+        } else {
+          marker.on('dragend', () => { const position = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat); if (position) onCircleCenterChange?.(position); });
+        }
+        return marker;
       });
     });
+    for (const zone of zones.filter((zone): zone is MapZone & { geometry: Extract<MapZone['geometry'], { type: 'CIRCLE' }> } => zone.isDraft === true && zone.geometry.type === 'CIRCLE' && circleCreateMode !== true)) {
+      const element = document.createElement('div');
+      element.className = 'maplibregl-marker radar-zone-radius-handle';
+      element.title = 'Kreisradius ändern';
+      element.setAttribute('aria-label', 'Kreisradius ändern');
+      Object.assign(element.style, { width: '18px', height: '18px', borderRadius: '9999px', background: '#ffffff', border: '4px solid #dc2626', boxShadow: '0 0 0 3px rgba(127, 29, 29, 0.75)', cursor: 'ew-resize' });
+      const handlePoint = { x: Math.min(RADAR_MAP_CALIBRATIONS[activeMap].widthMeters, zone.geometry.x + zone.geometry.radiusMeters), y: zone.geometry.y };
+      const marker = new maplibregl.Marker({ element, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, handlePoint)] as [number, number]).addTo(map);
+      marker.on('drag', () => {
+        const point = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat);
+        if (point) onCircleRadiusChange?.(Math.max(1, Math.round(Math.hypot(point.x - zone.geometry.x, point.y - zone.geometry.y))));
+      });
+      markers.push(marker);
+    }
+    for (const zone of zones.filter((zone): zone is MapZone & { geometry: Extract<MapZone['geometry'], { type: 'POLYGON' }> } => zone.isDraft === true && zone.geometry.type === 'POLYGON' && zone.geometry.points.length >= 3 && polygonDrawing !== true)) {
+      zone.geometry.points.forEach((point, index, points) => {
+        const next = points[(index + 1) % points.length];
+        const element = document.createElement('div');
+        element.className = 'maplibregl-marker radar-zone-insert-handle';
+        element.dataset.radarHandle = 'polygon-insert';
+        Object.assign(element.style, { width: '12px', height: '12px', borderRadius: '9999px', background: '#ffffff', border: '2px solid #dc2626', cursor: 'copy' });
+        const marker = new maplibregl.Marker({ element, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 })] as [number, number]).addTo(map);
+        marker.on('dragend', () => { const position = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat); if (position) onPolygonInsert?.(index + 1, position); });
+        markers.push(marker);
+      });
+    }
     return () => { markers.forEach(marker => marker.remove()); };
-  }, [activeMap, mapReady, zones]);
+  }, [activeMap, circleCreateMode, mapReady, onCircleCenterChange, onCircleRadiusChange, onPolygonClose, onPolygonInsert, onPolygonVertexChange, polygonDrawing, zones]);
 
   return <div className="relative h-[28rem] overflow-hidden border border-border/70"><div ref={container} className={`h-full w-full ${onMapClick ? 'cursor-crosshair' : ''}`} aria-label="DayZ Radar-Karte" /><p className="pointer-events-none absolute bottom-1 right-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">DayZ Central Economy · ADPL-SA</p>{error && <p role="alert" className="absolute inset-x-3 bottom-3 bg-bg/95 p-2 text-sm text-danger">{error}</p>}</div>;
 }
