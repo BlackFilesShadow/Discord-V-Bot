@@ -26,6 +26,7 @@ interface RadarZone {
   name: string;
   map: RadarMap;
   isActive: boolean;
+  autoBanEnabled: boolean;
   rolePingEnabled: boolean;
   roleIds: string[];
   enabledFunctions: string[];
@@ -160,9 +161,9 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
           <div className="space-y-3">
             {zones.data?.zones.map(zone => (
               <div key={zone.id} className="rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
+                <div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{zone.autoBanEnabled && <Badge variant="danger">Auto-Ban AN</Badge>}{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
                 <p className="mt-2 text-muted">{MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`}</p>
-                <p className="mt-1.5 text-muted">Funktionen: {zone.enabledFunctions.length} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}</p>
+                <p className="mt-1.5 text-muted">Funktionen: {zone.enabledFunctions.length} · Auto-Ban: {zone.autoBanEnabled ? 'AN' : 'AUS'} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}</p>
               </div>
             ))}
           </div>
