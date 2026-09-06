@@ -26,6 +26,7 @@ const bindingFindUnique = jest.fn();
 const banFindUnique = jest.fn();
 const whitelistUpdateMany = jest.fn();
 const whitelistRequestUpdateMany = jest.fn();
+const fenceUpsert = jest.fn();
 const queryRaw = jest.fn();
 
 const tx = {
@@ -34,6 +35,7 @@ const tx = {
   radarConfig: { findUnique: configFindUnique },
   admEvent: { findFirst: admFindFirst },
   nitradoAdmBindingState: { findUnique: bindingFindUnique },
+  radarAutoBanBanFence: { upsert: fenceUpsert },
   serverBanEntry: { findUnique: banFindUnique },
   whitelistEntry: { updateMany: whitelistUpdateMany },
   whitelistRequest: { updateMany: whitelistRequestUpdateMany },
@@ -122,6 +124,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   rootUpdateMany.mockResolvedValue({ count: 1 });
   txUpdateMany.mockResolvedValue({ count: 1 });
+  fenceUpsert.mockResolvedValue({});
   queryRaw.mockResolvedValue([{ pg_advisory_xact_lock: null }]);
   zoneFindFirst.mockResolvedValue(zone());
   configFindUnique.mockResolvedValue({ activeMap: 'CHERNARUS' });
@@ -138,6 +141,7 @@ async function expectSkipped(row: AnyRow, code: string): Promise<void> {
   queueOne(row);
   await runRadarAutoBanOnce();
   expect(addBan).not.toHaveBeenCalled();
+  expect(fenceUpsert).not.toHaveBeenCalled();
   expect(enqueueServerBanAdd).not.toHaveBeenCalled();
   expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
     where: expect.objectContaining({ id: row.id, autoBanStatus: RadarAutoBanStatus.PROCESSING }),
@@ -146,7 +150,7 @@ async function expectSkipped(row: AnyRow, code: string): Promise<void> {
 }
 
 describe('Radar Auto-Ban Runtime', () => {
-  it('bannt nur einen vollständig revalidierten Event im exakten Guild+Nitrado-Scope', async () => {
+  it('bannt nur einen vollständig revalidierten Event und fenced ihn vor dem Outbox-Enqueue auf exakt dieselbe Nitrado-Generation', async () => {
     const row = event();
     queueOne(row);
 
@@ -159,6 +163,26 @@ describe('Radar Auto-Ban Runtime', () => {
       expect.objectContaining({ gameLabel: 'Player One', bannedByDiscordId: ACTOR_ID, expiresAt: null }),
       expect.any(Date),
     );
+    expect(fenceUpsert).toHaveBeenCalledWith({
+      where: { banId: 'ban-1' },
+      create: {
+        banId: 'ban-1',
+        radarEventId: 'radar-event-1',
+        guildId: GUILD_ID,
+        nitradoConnId: CONN_ID,
+        serviceId: 'service-1',
+        bindingVersion: 0,
+        invalidatedAt: null,
+      },
+      update: {
+        radarEventId: 'radar-event-1',
+        guildId: GUILD_ID,
+        nitradoConnId: CONN_ID,
+        serviceId: 'service-1',
+        bindingVersion: 0,
+        invalidatedAt: null,
+      },
+    });
     expect(enqueueServerBanAdd).toHaveBeenCalledWith(
       expect.anything(),
       { guildId: GUILD_ID, nitradoConnId: CONN_ID },
@@ -166,6 +190,8 @@ describe('Radar Auto-Ban Runtime', () => {
       GUID,
       expect.any(String),
     );
+    expect(addBan.mock.invocationCallOrder[0]).toBeLessThan(fenceUpsert.mock.invocationCallOrder[0]);
+    expect(fenceUpsert.mock.invocationCallOrder[0]).toBeLessThan(enqueueServerBanAdd.mock.invocationCallOrder[0]);
     expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ autoBanStatus: RadarAutoBanStatus.APPLIED, autoBanBanId: 'ban-1' }),
     }));
@@ -210,7 +236,7 @@ describe('Radar Auto-Ban Runtime', () => {
     await expectSkipped(event({ admOccurredAt: new Date('2099-01-01T00:00:00.000Z') }), 'ADM_TIME_IN_FUTURE');
   });
 
-  it('reaktiviert einen bereits aktiven Ban nicht erneut und erzeugt keinen zweiten Outbox-Intent', async () => {
+  it('reaktiviert einen bereits aktiven Ban nicht erneut, schreibt keinen Radar-Fence und erzeugt keinen zweiten Outbox-Intent', async () => {
     banFindUnique.mockReset();
     banFindUnique.mockResolvedValue({ id: 'existing-ban', active: true, expiresAt: null });
     const row = event();
@@ -219,6 +245,7 @@ describe('Radar Auto-Ban Runtime', () => {
     await runRadarAutoBanOnce();
 
     expect(addBan).not.toHaveBeenCalled();
+    expect(fenceUpsert).not.toHaveBeenCalled();
     expect(enqueueServerBanAdd).not.toHaveBeenCalled();
     expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ autoBanStatus: RadarAutoBanStatus.APPLIED, autoBanBanId: 'existing-ban', autoBanLastError: 'ALREADY_ACTIVE_BAN' }),
