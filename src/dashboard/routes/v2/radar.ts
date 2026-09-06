@@ -306,7 +306,7 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
         minX: data.geometry.minX, minY: data.geometry.minY, maxX: data.geometry.maxX, maxY: data.geometry.maxY,
         channelId: data.channelId, rolePingEnabled: data.rolePingEnabled, roleIds: data.roleIds, embedColor: data.embedColor,
-        editorCenterX: data.editorState.centerX, editorCenterY: data.editorState.centerY, editorZoom: data.editorZoom, editorBearing: data.editorState.bearing, editorPitch: data.editorState.pitch,
+        editorCenterX: data.editorState.centerX, editorCenterY: data.editorState.centerY, editorZoom: data.editorState.zoom, editorBearing: data.editorState.bearing, editorPitch: data.editorState.pitch,
         updatedBy: scope.actorId, version: { increment: 1 },
       },
     });
