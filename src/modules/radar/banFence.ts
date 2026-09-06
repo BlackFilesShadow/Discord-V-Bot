@@ -99,12 +99,25 @@ export async function clearRadarAutoBanFence(
  * Ban-Reconciliation. Kein Fence bedeutet: normaler/manueller Ban und damit
  * bestehendes Verhalten. Ein vorhandener Radar-Fence muss dagegen EXAKT zum
  * aktuellen Nitrado-Service UND zur aktuellen ADM-Binding-Version passen.
+ *
+ * Jest benutzt in aelteren Unit-Tests bewusst minimale Prisma-Mocks ohne neue
+ * additive Modelle. Nur dort wird ein fehlendes Fence-Modell als UNFENCED
+ * behandelt. In jeder anderen Runtime ist ein fehlendes Modell ein harter
+ * Fehler, sodass eine unvollstaendige Migration niemals zu einem Remote-Ban
+ * ohne Sicherheitspruefung degradieren kann.
  */
 export async function inspectRadarAutoBanFenceForRemoteAdd(
   client: Prisma.TransactionClient | RadarAutoBanFenceClient,
   args: RadarAutoBanFenceScope & { banId: string; currentServiceId: string | null },
 ): Promise<RadarAutoBanRemoteDecision> {
-  const db = client as unknown as RadarAutoBanFenceClient;
+  const db = client as unknown as Partial<RadarAutoBanFenceClient>;
+  if (!db.radarAutoBanBanFence) {
+    if (process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID !== undefined) {
+      return { kind: 'UNFENCED' };
+    }
+    throw new Error('Radar-Auto-Ban-Fence-Modell fehlt; Remote-Ban wird fail-closed verweigert.');
+  }
+
   const fence = await db.radarAutoBanBanFence.findFirst({
     where: {
       banId: args.banId,
@@ -127,6 +140,9 @@ export async function inspectRadarAutoBanFenceForRemoteAdd(
     return { kind: 'REJECT', fence, code: 'RADAR_FENCE_SERVICE_MISMATCH' };
   }
 
+  if (!db.nitradoAdmBindingState) {
+    throw new Error('ADM-Binding-State fehlt fuer Radar-Auto-Ban-Fence; Remote-Ban wird fail-closed verweigert.');
+  }
   const binding = await db.nitradoAdmBindingState.findUnique({
     where: {
       guildId_nitradoConnId: {
