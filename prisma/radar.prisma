@@ -49,38 +49,39 @@ model RadarConfig {
 }
 
 model RadarZone {
-  id               String         @id @default(cuid())
-  configId         String
-  config           RadarConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
-  guildId          String
-  nitradoConnId    String
-  name             String         @db.VarChar(120)
-  map              RadarMap
-  shape            RadarZoneShape
-  isActive         Boolean        @default(true)
-  autoBanEnabled   Boolean        @default(false)
-  autoBanEnabledAt DateTime?
-  centerX          Decimal?       @db.Decimal(12, 3)
-  centerY          Decimal?       @db.Decimal(12, 3)
-  radiusMeters     Decimal?       @db.Decimal(12, 3)
-  minX             Decimal        @db.Decimal(12, 3)
-  minY             Decimal        @db.Decimal(12, 3)
-  maxX             Decimal        @db.Decimal(12, 3)
-  maxY             Decimal        @db.Decimal(12, 3)
-  channelId        String         @db.VarChar(32)
-  rolePingEnabled  Boolean        @default(true)
-  roleIds          String[]
-  embedColor       String         @default("#dc2626") @db.VarChar(9)
-  editorCenterX    Decimal?       @db.Decimal(12, 3)
-  editorCenterY    Decimal?       @db.Decimal(12, 3)
-  editorZoom       Decimal?       @db.Decimal(8, 3)
-  editorBearing    Decimal?       @db.Decimal(8, 3)
-  editorPitch      Decimal?       @db.Decimal(8, 3)
-  version          Int            @default(1)
-  createdBy        String         @db.VarChar(32)
-  updatedBy        String         @db.VarChar(32)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  id                  String         @id @default(cuid())
+  configId            String
+  config              RadarConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
+  guildId             String
+  nitradoConnId       String
+  name                String         @db.VarChar(120)
+  map                 RadarMap
+  shape               RadarZoneShape
+  isActive            Boolean        @default(true)
+  autoBanEnabled      Boolean        @default(false)
+  autoBanEnabledAt    DateTime?
+  autoBanAuthorizedBy String?        @db.VarChar(32)
+  centerX             Decimal?       @db.Decimal(12, 3)
+  centerY             Decimal?       @db.Decimal(12, 3)
+  radiusMeters        Decimal?       @db.Decimal(12, 3)
+  minX                Decimal        @db.Decimal(12, 3)
+  minY                Decimal        @db.Decimal(12, 3)
+  maxX                Decimal        @db.Decimal(12, 3)
+  maxY                Decimal        @db.Decimal(12, 3)
+  channelId           String         @db.VarChar(32)
+  rolePingEnabled     Boolean        @default(true)
+  roleIds             String[]
+  embedColor          String         @default("#dc2626") @db.VarChar(9)
+  editorCenterX       Decimal?       @db.Decimal(12, 3)
+  editorCenterY       Decimal?       @db.Decimal(12, 3)
+  editorZoom          Decimal?       @db.Decimal(8, 3)
+  editorBearing       Decimal?       @db.Decimal(8, 3)
+  editorPitch         Decimal?       @db.Decimal(8, 3)
+  version             Int            @default(1)
+  createdBy           String         @db.VarChar(32)
+  updatedBy           String         @db.VarChar(32)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   points     RadarZonePoint[]
   functions  RadarZoneFunction[]
