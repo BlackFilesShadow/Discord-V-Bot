@@ -245,6 +245,7 @@ radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, r
         isActive: data.isActive,
         autoBanEnabled: data.autoBanEnabled,
         autoBanEnabledAt,
+        autoBanAuthorizedBy: data.autoBanEnabled ? scope.actorId : null,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
@@ -285,23 +286,27 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
     await lockRadarScope(tx, scope.guildId, scope.connId);
     const existing = await tx.radarZone.findFirst({
       where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
-      select: { autoBanEnabled: true, autoBanEnabledAt: true },
+      select: { autoBanEnabled: true, autoBanEnabledAt: true, autoBanAuthorizedBy: true },
     });
     if (!existing) return null;
+    const preservingArm = data.autoBanEnabled && existing.autoBanEnabled && existing.autoBanEnabledAt && existing.autoBanAuthorizedBy;
     const autoBanEnabledAt = data.autoBanEnabled
-      ? (existing.autoBanEnabled && existing.autoBanEnabledAt ? existing.autoBanEnabledAt : new Date())
+      ? (preservingArm ? existing.autoBanEnabledAt : new Date())
+      : null;
+    const autoBanAuthorizedBy = data.autoBanEnabled
+      ? (preservingArm ? existing.autoBanAuthorizedBy : scope.actorId)
       : null;
     const result = await tx.radarZone.updateMany({
       where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
       data: {
         name: data.name, map: data.map, shape: data.geometry.shape, isActive: data.isActive,
-        autoBanEnabled: data.autoBanEnabled, autoBanEnabledAt,
+        autoBanEnabled: data.autoBanEnabled, autoBanEnabledAt, autoBanAuthorizedBy,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
         minX: data.geometry.minX, minY: data.geometry.minY, maxX: data.geometry.maxX, maxY: data.geometry.maxY,
         channelId: data.channelId, rolePingEnabled: data.rolePingEnabled, roleIds: data.roleIds, embedColor: data.embedColor,
-        editorCenterX: data.editorState.centerX, editorCenterY: data.editorState.centerY, editorZoom: data.editorState.zoom, editorBearing: data.editorState.bearing, editorPitch: data.editorState.pitch,
+        editorCenterX: data.editorState.centerX, editorCenterY: data.editorState.centerY, editorZoom: data.editorZoom, editorBearing: data.editorState.bearing, editorPitch: data.editorState.pitch,
         updatedBy: scope.actorId, version: { increment: 1 },
       },
     });
