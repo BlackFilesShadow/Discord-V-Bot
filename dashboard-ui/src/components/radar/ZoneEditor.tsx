@@ -23,6 +23,9 @@ export interface EditableRadarZone {
   map: RadarMap;
   isActive: boolean;
   autoBanEnabled: boolean;
+  altitudeEnabled: boolean;
+  minAltitudeMeters: number | null;
+  maxAltitudeMeters: number | null;
   channelId: string;
   rolePingEnabled: boolean;
   roleIds: string[];
@@ -57,7 +60,9 @@ interface ZoneEditorProps {
 
 function freshZone(activeMap: RadarMap, functions: RadarFunctionDefinition[]): Omit<EditableRadarZone, 'id' | 'version'> {
   return {
-    name: '', map: activeMap, isActive: true, autoBanEnabled: false, channelId: '', rolePingEnabled: false, roleIds: [], embedColor: '#dc2626',
+    name: '', map: activeMap, isActive: true, autoBanEnabled: false,
+    altitudeEnabled: false, minAltitudeMeters: null, maxAltitudeMeters: null,
+    channelId: '', rolePingEnabled: false, roleIds: [], embedColor: '#dc2626',
     enabledFunctions: functions.filter(item => item.defaultEnabled).map(item => item.key), allowlist: [],
     geometry: { type: 'CIRCLE', x: 0, y: 0, radiusMeters: 100 },
   };
@@ -79,7 +84,11 @@ export function ZoneEditor({ activeMap, functions, channels, roles, players, zon
 
   useEffect(() => {
     setDraft(zone ? {
-      name: zone.name, map: zone.map, isActive: zone.isActive, autoBanEnabled: zone.autoBanEnabled, channelId: zone.channelId, rolePingEnabled: zone.rolePingEnabled,
+      name: zone.name, map: zone.map, isActive: zone.isActive, autoBanEnabled: zone.autoBanEnabled,
+      altitudeEnabled: zone.altitudeEnabled ?? false,
+      minAltitudeMeters: zone.minAltitudeMeters ?? null,
+      maxAltitudeMeters: zone.maxAltitudeMeters ?? null,
+      channelId: zone.channelId, rolePingEnabled: zone.rolePingEnabled,
       roleIds: zone.roleIds, embedColor: zone.embedColor, enabledFunctions: zone.enabledFunctions, allowlist: zone.allowlist, geometry: zone.geometry,
     } : freshZone(activeMap, functions));
     setInteractionMode(initialMode(zone));
@@ -137,6 +146,18 @@ export function ZoneEditor({ activeMap, functions, channels, roles, players, zon
     if (draft.geometry.type === 'POLYGON' && interactionMode === 'POLYGON_DRAW') {
       setValidationError('Schließe das Polygon zuerst über den ersten roten Punkt.');
       return;
+    }
+    if (draft.altitudeEnabled) {
+      const min = draft.minAltitudeMeters;
+      const max = draft.maxAltitudeMeters;
+      if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
+        setValidationError('Für die Höhenbegrenzung müssen eine gültige minimale und maximale ADM-Höhe angegeben werden.');
+        return;
+      }
+      if (draft.autoBanEnabled && max - min < 20) {
+        setValidationError('Mit Auto-Ban muss das Höhenband mindestens 20 m breit sein, damit der 10-m-Sicherheitsrand oben und unten eingehalten werden kann.');
+        return;
+      }
     }
     if (!draft.channelId) {
       setValidationError('Bitte wähle einen Discord-Kanal für die Radar-Ausgabe.');
@@ -197,12 +218,22 @@ export function ZoneEditor({ activeMap, functions, channels, roles, players, zon
         {circle ? <div className="grid gap-4 md:grid-cols-2"><label className="space-y-2 text-sm text-muted"><span>Mittelpunkt X</span><Input type="number" value={circle.x} onChange={event => update({ geometry: { ...circle, x: Number(event.target.value) } })} /></label><label className="space-y-2 text-sm text-muted"><span>Mittelpunkt Y</span><Input type="number" value={circle.y} onChange={event => update({ geometry: { ...circle, y: Number(event.target.value) } })} /></label><label className="space-y-2 text-sm text-muted md:col-span-2"><span>Kreisradius in Metern</span><Input aria-label="Kreisradius in Metern" type="number" min="1" value={circle.radiusMeters} onChange={event => update({ geometry: { ...circle, radiusMeters: Math.max(1, Number(event.target.value)) } })} /></label><div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-bg-card/30 p-4 sm:flex-row sm:items-center sm:justify-between md:col-span-2"><span className="text-sm text-muted">Kreisradius <strong className="text-white">{circle.radiusMeters} m</strong></span><Button variant="outline" size="sm" onClick={() => setInteractionMode('CIRCLE_CREATE')}><Target className="h-4 w-4" />Mittelpunkt neu setzen</Button></div></div> : <div className="space-y-4"><div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><Input aria-label="Polygon X" type="number" value={pointX} disabled={!polygonOpen} onChange={event => setPointX(event.target.value)} /><Input aria-label="Polygon Y" type="number" value={pointY} disabled={!polygonOpen} onChange={event => setPointY(event.target.value)} /><Button variant="outline" aria-label="Polygonpunkt hinzufügen" disabled={!polygonOpen} onClick={addPoint}><Plus className="h-4 w-4" /><span className="sm:hidden">Punkt hinzufügen</span></Button></div><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-muted">{polygon?.points.length ?? 0} Punkte gesetzt</p><Button variant="outline" size="sm" disabled={(polygon?.points.length ?? 0) === 0} onClick={() => { update({ geometry: { type: 'POLYGON', points: [] } }); setInteractionMode('POLYGON_DRAW'); }}>Polygon leeren</Button></div><ol className="space-y-2 text-xs text-muted">{polygon?.points.map((point, index) => <li key={`${point.x}-${point.y}-${index}`} className="flex items-center justify-between gap-3 rounded-md border border-border/50 px-3 py-2"><span>{index + 1}. {point.x.toFixed(1)} / {point.y.toFixed(1)}</span><Button variant="ghost" size="sm" aria-label={`Polygonpunkt ${index + 1} entfernen`} disabled={polygon.points.length <= 3 || polygonOpen} onClick={() => update({ geometry: { type: 'POLYGON', points: (polygon?.points ?? []).filter((_, pointIndex) => pointIndex !== index) } })}><Trash2 className="h-3.5 w-3.5" /></Button></li>)}</ol></div>}
       </fieldset>
 
+      <fieldset className={sectionClass}><legend className="px-2 text-sm font-medium text-white">Höhenbegrenzung</legend>
+        <Switch checked={draft.altitudeEnabled} onChange={altitudeEnabled => update({ altitudeEnabled })} label="ADM-Höhenfilter" />
+        <p className="text-xs leading-relaxed text-muted">Optionales vertikales Höhenband auf Basis des dritten ADM-Positionswerts. AUS bedeutet das bisherige reine X/Y-Radar.</p>
+        {draft.altitudeEnabled && <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-2 text-sm text-muted"><span>Minimale ADM-Höhe (m)</span><Input aria-label="Minimale ADM-Höhe" type="number" step="0.1" value={draft.minAltitudeMeters ?? ''} onChange={event => update({ minAltitudeMeters: event.target.value === '' ? null : Number(event.target.value) })} /></label>
+          <label className="space-y-2 text-sm text-muted"><span>Maximale ADM-Höhe (m)</span><Input aria-label="Maximale ADM-Höhe" type="number" step="0.1" value={draft.maxAltitudeMeters ?? ''} onChange={event => update({ maxAltitudeMeters: event.target.value === '' ? null : Number(event.target.value) })} /></label>
+          <p className="text-xs leading-relaxed text-muted md:col-span-2">Radar erkennt nur Ereignisse innerhalb dieses Höhenbands. Bei Auto-Ban gelten zusätzlich 10 m vertikaler Sicherheitsrand zur Unter- und Obergrenze.</p>
+        </div>}
+      </fieldset>
+
       <fieldset className={sectionClass}><legend className="px-2 text-sm font-medium text-white">Funktionen</legend><div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))]">{functions.map(definition => <div key={definition.key} className="min-w-0 rounded-lg border border-border/70 bg-bg-elev/40 p-4"><Switch checked={draft.enabledFunctions.includes(definition.key)} onChange={() => toggleFunction(definition.key)} label={definition.label} /></div>)}</div></fieldset>
 
       <fieldset className="space-y-4 rounded-xl border border-danger/40 bg-danger/5 p-4 sm:p-5"><legend className="px-2 text-sm font-medium text-white">Automatische Sanktion</legend>
         <Switch checked={draft.autoBanEnabled} onChange={autoBanEnabled => update({ autoBanEnabled })} label="Automatischer Server-Ban" />
-        <p className="text-xs leading-relaxed text-muted">Wenn aktiviert, werden nur eindeutig validierte Ereignisse der oben aktivierten Radar-Funktionen automatisch auf genau diesem Nitrado-Server gebannt. Alte Ereignisse, unklare GUIDs, geänderte Zonen, falsche Eventtypen, Allowlist-Spieler und Positionen innerhalb des 10-m-Sicherheitsrands zur Zonengrenze werden grundsätzlich nicht gebannt.</p>
-        {draft.autoBanEnabled && <p role="status" className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-danger">Auto-Ban ist scharf. Jede spätere Zonenänderung invalidiert noch nicht verarbeitete Ban-Entscheidungen; neue Ereignisse werden danach mit der neuen Zonen-Version bewertet.</p>}
+        <p className="text-xs leading-relaxed text-muted">Wenn aktiviert, werden nur eindeutig validierte Ereignisse der oben aktivierten Radar-Funktionen automatisch auf genau diesem Nitrado-Server gebannt. Alte Ereignisse, unklare GUIDs, geänderte Zonen, falsche Eventtypen, Allowlist-Spieler und Positionen innerhalb des 10-m-Sicherheitsrands zur horizontalen oder aktivierten vertikalen Zonengrenze werden grundsätzlich nicht gebannt.</p>
+        {draft.autoBanEnabled && <p role="status" className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-danger">Auto-Ban ist scharf. Jedes Speichern dieser Zone startet absichtlich eine neue Auswertungsgeneration und setzt die Auto-Ban-Zeitbasis neu. Verspätete ADM-Ereignisse aus der vorherigen Zonenkonfiguration werden dadurch verworfen.</p>}
       </fieldset>
 
       <fieldset className={sectionClass}><legend className="px-2 text-sm font-medium text-white">Discord</legend><label className="space-y-2 text-sm text-muted"><span>Kanal</span><Select aria-label="Radar-Kanal" value={draft.channelId} onChange={event => update({ channelId: event.target.value })} required><option value="">Kanal wählen</option>{channels.filter(channel => channel.type === 0 || channel.type === 5).map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</Select></label><div className="rounded-lg border border-border/60 bg-bg-card/25 px-4 py-3"><Switch checked={draft.rolePingEnabled} onChange={rolePingEnabled => update({ rolePingEnabled })} label="Rollen-Ping" /></div><div className="grid gap-3 md:grid-cols-2">{roles.filter(role => !role.managed).map(role => <label key={role.id} className="flex min-h-11 items-center gap-3 rounded-lg border border-border/60 bg-bg-card/20 px-3 py-2 text-sm text-muted"><input type="checkbox" checked={draft.roleIds.includes(role.id)} disabled={!draft.rolePingEnabled || (!draft.roleIds.includes(role.id) && draft.roleIds.length >= 8)} onChange={() => toggleRole(role.id)} />@{role.name}</label>)}</div><label className="space-y-2 text-sm text-muted"><span>Embed-Farbe</span><Input value={draft.embedColor} onChange={event => update({ embedColor: event.target.value })} pattern="^#[0-9a-fA-F]{6}$" /></label></fieldset>
