@@ -8,6 +8,7 @@ import fs from 'fs';
 
 import readyEvent, { stopReadyRuntime } from './events/ready';
 import interactionCreateEvent from './events/interactionCreateComposite';
+import guildDeleteEvent from './events/guildDelete';
 import guildMemberAddEvent from './events/guildMemberAdd';
 import guildMemberRemoveEvent from './events/guildMemberRemove';
 import guildMemberUpdateEvent from './events/guildMemberUpdate';
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
   const events: BotEvent[] = [
     readyEvent,
     interactionCreateEvent,
+    guildDeleteEvent,
     guildMemberAddEvent,
     guildMemberRemoveEvent,
     guildMemberUpdateEvent,
