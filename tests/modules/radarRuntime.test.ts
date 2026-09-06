@@ -58,8 +58,10 @@ function circleZone(overrides: Record<string, unknown> = {}) {
   return {
     id: 'zone-1', guildId: GUILD_ID, nitradoConnId: CONN_ID, channelId: CHANNEL_ID,
     rolePingEnabled: true, roleIds: [ROLE_ID], shape: 'CIRCLE', centerX: 100, centerY: 200,
-    radiusMeters: 50, minX: 50, minY: 150, maxX: 150, maxY: 250, points: [],
-    functions: [{ functionKey: 'PLAYER_DETECTION' }], allowlist: [], ...overrides,
+    radiusMeters: 50, minX: 50, minY: 150, maxX: 150, maxY: 250,
+    altitudeEnabled: false, minAltitudeMeters: null, maxAltitudeMeters: null,
+    updatedAt: new Date('2026-09-04T10:00:10.000Z'),
+    points: [], functions: [{ functionKey: 'PLAYER_DETECTION' }], allowlist: [], ...overrides,
   };
 }
 
@@ -120,6 +122,37 @@ describe('Radar-Worker', () => {
     }));
   });
 
+  it('interpretiert einen verspaeteten ADM-Event nie gegen eine spaeter gespeicherte Zonen-Generation', async () => {
+    admEventFind.mockResolvedValue([{
+      ...scannedEvent('adm-delayed'),
+      occurredAt: new Date('2026-09-04T10:01:00.000Z'),
+      createdAt: new Date('2026-09-04T10:03:00.000Z'),
+    }]);
+    radarZoneFind.mockResolvedValue([circleZone({ updatedAt: new Date('2026-09-04T10:02:00.000Z') })]);
+
+    await runRadarRuntimeOnce();
+
+    expect(radarEventCreate).not.toHaveBeenCalled();
+  });
+
+  it('wendet ein aktiviertes ADM-Hoehenband zusaetzlich zu X/Y an', async () => {
+    admEventFind.mockResolvedValue([scannedEvent('adm-height')]);
+    radarZoneFind.mockResolvedValue([circleZone({ altitudeEnabled: true, minAltitudeMeters: 10, maxAltitudeMeters: 20 })]);
+
+    await runRadarRuntimeOnce();
+    expect(radarEventCreate).toHaveBeenCalledTimes(1);
+
+    jest.clearAllMocks();
+    radarConfigFind.mockResolvedValue([config()]);
+    radarConfigUpdate.mockResolvedValue({ count: 1 });
+    admEventFind.mockResolvedValue([scannedEvent('adm-height-out')]);
+    radarZoneFind.mockResolvedValue([circleZone({ altitudeEnabled: true, minAltitudeMeters: 20, maxAltitudeMeters: 30 })]);
+    radarEventFind.mockResolvedValue([]);
+
+    await runRadarRuntimeOnce();
+    expect(radarEventCreate).not.toHaveBeenCalled();
+  });
+
   it('matched reale Chernarus-ADM-Koordinaten gegen die gespeicherte Produktionszone', async () => {
     const event = {
       ...scannedEvent('adm-production-1'),
@@ -137,6 +170,9 @@ describe('Radar-Worker', () => {
       minY: 1119.028,
       maxX: 10061.122,
       maxY: 10667.028,
+      altitudeEnabled: true,
+      minAltitudeMeters: 200,
+      maxAltitudeMeters: 230,
     })]);
 
     await runRadarRuntimeOnce();
@@ -180,7 +216,7 @@ describe('Radar-Worker', () => {
       content: `<@&${ROLE_ID}>`, allowedMentions: { parse: [], roles: [ROLE_ID] }, enforceNonce: true,
     }));
     const fieldNames = send.mock.calls[0][0].embeds[0].toJSON().fields?.map((field: { name: string }) => field.name);
-    expect(fieldNames).toEqual(expect.arrayContaining(['Username', 'Koordinaten', 'Erkannt durch ADM']));
+    expect(fieldNames).toEqual(expect.arrayContaining(['Username', 'Koordinaten', 'ADM-Hoehe', 'Erkannt durch ADM']));
     expect(fieldNames).not.toContain('Aktion');
     expect(radarEventUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'radar-event-1', status: 'SENDING' }),
