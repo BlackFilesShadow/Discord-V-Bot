@@ -180,3 +180,21 @@ model RadarZoneEvent {
   @@index([guildId, nitradoConnId, autoBanStatus, autoBanNextAttemptAt])
   @@index([zoneId, sentAt])
 }
+
+// Ein Radar-Auto-Ban ist an genau die Nitrado-Service-/Binding-Generation
+// gebunden, in der das ausloesende ADM-Ereignis validiert wurde. Kein FK zum
+// allgemeinen Ban-Modell: die Ban-Domaene bleibt unabhaengig, waehrend Worker
+// und Rebind-Lifecycle diesen Fence explizit fail-closed auswerten.
+model RadarAutoBanBanFence {
+  banId          String   @id @db.VarChar(32)
+  radarEventId   String   @unique @db.VarChar(32)
+  guildId        String
+  nitradoConnId  String
+  serviceId      String   @db.VarChar(64)
+  bindingVersion Int
+  createdAt      DateTime @default(now())
+  invalidatedAt  DateTime?
+
+  @@index([guildId, nitradoConnId, invalidatedAt])
+  @@index([serviceId, bindingVersion])
+}
