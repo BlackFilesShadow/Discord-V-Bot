@@ -76,10 +76,12 @@ function event(overrides: AnyRow = {}): AnyRow {
     actorName: 'Player One',
     x: 100,
     y: 100,
+    altitude: 12,
     admOccurredAt: OCCURRED_AT,
     zoneVersionSnapshot: 1,
     zoneMapSnapshot: 'CHERNARUS',
     zoneGeometrySnapshot: { shape: 'CIRCLE', centerX: 100, centerY: 100, radiusMeters: 100, minX: 0, minY: 0, maxX: 200, maxY: 200 },
+    zoneAltitudeSnapshot: { enabled: false, minAltitudeMeters: null, maxAltitudeMeters: null },
     zoneFunctionsSnapshot: ['PLAYER_DETECTION'],
     zoneAllowlistSnapshot: [],
     autoBanEnabledSnapshot: true,
@@ -96,6 +98,8 @@ function zone(overrides: AnyRow = {}): AnyRow {
     id: 'zone-1', configId: 'config-1', guildId: GUILD_ID, nitradoConnId: CONN_ID,
     name: 'Nordbasis', map: 'CHERNARUS', shape: 'CIRCLE', isActive: true,
     autoBanEnabled: true, autoBanEnabledAt: ARMED_AT, autoBanAuthorizedBy: ACTOR_ID, version: 1,
+    altitudeEnabled: false, minAltitudeMeters: null, maxAltitudeMeters: null,
+    updatedAt: new Date('2026-09-06T00:00:00.100Z'),
     centerX: 100, centerY: 100, radiusMeters: 100, minX: 0, minY: 0, maxX: 200, maxY: 200,
     points: [], functions: [{ functionKey: 'PLAYER_DETECTION' }], allowlist: [],
     ...overrides,
@@ -202,9 +206,29 @@ describe('Radar Auto-Ban Runtime', () => {
     await expectSkipped(event({ x: 195, zoneGeometrySnapshot: { shape: 'CIRCLE', centerX: 100, centerY: 100, radiusMeters: 100 } }), 'BOUNDARY_SAFETY_MARGIN');
   });
 
+  it('bannt bei aktiviertem Hoehenband nur mit 10m vertikalem Sicherheitsrand', async () => {
+    zoneFindFirst.mockResolvedValue(zone({ altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 }));
+    admFindFirst.mockResolvedValue(adm({ actorPosition: '100, 100, 105' }));
+    await expectSkipped(event({
+      altitude: 105,
+      zoneAltitudeSnapshot: { enabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 },
+    }), 'ALTITUDE_SAFETY_MARGIN');
+  });
+
+  it('bannt nie wenn Hoehen-Snapshot und aktuelle Hoehenpolicy abweichen', async () => {
+    zoneFindFirst.mockResolvedValue(zone({ altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 }));
+    await expectSkipped(event(), 'ALTITUDE_POLICY_CHANGED_OR_INVALID');
+  });
+
   it('bannt nie bei geänderter Zonen-Version', async () => {
     zoneFindFirst.mockResolvedValue(zone({ version: 2 }));
     await expectSkipped(event(), 'ZONE_VERSION_CHANGED');
+  });
+
+  it('bannt nie einen verspaeteten ADM-Event aus einer frueheren Zonen-Generation', async () => {
+    const generationAt = new Date('2026-09-06T00:02:00.000Z');
+    zoneFindFirst.mockResolvedValue(zone({ version: 2, updatedAt: generationAt }));
+    await expectSkipped(event({ zoneVersionSnapshot: 2 }), 'ADM_EVENT_PREDATES_ZONE_GENERATION');
   });
 
   it('bannt nie wenn sich die Auto-Ban-Aktivierungsidentität geändert hat', async () => {

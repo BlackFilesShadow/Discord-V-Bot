@@ -27,6 +27,9 @@ interface RadarZone {
   map: RadarMap;
   isActive: boolean;
   autoBanEnabled: boolean;
+  altitudeEnabled: boolean;
+  minAltitudeMeters: number | null;
+  maxAltitudeMeters: number | null;
   rolePingEnabled: boolean;
   roleIds: string[];
   enabledFunctions: string[];
@@ -43,6 +46,13 @@ const MAP_LABELS: Record<RadarMap, string> = {
   LIVONIA: 'Livonia',
   SAKHAL: 'Sakhal',
 };
+
+function altitudeLabel(zone: RadarZone): string {
+  if (!zone.altitudeEnabled) return 'Höhe: unbegrenzt';
+  const min = zone.minAltitudeMeters;
+  const max = zone.maxAltitudeMeters;
+  return min === null || max === null ? 'Höhe: ungültig' : `Höhe: ${min}–${max} m`;
+}
 
 export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; slot: string; canManage: boolean }) {
   const queryClient = useQueryClient();
@@ -123,7 +133,7 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
           </label>
           <Badge variant="info">2.5D vorbereitet</Badge>
         </div>
-        <p className="mt-4 text-xs leading-relaxed text-muted">Zonen anderer Karten bleiben gespeichert und werden erst mit ihrer aktiven Karte ausgewertet.</p>
+        <p className="mt-4 text-xs leading-relaxed text-muted">Zonen anderer Karten bleiben gespeichert und werden erst mit ihrer aktiven Karte ausgewertet. Optionale Höhenbänder werden serverseitig zusätzlich zu X/Y geprüft.</p>
         {updateConfig.isError && <p role="alert" className="mt-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(updateConfig.error).desc}</p>}
         <div className="mt-5">
           <Suspense fallback={<div className="h-[28rem] rounded-lg border border-border/70" aria-label="Radar-Karte wird geladen" />}>
@@ -161,8 +171,8 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
           <div className="space-y-3">
             {zones.data?.zones.map(zone => (
               <div key={zone.id} className="rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{zone.autoBanEnabled && <Badge variant="danger">Auto-Ban AN</Badge>}{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
-                <p className="mt-2 text-muted">{MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`}</p>
+                <div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{zone.altitudeEnabled && <Badge variant="info">3D-Höhe</Badge>}{zone.autoBanEnabled && <Badge variant="danger">Auto-Ban AN</Badge>}{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
+                <p className="mt-2 text-muted">{MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`} · {altitudeLabel(zone)}</p>
                 <p className="mt-1.5 text-muted">Funktionen: {zone.enabledFunctions.length} · Auto-Ban: {zone.autoBanEnabled ? 'AN' : 'AUS'} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}</p>
               </div>
             ))}
