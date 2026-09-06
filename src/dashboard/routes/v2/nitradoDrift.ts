@@ -55,12 +55,21 @@ async function activeSlotId(scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'
 async function readBinding(scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>, slotParam: unknown, res: Response) {
   const connId = await activeSlotId(scope, slotParam, res);
   if (!connId) return null;
-  const binding = await readCurrentAdmBinding({ id: connId, guildId: scope.guildId });
-  if (!binding) {
-    res.status(409).json({ error: 'Nitrado-Verbindung ist nicht ACTIVE oder besitzt keine Service-ID.' });
-    return null;
+
+  try {
+    const binding = await readCurrentAdmBinding({ id: connId, guildId: scope.guildId });
+    if (!binding) {
+      res.status(409).json({ error: 'Nitrado-Verbindung ist nicht ACTIVE oder besitzt keine Service-ID.' });
+      return null;
+    }
+    return { connId, binding };
+  } catch (error) {
+    if (isAdmBindingFenceError(error)) {
+      res.status(409).json({ error: 'Nitrado-Verbindung wird gerade sicher verarbeitet oder parallel geaendert. Bitte erneut laden.' });
+      return null;
+    }
+    throw error;
   }
-  return { connId, binding };
 }
 
 function safeDecryptIdentifier(identifierEnc: string, identityHash: string): string | null {
@@ -181,7 +190,7 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
       }
 
       await tx.whitelistEntry.updateMany({
-        where: { id: row.id, guildId: scope.guildId, nitradoConnId: connId, syncState: 'SYNCED' },
+        where: { id: row.id, guildId: scope.guildId, nitradoConnId: connId, gameId, syncState: 'SYNCED' },
         data: { syncState: 'LOCAL_ONLY', lastSyncedAt: null },
       });
       const queued = await enqueueWhitelistAdd(
