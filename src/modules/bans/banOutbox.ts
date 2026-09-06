@@ -22,9 +22,12 @@
  * DB-xact-Barriere. Service-Rebind und Outbox-Neuanlage koennen dadurch nicht
  * aneinander vorbeicommitten.
  *
- * Radar-Auto-Bans tragen zusaetzlich `radarAutoBan: true`. Dieses Flag ist nur
- * ein Herkunftsmarker und niemals Autoritaet; vor jeder Remote-Durchsetzung
- * muss der persistente RadarAutoBanBanFence weiterhin exakt passen.
+ * Radar-Auto-Bans tragen zusaetzlich `radarAutoBan: true`. Dieses Flag wird im
+ * selben gelockten Prisma-TransactionClient aus dem persistenten
+ * RadarAutoBanBanFence abgeleitet. Es ist nur ein Herkunftsmarker; Autoritaet
+ * bleibt der Fence selbst, der vor jeder Remote-Durchsetzung erneut geprueft
+ * wird. Manuelle Bans entfernen ihren Radar-Fence vor dem Enqueue und bleiben
+ * dadurch unveraendert im bisherigen Outbox-Pfad.
  */
 
 import { encrypt } from '../../utils/security';
@@ -51,7 +54,7 @@ export interface BanOutboxScope {
 export interface ServerBanAddEnqueueOptions {
   /** Nur fuer automatische Reconciliation setzen; Bediener-ADDs bleiben direkt retrybar. */
   recentDeadCooldownMs?: number;
-  /** Exklusiver Herkunftsmarker; Autoritaet bleibt RadarAutoBanBanFence. */
+  /** Expliziter Zusatzmarker; ein vorhandener DB-Fence setzt ihn ohnehin. */
   radarAutoBan?: boolean;
   /** Test-/Scheduler-Zeitpunkt; Produktion verwendet standardmaessig jetzt. */
   now?: Date;
@@ -76,6 +79,9 @@ interface BanRemoteIdentityTxClient {
       create: { banId: string; identifierEnc: string };
       update: { identifierEnc: string };
     }): Promise<unknown>;
+  };
+  radarAutoBanBanFence?: {
+    findFirst(args: unknown): Promise<{ banId: string } | null>;
   };
 }
 
@@ -183,6 +189,29 @@ async function ensureJob(
   );
 }
 
+async function hasActiveRadarFence(
+  client: BanOutboxClient,
+  scope: BanOutboxScope,
+  banId: string,
+): Promise<boolean> {
+  const db = client as unknown as BanRemoteIdentityTxClient;
+  // Kleine Unit-Test-/Adapter-Clients besitzen dieses additive Modell nicht.
+  // Produktions-Auto-Bans koennen ohne das Modell bereits beim Fence-Upsert
+  // nicht entstehen; deshalb ist dieser Fallback nur fuer bestehende unfenced
+  // manuelle Clients relevant und aendert keinen Radar-Sicherheitsweg.
+  if (!db.radarAutoBanBanFence) return false;
+  const fence = await db.radarAutoBanBanFence.findFirst({
+    where: {
+      banId,
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      invalidatedAt: null,
+    },
+    select: { banId: true },
+  });
+  return fence !== null;
+}
+
 /** Queued Remote-Ban; Klartext-Identifier wird nie in der Job-Payload gespeichert. */
 export async function enqueueServerBanAdd(
   client: BanOutboxClient,
@@ -194,6 +223,7 @@ export async function enqueueServerBanAdd(
 ): Promise<boolean> {
   const identifier = rawIdentifier.trim();
   if (!identifier) throw new Error('Leerer Server-Ban-Identifier');
+  const radarAutoBan = options.radarAutoBan === true || await hasActiveRadarFence(client, scope, banId);
   return ensureJob(
     client,
     scope,
@@ -201,7 +231,7 @@ export async function enqueueServerBanAdd(
     {
       banId,
       encryptedIdentifier: encrypt(identifier, encryptionKey),
-      ...(options.radarAutoBan === true ? { radarAutoBan: true as const } : {}),
+      ...(radarAutoBan ? { radarAutoBan: true as const } : {}),
     },
     {
       recentDeadCooldownMs: Math.max(0, options.recentDeadCooldownMs ?? 0),
