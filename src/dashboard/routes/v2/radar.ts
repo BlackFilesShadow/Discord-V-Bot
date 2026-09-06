@@ -24,6 +24,8 @@ export const radarRouter = Router({ mergeParams: true });
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const MAPS = new Set<RadarMap>(['CHERNARUS', 'LIVONIA', 'SAKHAL']);
+const AUTO_BAN_SAFETY_MARGIN_METERS = 10;
+const MIN_AUTO_BAN_ALTITUDE_BAND_METERS = AUTO_BAN_SAFETY_MARGIN_METERS * 2;
 
 type SaveBody = {
   version?: number;
@@ -31,6 +33,9 @@ type SaveBody = {
   map?: RadarMap;
   isActive?: boolean;
   autoBanEnabled?: boolean;
+  altitudeEnabled?: boolean;
+  minAltitudeMeters?: number | null;
+  maxAltitudeMeters?: number | null;
   geometry?: { type?: string; x?: number; y?: number; radiusMeters?: number; points?: RadarPoint[] };
   enabledFunctions?: string[];
   allowlist?: Array<{ source?: 'SERVER_WHITELIST' | 'MANUAL'; gameId?: string; playerName?: string | null }>;
@@ -40,6 +45,11 @@ type SaveBody = {
   embedColor?: string;
   editorState?: { centerX?: number; centerY?: number; zoom?: number; bearing?: number; pitch?: number };
 };
+
+type ValidatedSave = Required<Pick<SaveBody,
+  'name' | 'map' | 'isActive' | 'autoBanEnabled' | 'altitudeEnabled' | 'minAltitudeMeters' | 'maxAltitudeMeters'
+  | 'enabledFunctions' | 'allowlist' | 'channelId' | 'rolePingEnabled' | 'roleIds' | 'embedColor'
+>> & { geometry: RadarGeometry; editorState: NonNullable<SaveBody['editorState']> };
 
 type RadarZoneWithRelations = Prisma.RadarZoneGetPayload<{
   include: { points: true; functions: true; allowlist: true };
@@ -143,12 +153,26 @@ function geometryFrom(body: SaveBody, map: RadarMap): RadarGeometry | null {
   return geometry && geometryFitsMap(map, geometry) ? geometry : null;
 }
 
-function validateBody(body: SaveBody): { ok: true; data: Required<Pick<SaveBody, 'name' | 'map' | 'isActive' | 'autoBanEnabled' | 'enabledFunctions' | 'allowlist' | 'channelId' | 'rolePingEnabled' | 'roleIds' | 'embedColor'>> & { geometry: RadarGeometry; editorState: NonNullable<SaveBody['editorState']> } } | { ok: false; error: string } {
+function validateBody(body: SaveBody): { ok: true; data: ValidatedSave } | { ok: false; error: string } {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const map = readMap(body.map);
   if (!name || name.length > 120 || !map || typeof body.isActive !== 'boolean' || typeof body.autoBanEnabled !== 'boolean') return { ok: false, error: 'Name, Karte, Aktivstatus und Auto-Ban-Status sind ungueltig.' };
   const geometry = geometryFrom(body, map);
   if (!geometry) return { ok: false, error: 'Zonen-Geometrie ist ungueltig oder liegt ausserhalb der Karte.' };
+
+  const altitudeEnabled = body.altitudeEnabled ?? false;
+  if (typeof altitudeEnabled !== 'boolean') return { ok: false, error: 'Hoehenbegrenzung ist ungueltig.' };
+  const minAltitudeMeters = altitudeEnabled && body.minAltitudeMeters !== null && body.minAltitudeMeters !== undefined ? Number(body.minAltitudeMeters) : null;
+  const maxAltitudeMeters = altitudeEnabled && body.maxAltitudeMeters !== null && body.maxAltitudeMeters !== undefined ? Number(body.maxAltitudeMeters) : null;
+  if (altitudeEnabled && (
+    minAltitudeMeters === null || maxAltitudeMeters === null
+    || !Number.isFinite(minAltitudeMeters) || !Number.isFinite(maxAltitudeMeters)
+    || minAltitudeMeters >= maxAltitudeMeters
+  )) return { ok: false, error: 'Aktive Hoehenbegrenzung benoetigt eine gueltige minimale und maximale ADM-Hoehe.' };
+  if (altitudeEnabled && body.autoBanEnabled && maxAltitudeMeters! - minAltitudeMeters! < MIN_AUTO_BAN_ALTITUDE_BAND_METERS) {
+    return { ok: false, error: `Auto-Ban benoetigt bei Hoehenbegrenzung mindestens ${MIN_AUTO_BAN_ALTITUDE_BAND_METERS} m Hoehenband fuer den Sicherheitsrand.` };
+  }
+
   if (!Array.isArray(body.enabledFunctions) || new Set(body.enabledFunctions).size !== body.enabledFunctions.length || body.enabledFunctions.some(key => !radarFunctionByKey(key))) return { ok: false, error: 'Funktionskatalog ist ungueltig.' };
   if (!Array.isArray(body.allowlist) || body.allowlist.some(entry => !entry || !isValidBattleyeGuid(entry.gameId) || (entry.playerName != null && (typeof entry.playerName !== 'string' || entry.playerName.length > 128)))) return { ok: false, error: 'Allowlist verlangt gueltige GUID-Eintraege.' };
   if (body.allowlist.length > 0 && new Set(body.allowlist.map(entry => entry.gameId!.trim())).size !== body.allowlist.length) return { ok: false, error: 'Allowlist-GUIDs duerfen nicht doppelt vorkommen.' };
@@ -156,12 +180,21 @@ function validateBody(body: SaveBody): { ok: true; data: Required<Pick<SaveBody,
   if (typeof body.rolePingEnabled !== 'boolean' || !Array.isArray(body.roleIds) || body.roleIds.length > 8 || new Set(body.roleIds).size !== body.roleIds.length || body.roleIds.some(id => typeof id !== 'string' || !SNOWFLAKE_RE.test(id))) return { ok: false, error: 'Rollen-Ping oder Rollen sind ungueltig.' };
   if (body.rolePingEnabled && body.roleIds.length === 0) return { ok: false, error: 'Aktiver Rollen-Ping benoetigt mindestens eine Rolle.' };
   if (typeof body.embedColor !== 'string' || !HEX_RE.test(body.embedColor)) return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
-  return { ok: true, data: { name, map, isActive: body.isActive, autoBanEnabled: body.autoBanEnabled, geometry, enabledFunctions: body.enabledFunctions, allowlist: body.allowlist, channelId: body.channelId, rolePingEnabled: body.rolePingEnabled, roleIds: body.roleIds, embedColor: body.embedColor, editorState: body.editorState ?? {} } };
+  return { ok: true, data: {
+    name, map, isActive: body.isActive, autoBanEnabled: body.autoBanEnabled,
+    altitudeEnabled, minAltitudeMeters, maxAltitudeMeters,
+    geometry, enabledFunctions: body.enabledFunctions, allowlist: body.allowlist,
+    channelId: body.channelId, rolePingEnabled: body.rolePingEnabled, roleIds: body.roleIds,
+    embedColor: body.embedColor, editorState: body.editorState ?? {},
+  } };
 }
 
 function zoneResponse(zone: RadarZoneWithRelations) {
   return {
     id: zone.id, name: zone.name, map: zone.map, isActive: zone.isActive, autoBanEnabled: zone.autoBanEnabled, channelId: zone.channelId,
+    altitudeEnabled: zone.altitudeEnabled,
+    minAltitudeMeters: zone.minAltitudeMeters === null ? null : Number(zone.minAltitudeMeters),
+    maxAltitudeMeters: zone.maxAltitudeMeters === null ? null : Number(zone.maxAltitudeMeters),
     rolePingEnabled: zone.rolePingEnabled, roleIds: zone.roleIds, embedColor: zone.embedColor, version: zone.version,
     geometry: zone.shape === 'CIRCLE'
       ? { type: 'CIRCLE', x: Number(zone.centerX), y: Number(zone.centerY), radiusMeters: Number(zone.radiusMeters) }
@@ -202,7 +235,20 @@ radarRouter.put('/config', requireGuildPermission('radar.manage'), async (req, r
   const activeMap = readMap(req.body?.activeMap); if (!activeMap) { res.status(400).json({ error: 'activeMap ist ungueltig.' }); return; }
   const config = await prisma.$transaction(async tx => {
     await lockRadarScope(tx, scope.guildId, scope.connId);
-    return ensureRadarConfigTx(tx, scope.guildId, scope.connId, activeMap);
+    const before = await tx.radarConfig.findUnique({ where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.connId } }, select: { activeMap: true } });
+    const saved = await ensureRadarConfigTx(tx, scope.guildId, scope.connId, activeMap);
+    if (before && before.activeMap !== activeMap) {
+      const now = new Date();
+      await tx.radarZone.updateMany({
+        where: { guildId: scope.guildId, nitradoConnId: scope.connId },
+        data: { version: { increment: 1 } },
+      });
+      await tx.radarZone.updateMany({
+        where: { guildId: scope.guildId, nitradoConnId: scope.connId, autoBanEnabled: true },
+        data: { autoBanEnabledAt: now, autoBanAuthorizedBy: scope.actorId },
+      });
+    }
+    return saved;
   });
   emitGuildEvent(scope.guildId, { type: 'radar.changed', payload: { guildId: scope.guildId, nitradoConnId: scope.connId } });
   res.json({ activeMap: config.activeMap, nitradoConnId: scope.connId });
@@ -246,6 +292,9 @@ radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, r
         autoBanEnabled: data.autoBanEnabled,
         autoBanEnabledAt,
         autoBanAuthorizedBy: data.autoBanEnabled ? scope.actorId : null,
+        altitudeEnabled: data.altitudeEnabled,
+        minAltitudeMeters: data.minAltitudeMeters,
+        maxAltitudeMeters: data.maxAltitudeMeters,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
@@ -286,21 +335,21 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
     await lockRadarScope(tx, scope.guildId, scope.connId);
     const existing = await tx.radarZone.findFirst({
       where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
-      select: { autoBanEnabled: true, autoBanEnabledAt: true, autoBanAuthorizedBy: true },
+      select: { id: true },
     });
     if (!existing) return null;
-    const preservingArm = data.autoBanEnabled && existing.autoBanEnabled && existing.autoBanEnabledAt && existing.autoBanAuthorizedBy;
-    const autoBanEnabledAt = data.autoBanEnabled
-      ? (preservingArm ? existing.autoBanEnabledAt : new Date())
-      : null;
-    const autoBanAuthorizedBy = data.autoBanEnabled
-      ? (preservingArm ? existing.autoBanAuthorizedBy : scope.actorId)
-      : null;
+
+    // Every save starts a new evaluation generation. If Auto-Ban stays enabled,
+    // it is deliberately re-armed now so delayed ADM lines from the previous
+    // zone state can never become punitive under the new state.
+    const autoBanEnabledAt = data.autoBanEnabled ? new Date() : null;
+    const autoBanAuthorizedBy = data.autoBanEnabled ? scope.actorId : null;
     const result = await tx.radarZone.updateMany({
       where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
       data: {
         name: data.name, map: data.map, shape: data.geometry.shape, isActive: data.isActive,
         autoBanEnabled: data.autoBanEnabled, autoBanEnabledAt, autoBanAuthorizedBy,
+        altitudeEnabled: data.altitudeEnabled, minAltitudeMeters: data.minAltitudeMeters, maxAltitudeMeters: data.maxAltitudeMeters,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
