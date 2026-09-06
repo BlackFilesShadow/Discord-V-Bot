@@ -3,7 +3,13 @@ import * as maplibregl from 'maplibre-gl';
 import { type GeoJSONSource, type Map as MapLibreMap } from 'maplibre-gl';
 import type { Feature, FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { dayzToMapLibre, isPositionInsideMap, mapLibreToDayz, RADAR_MAP_CALIBRATIONS, type RadarMap } from '@radar-coordinates';
+import {
+  dayzToMapLibre,
+  isPositionInsideMap,
+  mapLibreToDayz,
+  RADAR_MAP_CALIBRATIONS,
+  type RadarMap,
+} from '@radar-coordinates';
 
 type Point = { x: number; y: number };
 type CircleGeometry = { type: 'CIRCLE'; x: number; y: number; radiusMeters: number };
@@ -38,14 +44,22 @@ interface DayzRadarMapProps {
 function circlePoints(map: RadarMap, x: number, y: number, radiusMeters: number): number[][] {
   return Array.from({ length: 65 }, (_, index) => {
     const radians = (index / 64) * Math.PI * 2;
-    const [longitude, latitude] = dayzToMapLibre(map, { x: x + Math.cos(radians) * radiusMeters, y: y + Math.sin(radians) * radiusMeters });
+    const [longitude, latitude] = dayzToMapLibre(map, {
+      x: x + Math.cos(radians) * radiusMeters,
+      y: y + Math.sin(radians) * radiusMeters,
+    });
     return [longitude, latitude];
   });
 }
 
 function maxCircleRadius(map: RadarMap, center: Point): number {
   const calibration = RADAR_MAP_CALIBRATIONS[map];
-  return Math.max(1, Math.min(center.x, calibration.widthMeters - center.x, center.y, calibration.heightMeters - center.y));
+  return Math.max(1, Math.min(
+    center.x,
+    calibration.widthMeters - center.x,
+    center.y,
+    calibration.heightMeters - center.y,
+  ));
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -76,33 +90,72 @@ function featureCollection(
 ): FeatureCollection {
   const features: Feature[] = [];
   for (const zone of withDraftGeometry(zones, transientGeometry)) {
-    const properties = { id: zone.id, name: zone.name, active: zone.isActive, draft: zone.isDraft === true };
+    const properties = {
+      id: zone.id,
+      name: zone.name,
+      active: zone.isActive,
+      draft: zone.isDraft === true,
+    };
     if (zone.geometry.type === 'CIRCLE') {
       if (zone.isDraft && interactionMode === 'CIRCLE_CREATE' && !transientGeometry) continue;
-      features.push({ type: 'Feature', properties, geometry: { type: 'Polygon', coordinates: [circlePoints(map, zone.geometry.x, zone.geometry.y, zone.geometry.radiusMeters)] } });
-      if (!zone.isDraft) features.push({ type: 'Feature', properties: { ...properties, center: true }, geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, zone.geometry)] } });
+      features.push({
+        type: 'Feature',
+        properties,
+        geometry: {
+          type: 'Polygon',
+          coordinates: [circlePoints(map, zone.geometry.x, zone.geometry.y, zone.geometry.radiusMeters)],
+        },
+      });
+      if (!zone.isDraft) {
+        features.push({
+          type: 'Feature',
+          properties: { ...properties, center: true },
+          geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, zone.geometry)] },
+        });
+      }
       continue;
     }
 
     const points = zone.geometry.points.map(point => [...dayzToMapLibre(map, point)] as [number, number]);
     const openDraft = zone.isDraft && interactionMode === 'POLYGON_DRAW';
     if (openDraft) {
-      if (points.length >= 2) features.push({ type: 'Feature', properties: { ...properties, open: true }, geometry: { type: 'LineString', coordinates: points } });
+      if (points.length >= 2) {
+        features.push({
+          type: 'Feature',
+          properties: { ...properties, open: true },
+          geometry: { type: 'LineString', coordinates: points },
+        });
+      }
       if (points.length > 0 && previewPoint) {
         features.push({
           type: 'Feature',
           properties: { ...properties, drawing: true },
-          geometry: { type: 'LineString', coordinates: [points[points.length - 1], [...dayzToMapLibre(map, previewPoint)]] },
+          geometry: {
+            type: 'LineString',
+            coordinates: [points[points.length - 1], [...dayzToMapLibre(map, previewPoint)]],
+          },
         });
       }
     } else if (points.length >= 3) {
-      features.push({ type: 'Feature', properties, geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] } });
+      features.push({
+        type: 'Feature',
+        properties,
+        geometry: { type: 'Polygon', coordinates: [[...points, points[0]]] },
+      });
     } else if (points.length === 2) {
-      features.push({ type: 'Feature', properties, geometry: { type: 'LineString', coordinates: points } });
+      features.push({
+        type: 'Feature',
+        properties,
+        geometry: { type: 'LineString', coordinates: points },
+      });
     }
 
     if (!zone.isDraft) {
-      zone.geometry.points.forEach((point, index) => features.push({ type: 'Feature', properties: { ...properties, vertex: index + 1 }, geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, point)] } }));
+      zone.geometry.points.forEach((point, index) => features.push({
+        type: 'Feature',
+        properties: { ...properties, vertex: index + 1 },
+        geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, point)] },
+      }));
     }
   }
   return { type: 'FeatureCollection', features };
@@ -124,6 +177,47 @@ function midpoint(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
 
+function gridSpacingForZoom(zoom: number): number {
+  if (zoom < 10.75) return 2000;
+  if (zoom < 11.75) return 1000;
+  if (zoom < 12.75) return 500;
+  if (zoom < 14) return 250;
+  return 100;
+}
+
+function coordinateGrid(map: RadarMap, spacingMeters: number): FeatureCollection {
+  const calibration = RADAR_MAP_CALIBRATIONS[map];
+  const features: Feature[] = [];
+
+  for (let x = spacingMeters; x < calibration.widthMeters; x += spacingMeters) {
+    features.push({
+      type: 'Feature',
+      properties: { axis: 'X', value: x },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [...dayzToMapLibre(map, { x, y: 0 })],
+          [...dayzToMapLibre(map, { x, y: calibration.heightMeters })],
+        ],
+      },
+    });
+  }
+  for (let z = spacingMeters; z < calibration.heightMeters; z += spacingMeters) {
+    features.push({
+      type: 'Feature',
+      properties: { axis: 'Z', value: z },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [...dayzToMapLibre(map, { x: 0, y: z })],
+          [...dayzToMapLibre(map, { x: calibration.widthMeters, y: z })],
+        ],
+      },
+    });
+  }
+  return { type: 'FeatureCollection', features };
+}
+
 export function DayzRadarMap({
   activeMap,
   zones,
@@ -139,6 +233,7 @@ export function DayzRadarMap({
   onPolygonMove,
 }: DayzRadarMapProps) {
   const container = useRef<HTMLDivElement>(null);
+  const coordinateReadout = useRef<HTMLParagraphElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
   const interactionModeRef = useRef(interactionMode);
@@ -173,21 +268,95 @@ export function DayzRadarMap({
     setError(null);
     const calibration = RADAR_MAP_CALIBRATIONS[activeMap];
     const northWest = [...dayzToMapLibre(activeMap, { x: 0, y: 0 })] as [number, number];
-    const southEast = [...dayzToMapLibre(activeMap, { x: calibration.widthMeters, y: calibration.heightMeters })] as [number, number];
+    const southEast = [...dayzToMapLibre(activeMap, {
+      x: calibration.widthMeters,
+      y: calibration.heightMeters,
+    })] as [number, number];
     const southWest: [number, number] = [northWest[0], southEast[1]];
     const northEast: [number, number] = [southEast[0], northWest[1]];
-    const map = new maplibregl.Map({ container: container.current!, style: { version: 8, sources: {}, layers: [] }, center: [0, 0], zoom: 10, maxBounds: [southWest, northEast], attributionControl: { compact: true } });
+    const map = new maplibregl.Map({
+      container: container.current!,
+      style: { version: 8, sources: {}, layers: [] },
+      center: [0, 0],
+      zoom: 10,
+      maxZoom: 18,
+      maxBounds: [southWest, northEast],
+      attributionControl: { compact: true },
+    });
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
-    map.on('error', (event: maplibregl.ErrorEvent) => setError(event.error?.message ?? 'Die lokale Radar-Basemap konnte nicht geladen werden.'));
+    map.on('error', (event: maplibregl.ErrorEvent) => setError(
+      event.error?.message ?? 'Die lokale Radar-Basemap konnte nicht geladen werden.',
+    ));
 
     map.on('load', () => {
-      map.addSource('basemap', { type: 'image', url: `/radar/maps/${activeMap.toLowerCase()}.png`, coordinates: [northWest, [southEast[0], northWest[1]], southEast, [northWest[0], southEast[1]]] });
-      map.addLayer({ id: 'basemap', type: 'raster', source: 'basemap' });
-      map.addSource('zones', { type: 'geojson', data: featureCollection(activeMap, zonesRef.current, interactionModeRef.current) });
-      map.addLayer({ id: 'zone-fill', type: 'fill', source: 'zones', paint: { 'fill-color': '#ef4444', 'fill-opacity': ['case', ['get', 'draft'], 0.3, 0.22] } });
-      map.addLayer({ id: 'zone-line', type: 'line', source: 'zones', paint: { 'line-color': '#dc2626', 'line-width': ['case', ['get', 'draft'], 4, 3] } });
-      map.addLayer({ id: 'zone-vertices', type: 'circle', source: 'zones', filter: ['==', '$type', 'Point'], paint: { 'circle-radius': 7, 'circle-color': '#dc2626', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+      map.addSource('basemap', {
+        type: 'image',
+        url: `/radar/maps/${activeMap.toLowerCase()}.png`,
+        coordinates: [northWest, [southEast[0], northWest[1]], southEast, [northWest[0], southEast[1]]],
+      });
+      // Keep the pinned BI source geometrically untouched. Linear sampling is
+      // pleasant at overview zoom; nearest-neighbour at high zoom avoids the
+      // blurry interpolation that previously hid the source's native detail.
+      map.addLayer({
+        id: 'basemap-overview',
+        type: 'raster',
+        source: 'basemap',
+        maxzoom: 13,
+        paint: { 'raster-resampling': 'linear', 'raster-fade-duration': 0 },
+      });
+      map.addLayer({
+        id: 'basemap-detail',
+        type: 'raster',
+        source: 'basemap',
+        minzoom: 13,
+        paint: { 'raster-resampling': 'nearest', 'raster-fade-duration': 0 },
+      });
+
+      const initialSpacing = gridSpacingForZoom(map.getZoom());
+      map.addSource('coordinate-grid', {
+        type: 'geojson',
+        data: coordinateGrid(activeMap, initialSpacing),
+      });
+      map.addLayer({
+        id: 'coordinate-grid',
+        type: 'line',
+        source: 'coordinate-grid',
+        paint: {
+          'line-color': '#ffffff',
+          'line-opacity': 0.18,
+          'line-width': 1,
+        },
+      });
+
+      map.addSource('zones', {
+        type: 'geojson',
+        data: featureCollection(activeMap, zonesRef.current, interactionModeRef.current),
+      });
+      map.addLayer({
+        id: 'zone-fill',
+        type: 'fill',
+        source: 'zones',
+        paint: { 'fill-color': '#ef4444', 'fill-opacity': ['case', ['get', 'draft'], 0.3, 0.22] },
+      });
+      map.addLayer({
+        id: 'zone-line',
+        type: 'line',
+        source: 'zones',
+        paint: { 'line-color': '#dc2626', 'line-width': ['case', ['get', 'draft'], 4, 3] },
+      });
+      map.addLayer({
+        id: 'zone-vertices',
+        type: 'circle',
+        source: 'zones',
+        filter: ['==', '$type', 'Point'],
+        paint: {
+          'circle-radius': 7,
+          'circle-color': '#dc2626',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      });
 
       let drawingCircle = false;
       let drawnCenter: Point | undefined;
@@ -195,7 +364,19 @@ export function DayzRadarMap({
       let polygonDragPoints: Point[] | undefined;
       let polygonDragLatestPoints: Point[] | undefined;
 
-      const redraw = () => setZoneSourceData(map, activeMap, zonesRef.current, interactionModeRef.current, previewPointRef.current, transientGeometryRef.current);
+      const redraw = () => setZoneSourceData(
+        map,
+        activeMap,
+        zonesRef.current,
+        interactionModeRef.current,
+        previewPointRef.current,
+        transientGeometryRef.current,
+      );
+      const redrawGrid = () => {
+        const source = map.getSource('coordinate-grid') as GeoJSONSource | undefined;
+        source?.setData(coordinateGrid(activeMap, gridSpacingForZoom(map.getZoom())));
+      };
+      map.on('zoomend', redrawGrid);
 
       map.on('click', event => {
         if (drawingCircle || interactionModeRef.current !== 'POLYGON_DRAW') return;
@@ -230,27 +411,51 @@ export function DayzRadarMap({
 
       map.on('mousemove', event => {
         const point = mapLibreToDayz(activeMap, event.lngLat.lng, event.lngLat.lat);
+        if (coordinateReadout.current) {
+          coordinateReadout.current.textContent = point && isPositionInsideMap(activeMap, point)
+            ? `X ${point.x.toFixed(1)} · Z ${point.y.toFixed(1)}`
+            : 'X/Z außerhalb der Karte';
+        }
+
         if (interactionModeRef.current === 'POLYGON_DRAW') {
           const draftPolygon = zonesRef.current.find(zone => zone.isDraft && zone.geometry.type === 'POLYGON');
-          if (point && draftPolygon?.geometry.type === 'POLYGON' && draftPolygon.geometry.points.length > 0 && isPositionInsideMap(activeMap, point)) {
+          if (point
+            && draftPolygon?.geometry.type === 'POLYGON'
+            && draftPolygon.geometry.points.length > 0
+            && isPositionInsideMap(activeMap, point)) {
             previewPointRef.current = point;
             redraw();
           }
         }
 
         if (drawingCircle && drawnCenter && point) {
-          const radiusMeters = Math.max(1, Math.min(Math.round(Math.hypot(point.x - drawnCenter.x, point.y - drawnCenter.y)), Math.floor(maxCircleRadius(activeMap, drawnCenter))));
-          transientGeometryRef.current = { type: 'CIRCLE', x: drawnCenter.x, y: drawnCenter.y, radiusMeters };
+          const radiusMeters = Math.max(1, Math.min(
+            Math.round(Math.hypot(point.x - drawnCenter.x, point.y - drawnCenter.y)),
+            Math.floor(maxCircleRadius(activeMap, drawnCenter)),
+          ));
+          transientGeometryRef.current = {
+            type: 'CIRCLE',
+            x: drawnCenter.x,
+            y: drawnCenter.y,
+            radiusMeters,
+          };
           redraw();
         }
 
         if (polygonDragStart && polygonDragPoints && point) {
-          const movedPoints = polygonDragPoints.map(vertex => ({ x: vertex.x + point.x - polygonDragStart!.x, y: vertex.y + point.y - polygonDragStart!.y }));
+          const movedPoints = polygonDragPoints.map(vertex => ({
+            x: vertex.x + point.x - polygonDragStart!.x,
+            y: vertex.y + point.y - polygonDragStart!.y,
+          }));
           if (!movedPoints.every(vertex => isPositionInsideMap(activeMap, vertex))) return;
           polygonDragLatestPoints = movedPoints;
           transientGeometryRef.current = { type: 'POLYGON', points: movedPoints };
-          polygonVertexMarkersRef.current.forEach((marker, index) => marker.setLngLat([...dayzToMapLibre(activeMap, movedPoints[index])] as [number, number]));
-          polygonInsertMarkersRef.current.forEach((marker, index) => marker.setLngLat([...dayzToMapLibre(activeMap, midpoint(movedPoints[index], movedPoints[(index + 1) % movedPoints.length]))] as [number, number]));
+          polygonVertexMarkersRef.current.forEach((marker, index) => marker.setLngLat(
+            [...dayzToMapLibre(activeMap, movedPoints[index])] as [number, number],
+          ));
+          polygonInsertMarkersRef.current.forEach((marker, index) => marker.setLngLat(
+            [...dayzToMapLibre(activeMap, midpoint(movedPoints[index], movedPoints[(index + 1) % movedPoints.length]))] as [number, number],
+          ));
           redraw();
         }
       });
@@ -262,7 +467,9 @@ export function DayzRadarMap({
           const geometry = transientGeometryRef.current;
           const center = drawnCenter;
           drawnCenter = undefined;
-          if (geometry?.type === 'CIRCLE' && center) onCircleCreateRef.current?.(center, geometry.radiusMeters);
+          if (geometry?.type === 'CIRCLE' && center) {
+            onCircleCreateRef.current?.(center, geometry.radiusMeters);
+          }
           return;
         }
         if (polygonDragStart) {
@@ -274,11 +481,17 @@ export function DayzRadarMap({
         }
       });
 
-      map.on('mouseenter', 'zone-fill', () => { if (interactionModeRef.current === 'POLYGON_EDIT') map.getCanvas().style.cursor = 'move'; });
+      map.on('mouseenter', 'zone-fill', () => {
+        if (interactionModeRef.current === 'POLYGON_EDIT') map.getCanvas().style.cursor = 'move';
+      });
       map.on('mouseleave', 'zone-fill', () => {
-        map.getCanvas().style.cursor = interactionModeRef.current === 'POLYGON_DRAW' || interactionModeRef.current === 'CIRCLE_CREATE' ? 'crosshair' : '';
+        map.getCanvas().style.cursor = interactionModeRef.current === 'POLYGON_DRAW'
+          || interactionModeRef.current === 'CIRCLE_CREATE'
+          ? 'crosshair'
+          : '';
       });
       map.getCanvas().addEventListener('mouseleave', () => {
+        if (coordinateReadout.current) coordinateReadout.current.textContent = 'X/Z';
         if (interactionModeRef.current === 'POLYGON_DRAW' && previewPointRef.current) {
           previewPointRef.current = undefined;
           redraw();
@@ -286,6 +499,7 @@ export function DayzRadarMap({
       });
 
       map.fitBounds([northWest, southEast], { padding: 24, duration: 0 });
+      redrawGrid();
       setMapReady(true);
     });
 
@@ -303,13 +517,19 @@ export function DayzRadarMap({
     transientGeometryRef.current = undefined;
     if (interactionMode !== 'POLYGON_DRAW') previewPointRef.current = undefined;
     setZoneSourceData(map, activeMap, zones, interactionMode, previewPointRef.current);
-    map.getCanvas().style.cursor = interactionMode === 'POLYGON_DRAW' || interactionMode === 'CIRCLE_CREATE' ? 'crosshair' : '';
+    map.getCanvas().style.cursor = interactionMode === 'POLYGON_DRAW' || interactionMode === 'CIRCLE_CREATE'
+      ? 'crosshair'
+      : '';
   }, [activeMap, interactionMode, mapReady, zones]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !focusPoint) return;
-    map.easeTo({ center: [...dayzToMapLibre(activeMap, focusPoint)] as [number, number], zoom: Math.max(map.getZoom(), 13), duration: 350 });
+    map.easeTo({
+      center: [...dayzToMapLibre(activeMap, focusPoint)] as [number, number],
+      zoom: Math.max(map.getZoom(), 13),
+      duration: 350,
+    });
   }, [activeMap, focusPoint, mapReady]);
 
   useEffect(() => {
@@ -325,7 +545,14 @@ export function DayzRadarMap({
       return;
     }
 
-    const redraw = () => setZoneSourceData(map, activeMap, zonesRef.current, interactionModeRef.current, previewPointRef.current, transientGeometryRef.current);
+    const redraw = () => setZoneSourceData(
+      map,
+      activeMap,
+      zonesRef.current,
+      interactionModeRef.current,
+      previewPointRef.current,
+      transientGeometryRef.current,
+    );
 
     if (draft.geometry.type === 'CIRCLE' && interactionMode === 'CIRCLE_EDIT') {
       const circle = draft.geometry;
@@ -334,15 +561,37 @@ export function DayzRadarMap({
       radiusElement.className = 'radar-zone-radius-handle';
       radiusElement.title = 'Kreisradius ändern';
       radiusElement.setAttribute('aria-label', 'Kreisradius ändern');
-      Object.assign(radiusElement.style, { width: '18px', height: '18px', borderRadius: '9999px', background: '#ffffff', border: '4px solid #dc2626', boxShadow: '0 0 0 3px rgba(127, 29, 29, 0.75)', cursor: 'ew-resize' });
-      const radiusMarker = new maplibregl.Marker({ element: radiusElement, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, { x: circle.x + circle.radiusMeters, y: circle.y })] as [number, number]).addTo(map);
+      Object.assign(radiusElement.style, {
+        width: '18px',
+        height: '18px',
+        borderRadius: '9999px',
+        background: '#ffffff',
+        border: '4px solid #dc2626',
+        boxShadow: '0 0 0 3px rgba(127, 29, 29, 0.75)',
+        cursor: 'ew-resize',
+      });
+      const radiusMarker = new maplibregl.Marker({
+        element: radiusElement,
+        anchor: 'center',
+        draggable: true,
+      }).setLngLat([
+        ...dayzToMapLibre(activeMap, { x: circle.x + circle.radiusMeters, y: circle.y }),
+      ] as [number, number]).addTo(map);
       radiusMarker.on('drag', () => {
         const raw = mapLibreToDayz(activeMap, radiusMarker.getLngLat().lng, radiusMarker.getLngLat().lat);
         if (!raw) return;
         const center = { x: circle.x, y: circle.y };
         const maxRadius = Math.floor(maxCircleRadius(activeMap, center));
-        latestRadius = Math.max(1, Math.min(Math.round(Math.hypot(raw.x - center.x, raw.y - center.y)), maxRadius));
-        transientGeometryRef.current = { type: 'CIRCLE', x: center.x, y: center.y, radiusMeters: latestRadius };
+        latestRadius = Math.max(1, Math.min(
+          Math.round(Math.hypot(raw.x - center.x, raw.y - center.y)),
+          maxRadius,
+        ));
+        transientGeometryRef.current = {
+          type: 'CIRCLE',
+          x: center.x,
+          y: center.y,
+          radiusMeters: latestRadius,
+        };
         redraw();
       });
       radiusMarker.on('dragend', () => onCircleRadiusChangeRef.current?.(latestRadius));
@@ -351,15 +600,34 @@ export function DayzRadarMap({
       const centerElement = document.createElement('div');
       centerElement.className = 'radar-zone-point radar-zone-center-handle';
       centerElement.title = 'Kreismittelpunkt verschieben';
-      Object.assign(centerElement.style, { width: '22px', height: '22px', borderRadius: '9999px', background: '#dc2626', border: '3px solid #ffffff', boxShadow: '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)', cursor: 'move' });
-      const centerMarker = new maplibregl.Marker({ element: centerElement, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, latestCenter)] as [number, number]).addTo(map);
+      Object.assign(centerElement.style, {
+        width: '22px',
+        height: '22px',
+        borderRadius: '9999px',
+        background: '#dc2626',
+        border: '3px solid #ffffff',
+        boxShadow: '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)',
+        cursor: 'move',
+      });
+      const centerMarker = new maplibregl.Marker({
+        element: centerElement,
+        anchor: 'center',
+        draggable: true,
+      }).setLngLat([...dayzToMapLibre(activeMap, latestCenter)] as [number, number]).addTo(map);
       centerMarker.on('drag', () => {
         const raw = mapLibreToDayz(activeMap, centerMarker.getLngLat().lng, centerMarker.getLngLat().lat);
         if (!raw) return;
         latestCenter = clampCircleCenter(activeMap, raw, circle.radiusMeters);
         centerMarker.setLngLat([...dayzToMapLibre(activeMap, latestCenter)] as [number, number]);
-        transientGeometryRef.current = { type: 'CIRCLE', x: latestCenter.x, y: latestCenter.y, radiusMeters: circle.radiusMeters };
-        radiusMarker.setLngLat([...dayzToMapLibre(activeMap, { x: latestCenter.x + circle.radiusMeters, y: latestCenter.y })] as [number, number]);
+        transientGeometryRef.current = {
+          type: 'CIRCLE',
+          x: latestCenter.x,
+          y: latestCenter.y,
+          radiusMeters: circle.radiusMeters,
+        };
+        radiusMarker.setLngLat([
+          ...dayzToMapLibre(activeMap, { x: latestCenter.x + circle.radiusMeters, y: latestCenter.y }),
+        ] as [number, number]);
         redraw();
       });
       centerMarker.on('dragend', () => onCircleCenterChangeRef.current?.(latestCenter));
@@ -375,13 +643,26 @@ export function DayzRadarMap({
         element.title = closeHandle ? 'Zone schließen' : `Polygonpunkt ${index + 1}`;
         element.dataset.radarHandle = closeHandle ? 'polygon-close' : 'polygon-vertex';
         Object.assign(element.style, {
-          width: closeHandle ? '26px' : '22px', height: closeHandle ? '26px' : '22px', borderRadius: '9999px', background: '#dc2626', border: closeHandle ? '4px solid #ffffff' : '3px solid #ffffff',
-          boxShadow: closeHandle ? '0 0 0 6px rgba(239, 68, 68, 0.4), 0 2px 10px rgba(0, 0, 0, 0.8)' : '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)',
+          width: closeHandle ? '26px' : '22px',
+          height: closeHandle ? '26px' : '22px',
+          borderRadius: '9999px',
+          background: '#dc2626',
+          border: closeHandle ? '4px solid #ffffff' : '3px solid #ffffff',
+          boxShadow: closeHandle
+            ? '0 0 0 6px rgba(239, 68, 68, 0.4), 0 2px 10px rgba(0, 0, 0, 0.8)'
+            : '0 0 0 4px rgba(127, 29, 29, 0.75), 0 2px 8px rgba(0, 0, 0, 0.75)',
           cursor: closeHandle ? 'pointer' : interactionMode === 'POLYGON_EDIT' ? 'move' : 'crosshair',
         });
-        const marker = new maplibregl.Marker({ element, anchor: 'center', draggable: interactionMode === 'POLYGON_EDIT' }).setLngLat([...dayzToMapLibre(activeMap, point)] as [number, number]).addTo(map);
+        const marker = new maplibregl.Marker({
+          element,
+          anchor: 'center',
+          draggable: interactionMode === 'POLYGON_EDIT',
+        }).setLngLat([...dayzToMapLibre(activeMap, point)] as [number, number]).addTo(map);
         if (closeHandle) {
-          element.addEventListener('click', event => { event.stopPropagation(); onPolygonCloseRef.current?.(); });
+          element.addEventListener('click', event => {
+            event.stopPropagation();
+            onPolygonCloseRef.current?.();
+          });
         }
         if (interactionMode === 'POLYGON_EDIT') {
           let latestPoint = point;
@@ -406,14 +687,29 @@ export function DayzRadarMap({
           element.className = 'radar-zone-insert-handle';
           element.dataset.radarHandle = 'polygon-insert';
           element.title = 'Neuen Eckpunkt einfügen';
-          Object.assign(element.style, { width: '12px', height: '12px', borderRadius: '9999px', background: '#ffffff', border: '2px solid #dc2626', boxShadow: '0 0 0 2px rgba(127, 29, 29, 0.5)', cursor: 'copy' });
+          Object.assign(element.style, {
+            width: '12px',
+            height: '12px',
+            borderRadius: '9999px',
+            background: '#ffffff',
+            border: '2px solid #dc2626',
+            boxShadow: '0 0 0 2px rgba(127, 29, 29, 0.5)',
+            cursor: 'copy',
+          });
           let latestPoint = midpoint(point, next);
-          const marker = new maplibregl.Marker({ element, anchor: 'center', draggable: true }).setLngLat([...dayzToMapLibre(activeMap, latestPoint)] as [number, number]).addTo(map);
+          const marker = new maplibregl.Marker({
+            element,
+            anchor: 'center',
+            draggable: true,
+          }).setLngLat([...dayzToMapLibre(activeMap, latestPoint)] as [number, number]).addTo(map);
           marker.on('drag', () => {
-            const candidate = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat);
-            if (!candidate || !isPositionInsideMap(activeMap, candidate)) return;
-            latestPoint = candidate;
-            transientGeometryRef.current = { type: 'POLYGON', points: [...points.slice(0, index + 1), candidate, ...points.slice(index + 1)] };
+            const nextPoint = mapLibreToDayz(activeMap, marker.getLngLat().lng, marker.getLngLat().lat);
+            if (!nextPoint || !isPositionInsideMap(activeMap, nextPoint)) return;
+            latestPoint = nextPoint;
+            transientGeometryRef.current = {
+              type: 'POLYGON',
+              points: [...points.slice(0, index + 1), nextPoint, ...points.slice(index + 1)],
+            };
             redraw();
           });
           marker.on('dragend', () => onPolygonInsertRef.current?.(index + 1, latestPoint));
@@ -433,5 +729,17 @@ export function DayzRadarMap({
   }, [activeMap, interactionMode, mapReady, zones]);
 
   const mapIsDrawing = interactionMode === 'POLYGON_DRAW' || interactionMode === 'CIRCLE_CREATE';
-  return <div className="relative h-[28rem] overflow-hidden border border-border/70" data-radar-interaction-mode={interactionMode} data-radar-polygon-open={interactionMode === 'POLYGON_DRAW' ? 'true' : 'false'}><div ref={container} className={`h-full w-full ${mapIsDrawing ? 'cursor-crosshair' : ''}`} aria-label="DayZ Radar-Karte" /><p className="pointer-events-none absolute bottom-1 right-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">DayZ Central Economy · ADPL-SA</p>{error && <p role="alert" className="absolute inset-x-3 bottom-3 bg-bg/95 p-2 text-sm text-danger">{error}</p>}</div>;
+  return (
+    <div
+      className="relative h-[28rem] overflow-hidden border border-border/70"
+      data-radar-interaction-mode={interactionMode}
+      data-radar-polygon-open={interactionMode === 'POLYGON_DRAW' ? 'true' : 'false'}
+    >
+      <div ref={container} className={`h-full w-full ${mapIsDrawing ? 'cursor-crosshair' : ''}`} aria-label="DayZ Radar-Karte" />
+      <p ref={coordinateReadout} className="pointer-events-none absolute left-2 top-2 rounded bg-bg/90 px-2 py-1 text-[11px] font-medium text-white shadow">X/Z</p>
+      <p className="pointer-events-none absolute bottom-1 left-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">HD Hybrid · adaptives X/Z-Raster</p>
+      <p className="pointer-events-none absolute bottom-1 right-1 bg-bg/85 px-1.5 py-0.5 text-[10px] text-muted">DayZ Central Economy · ADPL-SA</p>
+      {error && <p role="alert" className="absolute inset-x-3 bottom-3 bg-bg/95 p-2 text-sm text-danger">{error}</p>}
+    </div>
+  );
 }
