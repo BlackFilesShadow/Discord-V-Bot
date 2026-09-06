@@ -14,9 +14,11 @@ import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
 import { upsertRadarAutoBanFence } from './banFence';
 import { radarFunctionByKey, type RadarAdmEvent } from './catalog';
 import {
+  altitudeContainsWithMargin,
   containsPositionWithMargin,
   createCircleGeometry,
   createPolygonGeometry,
+  type RadarAltitudeRange,
   type RadarGeometry,
   type RadarPoint,
 } from './geometry';
@@ -49,7 +51,11 @@ type ZoneForAutoBan = {
   autoBanEnabled: boolean;
   autoBanEnabledAt: Date | null;
   autoBanAuthorizedBy: string | null;
+  altitudeEnabled: boolean;
+  minAltitudeMeters: unknown;
+  maxAltitudeMeters: unknown;
   version: number;
+  updatedAt: Date;
   centerX: unknown;
   centerY: unknown;
   radiusMeters: unknown;
@@ -74,10 +80,12 @@ type EventForAutoBan = {
   actorName: string | null;
   x: unknown;
   y: unknown;
+  altitude: unknown;
   admOccurredAt: Date | null;
   zoneVersionSnapshot: number;
   zoneMapSnapshot: RadarMap | null;
   zoneGeometrySnapshot: JsonValue | null;
+  zoneAltitudeSnapshot: JsonValue | null;
   zoneFunctionsSnapshot: JsonValue | null;
   zoneAllowlistSnapshot: JsonValue | null;
   autoBanEnabledSnapshot: boolean;
@@ -133,12 +141,30 @@ function snapshotGeometry(value: JsonValue | null): RadarGeometry | null {
   return createPolygonGeometry(points);
 }
 
+function snapshotAltitude(value: JsonValue | null): RadarAltitudeRange | null {
+  const raw = asRecord(value);
+  if (!raw || typeof raw.enabled !== 'boolean') return null;
+  if (!raw.enabled) return { enabled: false, minAltitudeMeters: null, maxAltitudeMeters: null };
+  const minAltitudeMeters = asNumber(raw.minAltitudeMeters);
+  const maxAltitudeMeters = asNumber(raw.maxAltitudeMeters);
+  if (!Number.isFinite(minAltitudeMeters) || !Number.isFinite(maxAltitudeMeters) || minAltitudeMeters >= maxAltitudeMeters) return null;
+  return { enabled: true, minAltitudeMeters, maxAltitudeMeters };
+}
+
 function currentGeometry(zone: ZoneForAutoBan): RadarGeometry | null {
   if (zone.shape === 'CIRCLE') {
     return createCircleGeometry(asNumber(zone.centerX), asNumber(zone.centerY), asNumber(zone.radiusMeters));
   }
   const points = zone.points.map(point => ({ x: asNumber(point.x), y: asNumber(point.y) }));
   return createPolygonGeometry(points);
+}
+
+function currentAltitude(zone: ZoneForAutoBan): RadarAltitudeRange | null {
+  if (!zone.altitudeEnabled) return { enabled: false, minAltitudeMeters: null, maxAltitudeMeters: null };
+  const minAltitudeMeters = asNumber(zone.minAltitudeMeters);
+  const maxAltitudeMeters = asNumber(zone.maxAltitudeMeters);
+  if (!Number.isFinite(minAltitudeMeters) || !Number.isFinite(maxAltitudeMeters) || minAltitudeMeters >= maxAltitudeMeters) return null;
+  return { enabled: true, minAltitudeMeters, maxAltitudeMeters };
 }
 
 function near(a: number, b: number, epsilon = 0.001): boolean {
@@ -152,6 +178,15 @@ function sameGeometry(a: RadarGeometry, b: RadarGeometry): boolean {
   }
   if (a.shape !== 'POLYGON' || b.shape !== 'POLYGON' || a.points.length !== b.points.length) return false;
   return a.points.every((point, index) => near(point.x, b.points[index].x) && near(point.y, b.points[index].y));
+}
+
+function sameAltitudeRange(a: RadarAltitudeRange, b: RadarAltitudeRange): boolean {
+  if (a.enabled !== b.enabled) return false;
+  if (!a.enabled) return true;
+  return a.minAltitudeMeters !== null && b.minAltitudeMeters !== null
+    && a.maxAltitudeMeters !== null && b.maxAltitudeMeters !== null
+    && near(a.minAltitudeMeters, b.minAltitudeMeters)
+    && near(a.maxAltitudeMeters, b.maxAltitudeMeters);
 }
 
 function stringArray(value: JsonValue | null): string[] | null {
@@ -174,11 +209,16 @@ function matchingCandidate(event: EventForAutoBan, admEvent: RadarAdmEvent): boo
   if (!definition || !definition.sourceEvents.includes(admEvent.eventType)) return false;
   const eventX = asNumber(event.x);
   const eventY = asNumber(event.y);
-  const matches = definition.selectPositions(admEvent).filter(candidate =>
-    candidate.gameId === event.actorGameId
+  const eventAltitude = event.altitude === null ? null : asNumber(event.altitude);
+  const matches = definition.selectPositions(admEvent).filter(candidate => {
+    const altitudeMatches = eventAltitude === null
+      ? candidate.position.altitude === null
+      : candidate.position.altitude !== null && near(candidate.position.altitude, eventAltitude, POSITION_EPSILON_METERS);
+    return candidate.gameId === event.actorGameId
       && near(candidate.position.x, eventX, POSITION_EPSILON_METERS)
-      && near(candidate.position.y, eventY, POSITION_EPSILON_METERS),
-  );
+      && near(candidate.position.y, eventY, POSITION_EPSILON_METERS)
+      && altitudeMatches;
+  });
   return matches.length === 1;
 }
 
@@ -204,6 +244,7 @@ async function validateInsideTransaction(
   if (zone.map !== event.zoneMapSnapshot) return { ok: false, code: 'ZONE_MAP_CHANGED' };
   if (!sameInstant(zone.autoBanEnabledAt, event.autoBanEnabledAtSnapshot)) return { ok: false, code: 'AUTOBAN_ARM_GENERATION_CHANGED' };
   if (!zone.autoBanAuthorizedBy || zone.autoBanAuthorizedBy !== event.autoBanAuthorizedBy) return { ok: false, code: 'AUTOBAN_AUTHORIZER_CHANGED' };
+  if (event.admOccurredAt.getTime() <= zone.updatedAt.getTime()) return { ok: false, code: 'ADM_EVENT_PREDATES_ZONE_GENERATION' };
 
   const radarConfig = await tx.radarConfig.findUnique({
     where: { guildId_nitradoConnId: { guildId: event.guildId, nitradoConnId: event.nitradoConnId } },
@@ -227,6 +268,16 @@ async function validateInsideTransaction(
   const eventPosition = { x: asNumber(event.x), y: asNumber(event.y) };
   if (!containsPositionWithMargin(snapGeometry, eventPosition, AUTO_BAN_SAFETY_MARGIN_METERS)) {
     return { ok: false, code: 'BOUNDARY_SAFETY_MARGIN' };
+  }
+
+  const snapAltitude = snapshotAltitude(event.zoneAltitudeSnapshot);
+  const liveAltitude = currentAltitude(zone);
+  if (!snapAltitude || !liveAltitude || !sameAltitudeRange(snapAltitude, liveAltitude)) {
+    return { ok: false, code: 'ALTITUDE_POLICY_CHANGED_OR_INVALID' };
+  }
+  const eventAltitude = event.altitude === null ? null : asNumber(event.altitude);
+  if (!altitudeContainsWithMargin(snapAltitude, eventAltitude, AUTO_BAN_SAFETY_MARGIN_METERS)) {
+    return { ok: false, code: 'ALTITUDE_SAFETY_MARGIN' };
   }
 
   const adm = await tx.admEvent.findFirst({
@@ -253,6 +304,9 @@ async function validateInsideTransaction(
   if (!sameInstant(adm.occurredAt, event.admOccurredAt)) return { ok: false, code: 'ADM_EVENT_TIME_MISMATCH' };
   if (!adm.occurredAt || adm.occurredAt.getTime() <= event.autoBanEnabledAtSnapshot.getTime()) return { ok: false, code: 'ADM_EVENT_PREDATES_AUTOBAN_ARM' };
   if (adm.createdAt.getTime() <= event.autoBanEnabledAtSnapshot.getTime()) return { ok: false, code: 'ADM_EVENT_PREDATES_AUTOBAN_ARM' };
+  if (adm.occurredAt.getTime() <= zone.updatedAt.getTime() || adm.createdAt.getTime() <= zone.updatedAt.getTime()) {
+    return { ok: false, code: 'ADM_EVENT_PREDATES_ZONE_GENERATION' };
+  }
   if (adm.actorGameId !== event.actorGameId) return { ok: false, code: 'ADM_ACTOR_GUID_MISMATCH' };
 
   const binding = await tx.nitradoAdmBindingState.findUnique({
@@ -505,7 +559,7 @@ export function startRadarAutoBanRuntime(): void {
   timer = setInterval(() => { void runRadarAutoBanOnce(); }, POLL_INTERVAL_MS);
   timer.unref?.();
   void runRadarAutoBanOnce();
-  logger.info(`Radar-Auto-Ban gestartet (Intervall ${POLL_INTERVAL_MS / 1000}s, Sicherheitsrand ${AUTO_BAN_SAFETY_MARGIN_METERS}m).`);
+  logger.info(`Radar-Auto-Ban gestartet (Intervall ${POLL_INTERVAL_MS / 1000}s, Sicherheitsrand ${AUTO_BAN_SAFETY_MARGIN_METERS}m horizontal/vertikal).`);
 }
 
 export function stopRadarAutoBanRuntime(): void {
