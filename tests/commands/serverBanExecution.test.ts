@@ -111,6 +111,10 @@ describe('server-ban/server-unban execution', () => {
     }));
     mockWithFreshBinding = jest.fn(async (_snapshot: unknown, work: () => Promise<unknown>) => work());
     mockTx = {
+      $queryRawUnsafe: jest.fn(async () => {
+        mockOrder.push('radar-scope-lock');
+        return [];
+      }),
       whitelistEntry: {
         updateMany: jest.fn(async () => {
           mockOrder.push('local-whitelist-pending');
@@ -133,6 +137,12 @@ describe('server-ban/server-unban execution', () => {
           return { id: 'ban-1' };
         }),
       },
+      radarAutoBanBanFence: {
+        deleteMany: jest.fn(async () => {
+          mockOrder.push('clear-radar-fence');
+          return { count: 1 };
+        }),
+      },
       serverBanExpiryNotice: {
         upsert: jest.fn(async () => ({})),
         deleteMany: jest.fn(async () => ({ count: 0 })),
@@ -141,18 +151,28 @@ describe('server-ban/server-unban execution', () => {
     };
   });
 
-  it('markiert Whitelist PENDING_REMOVE und queued danach den serialisierten Ban-Worker', async () => {
+  it('serialisiert manuellen Ban gegen Radar, löscht einen alten Auto-Ban-Fence und queued erst danach den Ban-Worker', async () => {
     const interaction = interactionFor('ban');
 
     await serverBanCommand.execute(interaction);
 
     expect(mockOrder).toEqual([
+      'radar-scope-lock',
       'local-whitelist-pending',
       'local-request-cancel',
       'add-ban',
       'lookup-ban',
+      'clear-radar-fence',
       'enqueue-ban',
     ]);
+    expect(mockTx.$queryRawUnsafe).toHaveBeenCalledWith(
+      'SELECT pg_advisory_xact_lock($1, $2)',
+      expect.any(Number),
+      expect.any(Number),
+    );
+    expect(mockTx.radarAutoBanBanFence.deleteMany).toHaveBeenCalledWith({
+      where: { banId: 'ban-1', guildId: 'guild-1', nitradoConnId: 'conn-a' },
+    });
     expect(mockTx.whitelistEntry.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
     }));
@@ -184,7 +204,7 @@ describe('server-ban/server-unban execution', () => {
     expect(mockOrder.at(-1)).toBe('enqueue-ban');
   });
 
-  it('queued Remote-Unban nur nachdem derselbe frische Token-/Service-Snapshot bestaetigt wurde', async () => {
+  it('queued Remote-Unban nur nachdem derselbe frische Token-/Service-Snapshot bestaetigt wurde und löscht einen Radar-Fence atomar', async () => {
     mockRemoteBanRows = [{ identifier: 'Player-123' }];
     const interaction = interactionFor('unban');
 
@@ -192,10 +212,13 @@ describe('server-ban/server-unban execution', () => {
 
     expect(mockReadCurrentBinding).toHaveBeenCalledWith({ id: 'conn-a', guildId: 'guild-1' });
     expect(mockWithFreshBinding).toHaveBeenCalledTimes(1);
-    expect(mockOrder).toEqual(['upsert-unban-anchor', 'enqueue-unban']);
+    expect(mockOrder).toEqual(['radar-scope-lock', 'upsert-unban-anchor', 'clear-radar-fence', 'enqueue-unban']);
     expect(mockTx.serverBanEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ active: false, appliedRemotely: true }),
     }));
+    expect(mockTx.radarAutoBanBanFence.deleteMany).toHaveBeenCalledWith({
+      where: { banId: 'ban-1', guildId: 'guild-1', nitradoConnId: 'conn-a' },
+    });
     expect(mockTx.serverBanExpiryNotice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ banId: 'ban-1' }),
       data: expect.objectContaining({ status: 'CANCELLED', identifierEnc: null }),
@@ -209,7 +232,7 @@ describe('server-ban/server-unban execution', () => {
 
     await serverUnbanCommand.execute(interaction);
 
-    expect(mockOrder).toEqual(['upsert-unban-anchor']);
+    expect(mockOrder).toEqual(['radar-scope-lock', 'upsert-unban-anchor', 'clear-radar-fence']);
     expect(mockTx.serverBanEntry.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ active: false, appliedRemotely: false }),
     }));
@@ -225,6 +248,7 @@ describe('server-ban/server-unban execution', () => {
     expect(mockReadCurrentBinding).toHaveBeenCalledTimes(1);
     expect(mockWithFreshBinding).toHaveBeenCalledTimes(1);
     expect(mockTx.serverBanEntry.upsert).not.toHaveBeenCalled();
+    expect(mockTx.radarAutoBanBanFence.deleteMany).not.toHaveBeenCalled();
     expect(mockTx.serverBanExpiryNotice.updateMany).not.toHaveBeenCalled();
     expect(mockOrder).not.toContain('enqueue-unban');
     expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
