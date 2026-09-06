@@ -22,6 +22,7 @@ const txFindUnique = jest.fn();
 const zoneFindFirst = jest.fn();
 const configFindUnique = jest.fn();
 const admFindFirst = jest.fn();
+const admFindMany = jest.fn();
 const bindingFindUnique = jest.fn();
 const banFindUnique = jest.fn();
 const whitelistUpdateMany = jest.fn();
@@ -33,7 +34,7 @@ const tx = {
   radarZoneEvent: { findUnique: txFindUnique, updateMany: txUpdateMany },
   radarZone: { findFirst: zoneFindFirst },
   radarConfig: { findUnique: configFindUnique },
-  admEvent: { findFirst: admFindFirst },
+  admEvent: { findFirst: admFindFirst, findMany: admFindMany },
   nitradoAdmBindingState: { findUnique: bindingFindUnique },
   radarAutoBanBanFence: { upsert: fenceUpsert },
   serverBanEntry: { findUnique: banFindUnique },
@@ -55,10 +56,19 @@ const logAudit = jest.fn();
 jest.mock('../../src/modules/bans/banRegistry', () => ({
   __esModule: true,
   addBan: (...args: unknown[]) => addBan(...args),
-  isBanActive: (entry: { active: boolean; expiresAt: Date | null } | null, now: Date) => Boolean(entry?.active && (!entry.expiresAt || entry.expiresAt > now)),
+  isBanActive: (entry: { active: boolean; expiresAt: Date | null } | null, now: Date) => Boolean(
+    entry?.active && (!entry.expiresAt || entry.expiresAt > now),
+  ),
 }));
-jest.mock('../../src/modules/bans/banOutbox', () => ({ __esModule: true, enqueueServerBanAdd: (...args: unknown[]) => enqueueServerBanAdd(...args) }));
-jest.mock('../../src/utils/logger', () => ({ __esModule: true, logAudit: (...args: unknown[]) => logAudit(...args), logger: { info: jest.fn(), error: jest.fn() } }));
+jest.mock('../../src/modules/bans/banOutbox', () => ({
+  __esModule: true,
+  enqueueServerBanAdd: (...args: unknown[]) => enqueueServerBanAdd(...args),
+}));
+jest.mock('../../src/utils/logger', () => ({
+  __esModule: true,
+  logAudit: (...args: unknown[]) => logAudit(...args),
+  logger: { info: jest.fn(), error: jest.fn() },
+}));
 
 import { RadarAutoBanStatus } from '@prisma/client';
 import { runRadarAutoBanOnce } from '../../src/modules/radar/autoBanRuntime';
@@ -68,7 +78,7 @@ function event(overrides: AnyRow = {}): AnyRow {
     id: 'radar-event-1',
     zoneId: 'zone-1',
     admEventId: 'adm-event-1',
-    functionKey: 'PLAYER_DETECTION',
+    functionKey: 'BAN_PLAYER_DETECTION',
     guildId: GUILD_ID,
     nitradoConnId: CONN_ID,
     admEventType: 'PLAYER_POSITION',
@@ -80,9 +90,11 @@ function event(overrides: AnyRow = {}): AnyRow {
     admOccurredAt: OCCURRED_AT,
     zoneVersionSnapshot: 1,
     zoneMapSnapshot: 'CHERNARUS',
-    zoneGeometrySnapshot: { shape: 'CIRCLE', centerX: 100, centerY: 100, radiusMeters: 100, minX: 0, minY: 0, maxX: 200, maxY: 200 },
-    zoneAltitudeSnapshot: { enabled: false, minAltitudeMeters: null, maxAltitudeMeters: null },
-    zoneFunctionsSnapshot: ['PLAYER_DETECTION'],
+    zoneGeometrySnapshot: {
+      shape: 'CIRCLE', centerX: 100, centerY: 100, radiusMeters: 100,
+      minX: 0, minY: 0, maxX: 200, maxY: 200,
+    },
+    zoneFunctionsSnapshot: ['BAN_PLAYER_DETECTION'],
     zoneAllowlistSnapshot: [],
     autoBanEnabledSnapshot: true,
     autoBanEnabledAtSnapshot: ARMED_AT,
@@ -95,24 +107,50 @@ function event(overrides: AnyRow = {}): AnyRow {
 
 function zone(overrides: AnyRow = {}): AnyRow {
   return {
-    id: 'zone-1', configId: 'config-1', guildId: GUILD_ID, nitradoConnId: CONN_ID,
-    name: 'Nordbasis', map: 'CHERNARUS', shape: 'CIRCLE', isActive: true,
-    autoBanEnabled: true, autoBanEnabledAt: ARMED_AT, autoBanAuthorizedBy: ACTOR_ID, version: 1,
-    altitudeEnabled: false, minAltitudeMeters: null, maxAltitudeMeters: null,
+    id: 'zone-1',
+    configId: 'config-1',
+    guildId: GUILD_ID,
+    nitradoConnId: CONN_ID,
+    name: 'Nordbasis',
+    map: 'CHERNARUS',
+    shape: 'CIRCLE',
+    isActive: true,
+    autoBanEnabled: true,
+    autoBanEnabledAt: ARMED_AT,
+    autoBanAuthorizedBy: ACTOR_ID,
+    version: 1,
     updatedAt: new Date('2026-09-06T00:00:00.100Z'),
-    centerX: 100, centerY: 100, radiusMeters: 100, minX: 0, minY: 0, maxX: 200, maxY: 200,
-    points: [], functions: [{ functionKey: 'PLAYER_DETECTION' }], allowlist: [],
+    centerX: 100,
+    centerY: 100,
+    radiusMeters: 100,
+    minX: 0,
+    minY: 0,
+    maxX: 200,
+    maxY: 200,
+    points: [],
+    functions: [{ functionKey: 'BAN_PLAYER_DETECTION' }],
+    allowlist: [],
     ...overrides,
   };
 }
 
 function adm(overrides: AnyRow = {}): AnyRow {
   return {
-    id: 'adm-event-1', sourceFile: 'DayZServer_PS4_x64_2026-09-06_00-00-00.ADM',
-    eventType: 'PLAYER_POSITION', occurredAt: OCCURRED_AT, createdAt: CREATED_AT,
-    actorGameId: GUID, actorName: 'Player One', targetGameId: null, targetName: null,
-    objectType: null, toolOrWeapon: null, distanceMeters: null,
-    actorPosition: '100, 100, 12', targetPosition: null,
+    id: 'adm-event-1',
+    sourceFile: 'DayZServer_PS4_x64_2026-09-06_00-00-00.ADM',
+    eventType: 'PLAYER_POSITION',
+    occurredAt: OCCURRED_AT,
+    createdAt: CREATED_AT,
+    actorGameId: GUID,
+    actorName: 'Player One',
+    targetGameId: null,
+    targetName: null,
+    objectType: null,
+    toolOrWeapon: null,
+    distanceMeters: null,
+    actorPosition: '100, 100, 12',
+    targetPosition: null,
+    rawLine: 'Player "Player One" (id=guid pos=<100, 100, 12>)',
     ...overrides,
   };
 }
@@ -133,6 +171,7 @@ beforeEach(() => {
   zoneFindFirst.mockResolvedValue(zone());
   configFindUnique.mockResolvedValue({ activeMap: 'CHERNARUS' });
   admFindFirst.mockResolvedValue(adm());
+  admFindMany.mockResolvedValue([]);
   bindingFindUnique.mockResolvedValue({ bindingVersion: 0, currentServiceId: 'service-1' });
   banFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'ban-1' });
   whitelistUpdateMany.mockResolvedValue({ count: 0 });
@@ -149,12 +188,15 @@ async function expectSkipped(row: AnyRow, code: string): Promise<void> {
   expect(enqueueServerBanAdd).not.toHaveBeenCalled();
   expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
     where: expect.objectContaining({ id: row.id, autoBanStatus: RadarAutoBanStatus.PROCESSING }),
-    data: expect.objectContaining({ autoBanStatus: RadarAutoBanStatus.SKIPPED, autoBanLastError: code }),
+    data: expect.objectContaining({
+      autoBanStatus: RadarAutoBanStatus.SKIPPED,
+      autoBanLastError: code,
+    }),
   }));
 }
 
 describe('Radar Auto-Ban Runtime', () => {
-  it('bannt nur einen vollständig revalidierten Event und fenced ihn vor dem Outbox-Enqueue auf exakt dieselbe Nitrado-Generation', async () => {
+  it('bannt nur einen vollstaendig revalidierten BAN_* Event und fenced ihn vor dem Outbox-Enqueue', async () => {
     const row = event();
     queueOne(row);
 
@@ -199,28 +241,34 @@ describe('Radar Auto-Ban Runtime', () => {
     expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ autoBanStatus: RadarAutoBanStatus.APPLIED, autoBanBanId: 'ban-1' }),
     }));
-    expect(logAudit).toHaveBeenCalledWith('RADAR_AUTO_BAN_APPLIED', 'MODERATION', expect.not.objectContaining({ identifier: GUID }));
+    expect(logAudit).toHaveBeenCalledWith(
+      'RADAR_AUTO_BAN_APPLIED',
+      'MODERATION',
+      expect.not.objectContaining({ identifier: GUID }),
+    );
+  });
+
+  it('verweigert selbst einen versehentlich gequeueten PLAYER_DETECTION Event als nicht-punitiv', async () => {
+    zoneFindFirst.mockResolvedValue(zone({ functions: [{ functionKey: 'PLAYER_DETECTION' }] }));
+    await expectSkipped(event({
+      functionKey: 'PLAYER_DETECTION',
+      zoneFunctionsSnapshot: ['PLAYER_DETECTION'],
+    }), 'FUNCTION_NOT_PUNITIVE');
   });
 
   it('bannt nie innerhalb des 10m-Grenzsicherheitsbereichs', async () => {
-    await expectSkipped(event({ x: 195, zoneGeometrySnapshot: { shape: 'CIRCLE', centerX: 100, centerY: 100, radiusMeters: 100 } }), 'BOUNDARY_SAFETY_MARGIN');
-  });
-
-  it('bannt bei aktiviertem Hoehenband nur mit 10m vertikalem Sicherheitsrand', async () => {
-    zoneFindFirst.mockResolvedValue(zone({ altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 }));
-    admFindFirst.mockResolvedValue(adm({ actorPosition: '100, 100, 105' }));
     await expectSkipped(event({
-      altitude: 105,
-      zoneAltitudeSnapshot: { enabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 },
-    }), 'ALTITUDE_SAFETY_MARGIN');
+      x: 195,
+      zoneGeometrySnapshot: { shape: 'CIRCLE', centerX: 100, centerY: 100, radiusMeters: 100 },
+    }), 'BOUNDARY_SAFETY_MARGIN');
   });
 
-  it('bannt nie wenn Hoehen-Snapshot und aktuelle Hoehenpolicy abweichen', async () => {
-    zoneFindFirst.mockResolvedValue(zone({ altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 }));
-    await expectSkipped(event(), 'ALTITUDE_POLICY_CHANGED_OR_INVALID');
+  it('bannt nie wenn die gespeicherte Hoehen-Evidenz nicht mehr exakt zur ADM-Quelle passt', async () => {
+    admFindFirst.mockResolvedValue(adm({ actorPosition: '100, 100, 13' }));
+    await expectSkipped(event({ altitude: 12 }), 'EVENT_POSITION_OR_FUNCTION_MISMATCH');
   });
 
-  it('bannt nie bei geänderter Zonen-Version', async () => {
+  it('bannt nie bei geaenderter Zonen-Version', async () => {
     zoneFindFirst.mockResolvedValue(zone({ version: 2 }));
     await expectSkipped(event(), 'ZONE_VERSION_CHANGED');
   });
@@ -231,7 +279,7 @@ describe('Radar Auto-Ban Runtime', () => {
     await expectSkipped(event({ zoneVersionSnapshot: 2 }), 'ADM_EVENT_PREDATES_ZONE_GENERATION');
   });
 
-  it('bannt nie wenn sich die Auto-Ban-Aktivierungsidentität geändert hat', async () => {
+  it('bannt nie wenn sich die Auto-Ban-Aktivierungsidentitaet geaendert hat', async () => {
     zoneFindFirst.mockResolvedValue(zone({ autoBanAuthorizedBy: '777777777777777777' }));
     await expectSkipped(event(), 'AUTOBAN_AUTHORIZER_CHANGED');
   });
@@ -251,7 +299,7 @@ describe('Radar Auto-Ban Runtime', () => {
     await expectSkipped(event(), 'ADM_BINDING_GENERATION_MISMATCH');
   });
 
-  it('bannt nie ein altes ADM-Ereignis nur weil es verspätet nach dem Arming ingestiert wurde', async () => {
+  it('bannt nie ein altes ADM-Ereignis nur weil es verspaetet nach dem Arming ingestiert wurde', async () => {
     const oldOccurrence = new Date('2026-09-05T23:59:59.000Z');
     await expectSkipped(event({ admOccurredAt: oldOccurrence }), 'ADM_EVENT_PREDATES_AUTOBAN_ARM');
   });
@@ -260,7 +308,11 @@ describe('Radar Auto-Ban Runtime', () => {
     await expectSkipped(event({ admOccurredAt: new Date('2099-01-01T00:00:00.000Z') }), 'ADM_TIME_IN_FUTURE');
   });
 
-  it('reaktiviert einen bereits aktiven Ban nicht erneut, schreibt keinen Radar-Fence und erzeugt keinen zweiten Outbox-Intent', async () => {
+  it('bannt nie wenn die gespeicherte X/Z-Position nicht zur Original-ADM-Evidenz passt', async () => {
+    await expectSkipped(event({ x: 110 }), 'EVENT_POSITION_OR_FUNCTION_MISMATCH');
+  });
+
+  it('reaktiviert einen bereits aktiven Ban nicht erneut und erzeugt keinen zweiten Outbox-Intent', async () => {
     banFindUnique.mockReset();
     banFindUnique.mockResolvedValue({ id: 'existing-ban', active: true, expiresAt: null });
     const row = event();
@@ -272,7 +324,11 @@ describe('Radar Auto-Ban Runtime', () => {
     expect(fenceUpsert).not.toHaveBeenCalled();
     expect(enqueueServerBanAdd).not.toHaveBeenCalled();
     expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ autoBanStatus: RadarAutoBanStatus.APPLIED, autoBanBanId: 'existing-ban', autoBanLastError: 'ALREADY_ACTIVE_BAN' }),
+      data: expect.objectContaining({
+        autoBanStatus: RadarAutoBanStatus.APPLIED,
+        autoBanBanId: 'existing-ban',
+        autoBanLastError: 'ALREADY_ACTIVE_BAN',
+      }),
     }));
   });
 });
