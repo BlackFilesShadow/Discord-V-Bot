@@ -27,6 +27,27 @@ CREATE INDEX "RadarZone_guildId_nitradoConnId_autoBanEnabled_idx"
 CREATE INDEX "RadarZoneEvent_guildId_nitradoConnId_autoBanStatus_autoBanNextAttemptAt_idx"
   ON "RadarZoneEvent"("guildId", "nitradoConnId", "autoBanStatus", "autoBanNextAttemptAt");
 
+-- Kein Foreign Key zum allgemeinen ServerBanEntry: manuelle Bans bleiben eine
+-- unabhaengige Policy-Domaene. Der Radar-Fence bindet nur Auto-Bans an exakt die
+-- Nitrado-Service-/ADM-Binding-Generation, aus der ihr Beweis stammt.
+CREATE TABLE "RadarAutoBanBanFence" (
+  "banId" VARCHAR(32) NOT NULL,
+  "radarEventId" VARCHAR(32) NOT NULL,
+  "guildId" TEXT NOT NULL,
+  "nitradoConnId" TEXT NOT NULL,
+  "serviceId" VARCHAR(64) NOT NULL,
+  "bindingVersion" INTEGER NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "invalidatedAt" TIMESTAMP(3),
+  CONSTRAINT "RadarAutoBanBanFence_pkey" PRIMARY KEY ("banId")
+);
+CREATE UNIQUE INDEX "RadarAutoBanBanFence_radarEventId_key"
+  ON "RadarAutoBanBanFence"("radarEventId");
+CREATE INDEX "RadarAutoBanBanFence_guildId_nitradoConnId_invalidatedAt_idx"
+  ON "RadarAutoBanBanFence"("guildId", "nitradoConnId", "invalidatedAt");
+CREATE INDEX "RadarAutoBanBanFence_serviceId_bindingVersion_idx"
+  ON "RadarAutoBanBanFence"("serviceId", "bindingVersion");
+
 -- Immutable evidence snapshot. RadarZoneEvent remains an alert record; this trigger only
 -- arms the separate auto-ban worker when both the actual ADM occurrence and its DB insert
 -- are newer than the exact moment auto-ban was enabled. A delayed/backlogged old ADM line
