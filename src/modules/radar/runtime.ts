@@ -6,13 +6,22 @@ import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitRadarEvent } from '../../dashboard/socket/emitter';
 import { logger } from '../../utils/logger';
 import { safeEmbedField } from '../../utils/embedSanitize';
-import { dayzIzurviveUrl, type RadarMap } from '../../shared/radarCoordinates';
-import { radarFunctionsForEvent, type RadarAdmEvent } from './catalog';
+import { isValidBattleyeGuid } from '../../utils/guid';
 import {
-  altitudeContains,
+  dayzIzurviveUrl,
+  isPositionInsideMap,
+  type RadarMap,
+} from '../../shared/radarCoordinates';
+import {
+  radarFunctionByKey,
+  radarFunctionsForEvent,
+  type RadarAdmEvent,
+  type RadarPositionCandidate,
+} from './catalog';
+import { resolveRadarCandidates } from './evidence';
+import {
   boundsContainPosition,
   containsPosition,
-  type RadarAltitudeRange,
   type RadarGeometry,
   type RadarPoint,
 } from './geometry';
@@ -35,9 +44,6 @@ type ZoneRow = {
   rolePingEnabled: boolean;
   roleIds: string[];
   shape: 'CIRCLE' | 'POLYGON';
-  altitudeEnabled: boolean;
-  minAltitudeMeters: unknown;
-  maxAltitudeMeters: unknown;
   centerX: unknown;
   centerY: unknown;
   radiusMeters: unknown;
@@ -73,8 +79,14 @@ function radarEventNonce(eventId: string): string {
 function admTime(value: Date | null): string {
   if (!value || Number.isNaN(value.getTime())) return 'Nicht eindeutig aufloesbar';
   const parts = new Intl.DateTimeFormat('de-DE', {
-    timeZone: 'UTC', day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+    timeZone: 'UTC',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
   }).formatToParts(value);
   const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find(item => item.type === type)?.value ?? '';
   return `${part('day')}.${part('month')}.${part('year')} · ${part('hour')}:${part('minute')}:${part('second')} UTC`;
@@ -82,36 +94,40 @@ function admTime(value: Date | null): string {
 
 function coordinateField(map: RadarMap, event: RadarZoneEvent): string {
   const x = Number(event.x).toFixed(1);
-  const y = Number(event.y).toFixed(1);
-  const label = `${x} / ${y}`;
+  const z = Number(event.y).toFixed(1);
+  const label = `X: ${x} · Z: ${z}`;
   const url = dayzIzurviveUrl(map, { x: Number(event.x), y: Number(event.y) });
-  return url ? `[${label}](${url})` : label;
+  return url ? `${label}\n[iZurvive öffnen](${url})` : label;
 }
 
-export function buildRadarEmbed(event: RadarZoneEvent, zone: { name: string; map: RadarMap; embedColor: string }): EmbedBuilder {
-  const embed = new EmbedBuilder().setColor(zone.embedColor as ColorResolvable).setTitle(safeEmbedField(zone.name, 256));
+export function buildRadarEmbed(
+  event: RadarZoneEvent,
+  zone: { name: string; map: RadarMap; embedColor: string },
+): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setColor(zone.embedColor as ColorResolvable)
+    .setTitle(safeEmbedField(zone.name, 256));
   const username = safeEmbedField(event.actorName ?? 'Unaufgeloest', 256);
   const coordinates = coordinateField(zone.map, event);
-  const altitude = event.altitude === null ? null : `${Number(event.altitude).toFixed(1)} m`;
+
   if (event.functionKey === 'PLAYER_DETECTION') {
-    embed.addFields(
+    return embed.addFields(
       { name: 'Username', value: username, inline: false },
-      { name: 'Koordinaten', value: coordinates, inline: false },
+      { name: 'Koordinaten X/Z', value: coordinates, inline: false },
+      { name: 'Erkannt durch ADM', value: admTime(event.admOccurredAt), inline: false },
     );
-    if (altitude) embed.addFields({ name: 'ADM-Hoehe', value: altitude, inline: false });
-    return embed.addFields({ name: 'Erkannt durch ADM', value: admTime(event.admOccurredAt), inline: false });
   }
 
+  const definition = radarFunctionByKey(event.functionKey);
   embed.addFields(
     { name: 'Username', value: username, inline: false },
-    { name: 'Aktion', value: safeEmbedField(event.functionKey, 128), inline: false },
-    { name: 'Koordinaten', value: coordinates, inline: false },
+    { name: 'Aktion', value: safeEmbedField(definition?.label ?? event.functionKey, 128), inline: false },
+    { name: 'Koordinaten X/Z', value: coordinates, inline: false },
+    { name: 'ADM-Zeit', value: admTime(event.admOccurredAt), inline: false },
   );
-  if (altitude) embed.addFields({ name: 'ADM-Hoehe', value: altitude, inline: false });
-  embed.addFields({ name: 'ADM-Zeit', value: admTime(event.admOccurredAt), inline: false });
   if (event.objectType) embed.addFields({ name: 'Objekt', value: safeEmbedField(event.objectType, 256), inline: false });
   if (event.toolOrWeapon) embed.addFields({ name: 'Werkzeug / Waffe', value: safeEmbedField(event.toolOrWeapon, 256), inline: false });
-  if (event.targetName) embed.addFields({ name: 'Betroffener Spieler', value: safeEmbedField(event.targetName, 256), inline: false });
+  if (event.targetName) embed.addFields({ name: 'Betroffen', value: safeEmbedField(event.targetName, 256), inline: false });
   if (event.distanceMeters !== null) embed.addFields({ name: 'Distanz', value: `${Number(event.distanceMeters).toFixed(1)} m`, inline: false });
   return embed;
 }
@@ -119,7 +135,12 @@ export function buildRadarEmbed(event: RadarZoneEvent, zone: { name: string; map
 async function markDeliveryFailure(event: RadarZoneEvent, error: unknown): Promise<void> {
   const attempts = event.attempts + 1;
   await prisma.radarZoneEvent.updateMany({
-    where: { id: event.id, guildId: event.guildId, nitradoConnId: event.nitradoConnId, status: RadarDeliveryStatus.SENDING },
+    where: {
+      id: event.id,
+      guildId: event.guildId,
+      nitradoConnId: event.nitradoConnId,
+      status: RadarDeliveryStatus.SENDING,
+    },
     data: {
       status: attempts >= MAX_DELIVERY_ATTEMPTS ? RadarDeliveryStatus.FAILED : RadarDeliveryStatus.RETRY,
       attempts,
@@ -132,10 +153,17 @@ async function markDeliveryFailure(event: RadarZoneEvent, error: unknown): Promi
 
 async function deliverRadarEvent(event: RadarZoneEvent): Promise<void> {
   const claimed = await prisma.radarZoneEvent.updateMany({
-    where: { id: event.id, guildId: event.guildId, nitradoConnId: event.nitradoConnId, status: { in: [RadarDeliveryStatus.PENDING, RadarDeliveryStatus.RETRY] }, nextAttemptAt: { lte: new Date() } },
+    where: {
+      id: event.id,
+      guildId: event.guildId,
+      nitradoConnId: event.nitradoConnId,
+      status: { in: [RadarDeliveryStatus.PENDING, RadarDeliveryStatus.RETRY] },
+      nextAttemptAt: { lte: new Date() },
+    },
     data: { status: RadarDeliveryStatus.SENDING, leaseUntil: new Date(Date.now() + LEASE_MS) },
   });
   if (claimed.count !== 1) return;
+
   try {
     const zone = await prisma.radarZone.findFirst({
       where: { id: event.zoneId, guildId: event.guildId, nitradoConnId: event.nitradoConnId, isActive: true },
@@ -148,10 +176,13 @@ async function deliverRadarEvent(event: RadarZoneEvent): Promise<void> {
       });
       return;
     }
+
     const client = tryGetDashboardClient();
     if (!client) throw new Error('Discord-Client nicht verfuegbar');
     const channel = await client.channels.fetch(zone.channelId).catch(() => null);
-    if (!channel || !channel.isTextBased() || channel.isDMBased()) throw new Error('Radar-Channel nicht verfuegbar/Text-Channel');
+    if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+      throw new Error('Radar-Channel nicht verfuegbar/Text-Channel');
+    }
     const textChannel = channel as GuildTextBasedChannel;
     if (textChannel.guildId !== event.guildId) throw new Error('Radar-Channel gehoert nicht zur Guild');
     const roleIds = zone.rolePingEnabled ? [...new Set(zone.roleIds)] : [];
@@ -163,8 +194,19 @@ async function deliverRadarEvent(event: RadarZoneEvent): Promise<void> {
       enforceNonce: true,
     });
     await prisma.radarZoneEvent.updateMany({
-      where: { id: event.id, guildId: event.guildId, nitradoConnId: event.nitradoConnId, status: RadarDeliveryStatus.SENDING },
-      data: { status: RadarDeliveryStatus.SENT, messageId: message.id, sentAt: new Date(), leaseUntil: null, lastError: null },
+      where: {
+        id: event.id,
+        guildId: event.guildId,
+        nitradoConnId: event.nitradoConnId,
+        status: RadarDeliveryStatus.SENDING,
+      },
+      data: {
+        status: RadarDeliveryStatus.SENT,
+        messageId: message.id,
+        sentAt: new Date(),
+        leaseUntil: null,
+        lastError: null,
+      },
     });
   } catch (error) {
     await markDeliveryFailure(event, error);
@@ -173,7 +215,12 @@ async function deliverRadarEvent(event: RadarZoneEvent): Promise<void> {
 
 async function deliverPendingRadarEvents(config: RadarConfig): Promise<void> {
   const events = await prisma.radarZoneEvent.findMany({
-    where: { guildId: config.guildId, nitradoConnId: config.nitradoConnId, status: { in: [RadarDeliveryStatus.PENDING, RadarDeliveryStatus.RETRY] }, nextAttemptAt: { lte: new Date() } },
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      status: { in: [RadarDeliveryStatus.PENDING, RadarDeliveryStatus.RETRY] },
+      nextAttemptAt: { lte: new Date() },
+    },
     orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
     take: DELIVERY_BATCH,
   });
@@ -181,7 +228,12 @@ async function deliverPendingRadarEvents(config: RadarConfig): Promise<void> {
 }
 
 function geometryFor(zone: ZoneRow): RadarGeometry | null {
-  const bounds = { minX: toNumber(zone.minX), minY: toNumber(zone.minY), maxX: toNumber(zone.maxX), maxY: toNumber(zone.maxY) };
+  const bounds = {
+    minX: toNumber(zone.minX),
+    minY: toNumber(zone.minY),
+    maxX: toNumber(zone.maxX),
+    maxY: toNumber(zone.maxY),
+  };
   if (Object.values(bounds).some(value => !Number.isFinite(value))) return null;
   if (zone.shape === 'CIRCLE') {
     const centerX = toNumber(zone.centerX);
@@ -196,24 +248,34 @@ function geometryFor(zone: ZoneRow): RadarGeometry | null {
     : null;
 }
 
-function altitudeRangeFor(zone: ZoneRow): RadarAltitudeRange {
-  return {
-    enabled: zone.altitudeEnabled,
-    minAltitudeMeters: zone.minAltitudeMeters === null ? null : toNumber(zone.minAltitudeMeters),
-    maxAltitudeMeters: zone.maxAltitudeMeters === null ? null : toNumber(zone.maxAltitudeMeters),
-  };
-}
-
-function eventBelongsToCurrentZoneGeneration(zone: ZoneRow, event: RadarScannedAdmEvent): boolean {
-  if (!event.occurredAt || Number.isNaN(event.occurredAt.getTime()) || Number.isNaN(zone.updatedAt.getTime())) return false;
+function eventBelongsToCurrentZoneGeneration(
+  zone: ZoneRow,
+  event: RadarScannedAdmEvent,
+  candidate: RadarPositionCandidate,
+): boolean {
+  if (!event.occurredAt || !candidate.evidenceOccurredAt) return false;
+  if (Number.isNaN(event.occurredAt.getTime()) || Number.isNaN(candidate.evidenceOccurredAt.getTime()) || Number.isNaN(zone.updatedAt.getTime())) return false;
   const generationStartedAt = zone.updatedAt.getTime();
-  return event.occurredAt.getTime() > generationStartedAt && event.createdAt.getTime() > generationStartedAt;
+  return event.occurredAt.getTime() > generationStartedAt
+    && event.createdAt.getTime() > generationStartedAt
+    && candidate.evidenceOccurredAt.getTime() > generationStartedAt;
 }
 
 async function emitPersistedRadarEvent(radarEventId: string): Promise<void> {
   const event = await prisma.radarZoneEvent.findUnique({
     where: { id: radarEventId },
-    select: { id: true, zoneId: true, guildId: true, nitradoConnId: true, functionKey: true, actorName: true, x: true, y: true, altitude: true, admOccurredAt: true },
+    select: {
+      id: true,
+      zoneId: true,
+      guildId: true,
+      nitradoConnId: true,
+      functionKey: true,
+      actorName: true,
+      x: true,
+      y: true,
+      altitude: true,
+      admOccurredAt: true,
+    },
   });
   if (!event) return;
   emitRadarEvent({
@@ -232,8 +294,6 @@ async function emitPersistedRadarEvent(radarEventId: string): Promise<void> {
 
 async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): Promise<void> {
   for (const definition of radarFunctionsForEvent(event.eventType)) {
-    const candidates = definition.selectPositions(event);
-    if (candidates.length === 0) continue;
     const zones = await prisma.radarZone.findMany({
       where: {
         configId: config.id,
@@ -245,14 +305,31 @@ async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): 
       },
       include: { points: { orderBy: { position: 'asc' } }, functions: true, allowlist: true },
     }) as unknown as ZoneRow[];
+    if (zones.length === 0) continue;
+
+    const candidates = await resolveRadarCandidates(prisma, definition, event, {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+    });
+    if (candidates.length === 0) continue;
 
     for (const candidate of candidates) {
+      if (definition.punitive && !isValidBattleyeGuid(candidate.gameId)) continue;
+      if (!isPositionInsideMap(config.activeMap, candidate.position)) continue;
+
       for (const zone of zones) {
-        if (!eventBelongsToCurrentZoneGeneration(zone, event)) continue;
+        // If both player toggles are enabled, the punitive event is the single
+        // canonical message/event. This prevents duplicate Discord output.
+        if (definition.key === 'PLAYER_DETECTION'
+          && zone.functions.some(entry => entry.functionKey === 'BAN_PLAYER_DETECTION')) continue;
+        if (!eventBelongsToCurrentZoneGeneration(zone, event, candidate)) continue;
         if (candidate.gameId && zone.allowlist.some(entry => entry.gameId === candidate.gameId)) continue;
+
         const geometry = geometryFor(zone);
-        if (!geometry || !boundsContainPosition(geometry, candidate.position) || !containsPosition(geometry, candidate.position)) continue;
-        if (!altitudeContains(altitudeRangeFor(zone), candidate.position.altitude)) continue;
+        if (!geometry
+          || !boundsContainPosition(geometry, candidate.position)
+          || !containsPosition(geometry, candidate.position)) continue;
+
         try {
           const created = await prisma.radarZoneEvent.create({
             data: {
@@ -265,8 +342,8 @@ async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): 
               admEventType: event.eventType,
               actorGameId: candidate.gameId,
               actorName: candidate.playerName,
-              targetGameId: event.targetGameId,
-              targetName: event.targetName,
+              targetGameId: candidate.relatedGameId,
+              targetName: candidate.relatedName,
               objectType: event.objectType,
               toolOrWeapon: event.toolOrWeapon,
               distanceMeters: event.distanceMeters,
@@ -295,19 +372,44 @@ async function processConfig(config: RadarConfig): Promise<void> {
       where: {
         guildId: config.guildId,
         nitradoConnId: config.nitradoConnId,
-        OR: [{ createdAt: { gt: cursorCreatedAt } }, { createdAt: cursorCreatedAt, id: { gt: cursorEventId } }],
+        OR: [
+          { createdAt: { gt: cursorCreatedAt } },
+          { createdAt: cursorCreatedAt, id: { gt: cursorEventId } },
+        ],
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: SCAN_BATCH,
-      select: { id: true, eventType: true, occurredAt: true, createdAt: true, actorGameId: true, actorName: true, targetGameId: true, targetName: true, objectType: true, toolOrWeapon: true, distanceMeters: true, actorPosition: true, targetPosition: true },
+      select: {
+        id: true,
+        eventType: true,
+        occurredAt: true,
+        createdAt: true,
+        actorGameId: true,
+        actorName: true,
+        targetGameId: true,
+        targetName: true,
+        objectType: true,
+        toolOrWeapon: true,
+        distanceMeters: true,
+        actorPosition: true,
+        targetPosition: true,
+        rawLine: true,
+      },
     }) as RadarScannedAdmEvent[];
     if (events.length === 0) break;
+
     for (const event of events) await evaluateEvent(config, event);
     const last = events[events.length - 1];
     const nextCursorCreatedAt = last.createdAt;
     const nextCursorEventId = last.id;
     const advanced = await prisma.radarConfig.updateMany({
-      where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId, cursorCreatedAt, cursorEventId },
+      where: {
+        id: config.id,
+        guildId: config.guildId,
+        nitradoConnId: config.nitradoConnId,
+        cursorCreatedAt,
+        cursorEventId,
+      },
       data: { cursorCreatedAt: nextCursorCreatedAt, cursorEventId: nextCursorEventId },
     });
     if (advanced.count !== 1) return;
@@ -315,6 +417,7 @@ async function processConfig(config: RadarConfig): Promise<void> {
     cursorEventId = nextCursorEventId;
     if (events.length < SCAN_BATCH) break;
   }
+
   await deliverPendingRadarEvents(config);
 }
 
@@ -325,11 +428,22 @@ export async function runRadarRuntimeOnce(): Promise<void> {
     const expiredLease = { status: RadarDeliveryStatus.SENDING, leaseUntil: { lt: new Date() } };
     await prisma.radarZoneEvent.updateMany({
       where: { ...expiredLease, attempts: { gte: MAX_DELIVERY_ATTEMPTS - 1 } },
-      data: { status: RadarDeliveryStatus.FAILED, attempts: { increment: 1 }, leaseUntil: null, lastError: 'Delivery lease expired after maximum retry attempts' },
+      data: {
+        status: RadarDeliveryStatus.FAILED,
+        attempts: { increment: 1 },
+        leaseUntil: null,
+        lastError: 'Delivery lease expired after maximum retry attempts',
+      },
     });
     await prisma.radarZoneEvent.updateMany({
       where: { ...expiredLease, attempts: { lt: MAX_DELIVERY_ATTEMPTS - 1 } },
-      data: { status: RadarDeliveryStatus.RETRY, attempts: { increment: 1 }, nextAttemptAt: new Date(), leaseUntil: null, lastError: 'Delivery lease expired; retry with stable Discord nonce required' },
+      data: {
+        status: RadarDeliveryStatus.RETRY,
+        attempts: { increment: 1 },
+        nextAttemptAt: new Date(),
+        leaseUntil: null,
+        lastError: 'Delivery lease expired; retry with stable Discord nonce required',
+      },
     });
     const configs = await prisma.radarConfig.findMany({ orderBy: { createdAt: 'asc' } });
     for (const config of configs) await processConfig(config);
