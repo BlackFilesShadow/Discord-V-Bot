@@ -8,7 +8,14 @@ import { logger } from '../../utils/logger';
 import { safeEmbedField } from '../../utils/embedSanitize';
 import { dayzIzurviveUrl, type RadarMap } from '../../shared/radarCoordinates';
 import { radarFunctionsForEvent, type RadarAdmEvent } from './catalog';
-import { boundsContainPosition, containsPosition, type RadarGeometry, type RadarPoint } from './geometry';
+import {
+  altitudeContains,
+  boundsContainPosition,
+  containsPosition,
+  type RadarAltitudeRange,
+  type RadarGeometry,
+  type RadarPoint,
+} from './geometry';
 
 const POLL_INTERVAL_MS = 15_000;
 const SCAN_BATCH = 200;
@@ -28,6 +35,9 @@ type ZoneRow = {
   rolePingEnabled: boolean;
   roleIds: string[];
   shape: 'CIRCLE' | 'POLYGON';
+  altitudeEnabled: boolean;
+  minAltitudeMeters: unknown;
+  maxAltitudeMeters: unknown;
   centerX: unknown;
   centerY: unknown;
   radiusMeters: unknown;
@@ -35,6 +45,7 @@ type ZoneRow = {
   minY: unknown;
   maxX: unknown;
   maxY: unknown;
+  updatedAt: Date;
   points: Array<{ x: unknown; y: unknown }>;
   functions: Array<{ functionKey: string }>;
   allowlist: Array<{ gameId: string }>;
@@ -81,20 +92,23 @@ export function buildRadarEmbed(event: RadarZoneEvent, zone: { name: string; map
   const embed = new EmbedBuilder().setColor(zone.embedColor as ColorResolvable).setTitle(safeEmbedField(zone.name, 256));
   const username = safeEmbedField(event.actorName ?? 'Unaufgeloest', 256);
   const coordinates = coordinateField(zone.map, event);
+  const altitude = event.altitude === null ? null : `${Number(event.altitude).toFixed(1)} m`;
   if (event.functionKey === 'PLAYER_DETECTION') {
-    return embed.addFields(
+    embed.addFields(
       { name: 'Username', value: username, inline: false },
       { name: 'Koordinaten', value: coordinates, inline: false },
-      { name: 'Erkannt durch ADM', value: admTime(event.admOccurredAt), inline: false },
     );
+    if (altitude) embed.addFields({ name: 'ADM-Hoehe', value: altitude, inline: false });
+    return embed.addFields({ name: 'Erkannt durch ADM', value: admTime(event.admOccurredAt), inline: false });
   }
 
   embed.addFields(
     { name: 'Username', value: username, inline: false },
     { name: 'Aktion', value: safeEmbedField(event.functionKey, 128), inline: false },
     { name: 'Koordinaten', value: coordinates, inline: false },
-    { name: 'ADM-Zeit', value: admTime(event.admOccurredAt), inline: false },
   );
+  if (altitude) embed.addFields({ name: 'ADM-Hoehe', value: altitude, inline: false });
+  embed.addFields({ name: 'ADM-Zeit', value: admTime(event.admOccurredAt), inline: false });
   if (event.objectType) embed.addFields({ name: 'Objekt', value: safeEmbedField(event.objectType, 256), inline: false });
   if (event.toolOrWeapon) embed.addFields({ name: 'Werkzeug / Waffe', value: safeEmbedField(event.toolOrWeapon, 256), inline: false });
   if (event.targetName) embed.addFields({ name: 'Betroffener Spieler', value: safeEmbedField(event.targetName, 256), inline: false });
@@ -182,6 +196,20 @@ function geometryFor(zone: ZoneRow): RadarGeometry | null {
     : null;
 }
 
+function altitudeRangeFor(zone: ZoneRow): RadarAltitudeRange {
+  return {
+    enabled: zone.altitudeEnabled,
+    minAltitudeMeters: zone.minAltitudeMeters === null ? null : toNumber(zone.minAltitudeMeters),
+    maxAltitudeMeters: zone.maxAltitudeMeters === null ? null : toNumber(zone.maxAltitudeMeters),
+  };
+}
+
+function eventBelongsToCurrentZoneGeneration(zone: ZoneRow, event: RadarScannedAdmEvent): boolean {
+  if (!event.occurredAt || Number.isNaN(event.occurredAt.getTime()) || Number.isNaN(zone.updatedAt.getTime())) return false;
+  const generationStartedAt = zone.updatedAt.getTime();
+  return event.occurredAt.getTime() > generationStartedAt && event.createdAt.getTime() > generationStartedAt;
+}
+
 async function emitPersistedRadarEvent(radarEventId: string): Promise<void> {
   const event = await prisma.radarZoneEvent.findUnique({
     where: { id: radarEventId },
@@ -202,7 +230,7 @@ async function emitPersistedRadarEvent(radarEventId: string): Promise<void> {
   });
 }
 
-async function evaluateEvent(config: RadarConfig, event: RadarAdmEvent): Promise<void> {
+async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): Promise<void> {
   for (const definition of radarFunctionsForEvent(event.eventType)) {
     const candidates = definition.selectPositions(event);
     if (candidates.length === 0) continue;
@@ -220,9 +248,11 @@ async function evaluateEvent(config: RadarConfig, event: RadarAdmEvent): Promise
 
     for (const candidate of candidates) {
       for (const zone of zones) {
+        if (!eventBelongsToCurrentZoneGeneration(zone, event)) continue;
         if (candidate.gameId && zone.allowlist.some(entry => entry.gameId === candidate.gameId)) continue;
         const geometry = geometryFor(zone);
         if (!geometry || !boundsContainPosition(geometry, candidate.position) || !containsPosition(geometry, candidate.position)) continue;
+        if (!altitudeContains(altitudeRangeFor(zone), candidate.position.altitude)) continue;
         try {
           const created = await prisma.radarZoneEvent.create({
             data: {
