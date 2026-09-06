@@ -93,7 +93,7 @@ function zone(overrides: AnyRow = {}): AnyRow {
   return {
     id: 'zone-1', configId: 'config-1', guildId: GUILD_ID, nitradoConnId: CONN_ID,
     name: 'Nordbasis', map: 'CHERNARUS', shape: 'CIRCLE', isActive: true,
-    autoBanEnabled: true, autoBanEnabledAt: ARMED_AT, version: 1,
+    autoBanEnabled: true, autoBanEnabledAt: ARMED_AT, autoBanAuthorizedBy: ACTOR_ID, version: 1,
     centerX: 100, centerY: 100, radiusMeters: 100, minX: 0, minY: 0, maxX: 200, maxY: 200,
     points: [], functions: [{ functionKey: 'PLAYER_DETECTION' }], allowlist: [],
     ...overrides,
@@ -181,6 +181,11 @@ describe('Radar Auto-Ban Runtime', () => {
     await expectSkipped(event(), 'ZONE_VERSION_CHANGED');
   });
 
+  it('bannt nie wenn sich die Auto-Ban-Aktivierungsidentität geändert hat', async () => {
+    zoneFindFirst.mockResolvedValue(zone({ autoBanAuthorizedBy: '777777777777777777' }));
+    await expectSkipped(event(), 'AUTOBAN_AUTHORIZER_CHANGED');
+  });
+
   it('bannt nie bei falscher Eventtyp-/Toggle-Zuordnung', async () => {
     admFindFirst.mockResolvedValue(adm({ eventType: 'BUILD' }));
     await expectSkipped(event(), 'ADM_EVENT_TYPE_CHANGED');
@@ -194,6 +199,11 @@ describe('Radar Auto-Ban Runtime', () => {
   it('bannt nie einen Event aus einer alten ADM-Binding-Generation', async () => {
     bindingFindUnique.mockResolvedValue({ bindingVersion: 2, currentServiceId: 'service-new' });
     await expectSkipped(event(), 'ADM_BINDING_GENERATION_MISMATCH');
+  });
+
+  it('bannt nie ein altes ADM-Ereignis nur weil es verspätet nach dem Arming ingestiert wurde', async () => {
+    const oldOccurrence = new Date('2026-09-05T23:59:59.000Z');
+    await expectSkipped(event({ admOccurredAt: oldOccurrence }), 'ADM_EVENT_PREDATES_AUTOBAN_ARM');
   });
 
   it('bannt nie einen ADM-Zeitpunkt in der Zukunft', async () => {
