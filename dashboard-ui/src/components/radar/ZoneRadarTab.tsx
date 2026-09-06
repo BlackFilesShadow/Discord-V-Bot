@@ -18,6 +18,7 @@ interface RadarFunction {
   label: string;
   order: number;
   defaultEnabled: boolean;
+  punitive: boolean;
   sourceEvents: string[];
 }
 
@@ -26,15 +27,13 @@ interface RadarZone {
   name: string;
   map: RadarMap;
   isActive: boolean;
-  autoBanEnabled: boolean;
-  altitudeEnabled: boolean;
-  minAltitudeMeters: number | null;
-  maxAltitudeMeters: number | null;
   rolePingEnabled: boolean;
   roleIds: string[];
   enabledFunctions: string[];
   allowlist: unknown[];
-  geometry: { type: 'CIRCLE'; x: number; y: number; radiusMeters: number } | { type: 'POLYGON'; points: Array<{ x: number; y: number }> };
+  geometry:
+    | { type: 'CIRCLE'; x: number; y: number; radiusMeters: number }
+    | { type: 'POLYGON'; points: Array<{ x: number; y: number }> };
 }
 
 interface ChannelOption { id: string; name: string; type: number }
@@ -47,27 +46,22 @@ const MAP_LABELS: Record<RadarMap, string> = {
   SAKHAL: 'Sakhal',
 };
 
-function altitudeLabel(zone: RadarZone): string {
-  if (!zone.altitudeEnabled) return 'Höhe: unbegrenzt';
-  const min = zone.minAltitudeMeters;
-  const max = zone.maxAltitudeMeters;
-  return min === null || max === null ? 'Höhe: ungültig' : `Höhe: ${min}–${max} m`;
-}
-
 export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; slot: string; canManage: boolean }) {
   const queryClient = useQueryClient();
   const [editorId, setEditorId] = useState<string | 'new' | null>(null);
   const query = `?slot=${encodeURIComponent(slot)}`;
-  const config = useQuery({ queryKey: ['radar-config', guildId, slot], queryFn: () => api.get<{ activeMap: RadarMap; nitradoConnId: string }>(`/api/v2/guilds/${guildId}/radar/config${query}`), retry: false });
+  const config = useQuery({
+    queryKey: ['radar-config', guildId, slot],
+    queryFn: () => api.get<{ activeMap: RadarMap; nitradoConnId: string }>(`/api/v2/guilds/${guildId}/radar/config${query}`),
+    retry: false,
+  });
 
   useEffect(() => {
     const nitradoConnId = config.data?.nitradoConnId;
     if (!nitradoConnId) return;
     const socket = getGuildSocket();
     const join = () => joinRadarRoom(guildId, nitradoConnId);
-    const refresh = () => {
-      void queryClient.invalidateQueries({ queryKey: ['radar-zones', guildId, slot] });
-    };
+    const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['radar-zones', guildId, slot] }); };
     join();
     socket.on('connect', join);
     socket.on('radar.player.detected', refresh);
@@ -80,16 +74,45 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
     };
   }, [guildId, slot, config.data?.nitradoConnId, queryClient]);
 
-  const functions = useQuery({ queryKey: ['radar-functions', guildId], queryFn: () => api.get<{ functions: RadarFunction[] }>(`/api/v2/guilds/${guildId}/radar/functions`), retry: false });
-  const zones = useQuery({ queryKey: ['radar-zones', guildId, slot], queryFn: () => api.get<{ zones: RadarZone[] }>(`/api/v2/guilds/${guildId}/radar/zones${query}`), retry: false });
+  const functions = useQuery({
+    queryKey: ['radar-functions', guildId],
+    queryFn: () => api.get<{ functions: RadarFunction[] }>(`/api/v2/guilds/${guildId}/radar/functions`),
+    retry: false,
+  });
+  const zones = useQuery({
+    queryKey: ['radar-zones', guildId, slot],
+    queryFn: () => api.get<{ zones: RadarZone[] }>(`/api/v2/guilds/${guildId}/radar/zones${query}`),
+    retry: false,
+  });
   const updateConfig = useMutation({
     mutationFn: (activeMap: RadarMap) => api.put(`/api/v2/guilds/${guildId}/radar/config${query}`, { activeMap }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['radar-config', guildId, slot] }),
   });
-  const detail = useQuery({ queryKey: ['radar-zone', guildId, slot, editorId], queryFn: () => api.get<{ zone: EditableRadarZone }>(`/api/v2/guilds/${guildId}/radar/zones/${editorId}${query}`), enabled: editorId !== null && editorId !== 'new', retry: false });
-  const channels = useQuery({ queryKey: ['guild-channels', guildId], queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`), enabled: canManage && editorId !== null, retry: false });
-  const roles = useQuery({ queryKey: ['guild-roles', guildId], queryFn: () => api.get<{ roles: RoleOption[] }>(`/api/v2/guilds/${guildId}/roles`), enabled: canManage && editorId !== null, retry: false });
-  const players = useQuery({ queryKey: ['radar-players', guildId, slot], queryFn: () => api.get<{ players: RadarPlayerOption[] }>(`/api/v2/guilds/${guildId}/radar/players${query}`), enabled: canManage && editorId !== null, retry: false });
+  const detail = useQuery({
+    queryKey: ['radar-zone', guildId, slot, editorId],
+    queryFn: () => api.get<{ zone: EditableRadarZone }>(`/api/v2/guilds/${guildId}/radar/zones/${editorId}${query}`),
+    enabled: editorId !== null && editorId !== 'new',
+    retry: false,
+  });
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
+    enabled: canManage && editorId !== null,
+    retry: false,
+  });
+  const roles = useQuery({
+    queryKey: ['guild-roles', guildId],
+    queryFn: () => api.get<{ roles: RoleOption[] }>(`/api/v2/guilds/${guildId}/roles`),
+    enabled: canManage && editorId !== null,
+    retry: false,
+  });
+  const players = useQuery({
+    queryKey: ['radar-players', guildId, slot],
+    queryFn: () => api.get<{ players: RadarPlayerOption[] }>(`/api/v2/guilds/${guildId}/radar/players${query}`),
+    enabled: canManage && editorId !== null,
+    retry: false,
+  });
+
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['radar-zones', guildId, slot] });
   const saveZone = useMutation({
     mutationFn: (payload: Omit<EditableRadarZone, 'id' | 'version'> & { version?: number }) => editorId && editorId !== 'new'
@@ -97,7 +120,10 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
       : api.post(`/api/v2/guilds/${guildId}/radar/zones${query}`, payload),
     onSuccess: () => { refresh(); setEditorId(null); },
   });
-  const deleteZone = useMutation({ mutationFn: (zone: EditableRadarZone) => api.del(`/api/v2/guilds/${guildId}/radar/zones/${zone.id}${query}`), onSuccess: () => { refresh(); setEditorId(null); } });
+  const deleteZone = useMutation({
+    mutationFn: (zone: EditableRadarZone) => api.del(`/api/v2/guilds/${guildId}/radar/zones/${zone.id}${query}`),
+    onSuccess: () => { refresh(); setEditorId(null); },
+  });
   const openNewEditor = () => {
     saveZone.reset();
     deleteZone.reset();
@@ -114,6 +140,7 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
   const editorLoadError = detail.error ?? channels.error ?? roles.error ?? players.error;
   const mutationError = saveZone.error ?? deleteZone.error;
   const editorLoading = detail.isLoading || channels.isLoading || roles.isLoading || players.isLoading;
+  const functionByKey = new Map((functions.data?.functions ?? []).map(definition => [definition.key, definition]));
 
   return (
     <div className="space-y-7">
@@ -131,53 +158,92 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
               {Object.entries(MAP_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </Select>
           </label>
-          <Badge variant="info">2.5D vorbereitet</Badge>
+          <Badge variant="info">HD Hybrid · X/Z</Badge>
         </div>
-        <p className="mt-4 text-xs leading-relaxed text-muted">Zonen anderer Karten bleiben gespeichert und werden erst mit ihrer aktiven Karte ausgewertet. Optionale Höhenbänder werden serverseitig zusätzlich zu X/Y geprüft.</p>
+        <p className="mt-4 text-xs leading-relaxed text-muted">
+          Die DayZ-Originalkarte bleibt geometrisch unverändert. HD-Rasterdarstellung, scharfe Vektor-Zonen und ein adaptives X/Z-Gitter verbessern die Präzision beim Zoomen. ADM-Höhe läuft ausschließlich als interne Evidenz und wird nicht ausgegeben.
+        </p>
         {updateConfig.isError && <p role="alert" className="mt-4 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(updateConfig.error).desc}</p>}
         <div className="mt-5">
           <Suspense fallback={<div className="h-[28rem] rounded-lg border border-border/70" aria-label="Radar-Karte wird geladen" />}>
-            <DayzRadarMap activeMap={activeMap} zones={(zones.data?.zones ?? [])
-              .filter(zone => zone.map === activeMap)
-              .map(zone => ({ id: zone.id, name: zone.name, isActive: zone.isActive, geometry: zone.geometry }))} />
+            <DayzRadarMap
+              activeMap={activeMap}
+              zones={(zones.data?.zones ?? [])
+                .filter(zone => zone.map === activeMap)
+                .map(zone => ({ id: zone.id, name: zone.name, isActive: zone.isActive, geometry: zone.geometry }))}
+            />
           </Suspense>
         </div>
       </Card>
 
       {editing && canManage && <Card className="p-5 sm:p-6">
         <CardHeader><CardTitle>{editorId === 'new' ? 'Neue Radar-Zone' : 'Radar-Zone bearbeiten'}</CardTitle></CardHeader>
-        {editorLoading ? <p className="text-sm text-muted">Lade Editor...</p> : editorLoadError ? <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(editorLoadError).desc}</p> : <>
-          {mutationError && <p role="alert" className="mb-5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(mutationError).desc}</p>}
-          <ZoneEditor activeMap={activeMap} functions={(functions.data?.functions ?? []) as RadarFunctionDefinition[]} channels={channels.data?.channels ?? []} roles={roles.data?.roles ?? []} players={players.data?.players ?? []} zone={detail.data?.zone ?? null} saving={saveZone.isPending} deleting={deleteZone.isPending} onSave={payload => saveZone.mutate(payload)} onDelete={zone => deleteZone.mutate(zone)} />
-        </>}
+        {editorLoading
+          ? <p className="text-sm text-muted">Lade Editor...</p>
+          : editorLoadError
+            ? <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(editorLoadError).desc}</p>
+            : <>
+              {mutationError && <p role="alert" className="mb-5 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">{describeApiError(mutationError).desc}</p>}
+              <ZoneEditor
+                activeMap={activeMap}
+                functions={(functions.data?.functions ?? []) as RadarFunctionDefinition[]}
+                channels={channels.data?.channels ?? []}
+                roles={roles.data?.roles ?? []}
+                players={players.data?.players ?? []}
+                zone={detail.data?.zone ?? null}
+                saving={saveZone.isPending}
+                deleting={deleteZone.isPending}
+                onSave={payload => saveZone.mutate(payload)}
+                onDelete={zone => deleteZone.mutate(zone)}
+              />
+            </>}
       </Card>}
 
       <Card>
         <CardHeader><CardTitle>Radar-Funktionen</CardTitle></CardHeader>
         <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))]" aria-label="Radar-Funktionen">
           {(functions.data?.functions ?? []).map(definition => (
-            <div key={definition.key} className="min-w-0 rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-center text-xs text-white">
-              <MapPinned className="mx-auto mb-2 h-4 w-4 text-accent" aria-hidden="true" />
+            <div key={definition.key} className={`min-w-0 rounded-lg border p-4 text-center text-xs text-white ${definition.punitive ? 'border-danger/40 bg-danger/5' : 'border-border/70 bg-bg-elev/40'}`}>
+              <MapPinned className={`mx-auto mb-2 h-4 w-4 ${definition.punitive ? 'text-danger' : 'text-accent'}`} aria-hidden="true" />
               <p className="break-words font-medium">{definition.label}</p>
-              <p className="mt-1.5 text-[10px] text-muted">{definition.defaultEnabled ? 'Standard: AN' : 'Standard: AUS'}</p>
+              <p className="mt-1.5 text-[10px] text-muted">{definition.punitive ? 'Präzise Auto-Ban-Regel' : 'Nur Erkennung / Meldung'}</p>
             </div>
           ))}
         </div>
       </Card>
 
       <Card>
-        <CardHeader className="justify-between gap-4"><CardTitle>Gespeicherte Zonen</CardTitle>{canManage && <Button size="sm" onClick={openNewEditor}><Plus className="h-4 w-4" />Zone</Button>}</CardHeader>
-        {zones.isLoading ? <p className="text-sm text-muted">Lade Zonen...</p> : (zones.data?.zones.length ?? 0) === 0 ? <p className="text-sm text-muted">Noch keine Radar-Zone für diesen Slot gespeichert.</p> : (
-          <div className="space-y-3">
-            {zones.data?.zones.map(zone => (
-              <div key={zone.id} className="rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3"><strong className="text-white">{zone.name}</strong><div className="flex items-center gap-2"><Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>{zone.altitudeEnabled && <Badge variant="info">3D-Höhe</Badge>}{zone.autoBanEnabled && <Badge variant="danger">Auto-Ban AN</Badge>}{canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}</div></div>
-                <p className="mt-2 text-muted">{MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`} · {altitudeLabel(zone)}</p>
-                <p className="mt-1.5 text-muted">Funktionen: {zone.enabledFunctions.length} · Auto-Ban: {zone.autoBanEnabled ? 'AN' : 'AUS'} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}</p>
-              </div>
-            ))}
-          </div>
-        )}
+        <CardHeader className="justify-between gap-4">
+          <CardTitle>Gespeicherte Zonen</CardTitle>
+          {canManage && <Button size="sm" onClick={openNewEditor}><Plus className="h-4 w-4" />Zone</Button>}
+        </CardHeader>
+        {zones.isLoading
+          ? <p className="text-sm text-muted">Lade Zonen...</p>
+          : (zones.data?.zones.length ?? 0) === 0
+            ? <p className="text-sm text-muted">Noch keine Radar-Zone für diesen Slot gespeichert.</p>
+            : <div className="space-y-3">
+              {zones.data?.zones.map(zone => {
+                const punitiveCount = zone.enabledFunctions.filter(key => functionByKey.get(key)?.punitive).length;
+                return (
+                  <div key={zone.id} className="rounded-lg border border-border/70 bg-bg-elev/40 p-4 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <strong className="text-white">{zone.name}</strong>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={zone.isActive ? 'ok' : 'neutral'}>{zone.isActive ? 'Aktiv' : 'Inaktiv'}</Badge>
+                        {punitiveCount > 0 && <Badge variant="danger">{punitiveCount} Bann-Regeln</Badge>}
+                        {canManage && <Button variant="ghost" size="sm" aria-label={`${zone.name} bearbeiten`} onClick={() => setEditorId(zone.id)}><Pencil className="h-4 w-4" /></Button>}
+                      </div>
+                    </div>
+                    <p className="mt-2 text-muted">
+                      {MAP_LABELS[zone.map]} · {zone.geometry.type === 'CIRCLE' ? `Kreis · ${zone.geometry.radiusMeters} m` : `Polygon · ${zone.geometry.points.length} Punkte`} · X/Z
+                    </p>
+                    <p className="mt-1.5 text-muted">
+                      Funktionen: {zone.enabledFunctions.length} · Rollen-Ping: {zone.rolePingEnabled ? `AN · ${zone.roleIds.length} Rollen` : 'AUS'} · Allowlist: {zone.allowlist.length}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>}
       </Card>
     </div>
   );
