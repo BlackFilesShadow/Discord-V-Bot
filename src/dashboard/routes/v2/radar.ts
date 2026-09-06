@@ -8,7 +8,11 @@ import { isValidBattleyeGuid } from '../../../utils/guid';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { emitGuildEvent } from '../../socket/emitter';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
-import { RADAR_FUNCTIONS, radarFunctionByKey } from '../../../modules/radar/catalog';
+import {
+  RADAR_FUNCTIONS,
+  radarFunctionByKey,
+  radarHasPunitiveFunction,
+} from '../../../modules/radar/catalog';
 import {
   createCircleGeometry,
   createPolygonGeometry,
@@ -24,18 +28,12 @@ export const radarRouter = Router({ mergeParams: true });
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const MAPS = new Set<RadarMap>(['CHERNARUS', 'LIVONIA', 'SAKHAL']);
-const AUTO_BAN_SAFETY_MARGIN_METERS = 10;
-const MIN_AUTO_BAN_ALTITUDE_BAND_METERS = AUTO_BAN_SAFETY_MARGIN_METERS * 2;
 
 type SaveBody = {
   version?: number;
   name?: string;
   map?: RadarMap;
   isActive?: boolean;
-  autoBanEnabled?: boolean;
-  altitudeEnabled?: boolean;
-  minAltitudeMeters?: number | null;
-  maxAltitudeMeters?: number | null;
   geometry?: { type?: string; x?: number; y?: number; radiusMeters?: number; points?: RadarPoint[] };
   enabledFunctions?: string[];
   allowlist?: Array<{ source?: 'SERVER_WHITELIST' | 'MANUAL'; gameId?: string; playerName?: string | null }>;
@@ -46,10 +44,20 @@ type SaveBody = {
   editorState?: { centerX?: number; centerY?: number; zoom?: number; bearing?: number; pitch?: number };
 };
 
-type ValidatedSave = Required<Pick<SaveBody,
-  'name' | 'map' | 'isActive' | 'autoBanEnabled' | 'altitudeEnabled' | 'minAltitudeMeters' | 'maxAltitudeMeters'
-  | 'enabledFunctions' | 'allowlist' | 'channelId' | 'rolePingEnabled' | 'roleIds' | 'embedColor'
->> & { geometry: RadarGeometry; editorState: NonNullable<SaveBody['editorState']> };
+interface ValidatedSave {
+  name: string;
+  map: RadarMap;
+  isActive: boolean;
+  geometry: RadarGeometry;
+  enabledFunctions: string[];
+  autoBanEnabled: boolean;
+  allowlist: Array<{ source?: 'SERVER_WHITELIST' | 'MANUAL'; gameId?: string; playerName?: string | null }>;
+  channelId: string;
+  rolePingEnabled: boolean;
+  roleIds: string[];
+  embedColor: string;
+  editorState: NonNullable<SaveBody['editorState']>;
+}
 
 type RadarZoneWithRelations = Prisma.RadarZoneGetPayload<{
   include: { points: true; functions: true; allowlist: true };
@@ -153,55 +161,106 @@ function geometryFrom(body: SaveBody, map: RadarMap): RadarGeometry | null {
   return geometry && geometryFitsMap(map, geometry) ? geometry : null;
 }
 
+function editorStateFrom(value: SaveBody['editorState']): NonNullable<SaveBody['editorState']> {
+  if (!value) return {};
+  const finiteOrUndefined = (candidate: unknown): number | undefined => {
+    const numeric = Number(candidate);
+    return Number.isFinite(numeric) ? numeric : undefined;
+  };
+  return {
+    centerX: finiteOrUndefined(value.centerX),
+    centerY: finiteOrUndefined(value.centerY),
+    zoom: finiteOrUndefined(value.zoom),
+    bearing: finiteOrUndefined(value.bearing),
+    pitch: finiteOrUndefined(value.pitch),
+  };
+}
+
 function validateBody(body: SaveBody): { ok: true; data: ValidatedSave } | { ok: false; error: string } {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const map = readMap(body.map);
-  if (!name || name.length > 120 || !map || typeof body.isActive !== 'boolean' || typeof body.autoBanEnabled !== 'boolean') return { ok: false, error: 'Name, Karte, Aktivstatus und Auto-Ban-Status sind ungueltig.' };
+  if (!name || name.length > 120 || !map || typeof body.isActive !== 'boolean') {
+    return { ok: false, error: 'Name, Karte oder Aktivstatus sind ungueltig.' };
+  }
   const geometry = geometryFrom(body, map);
   if (!geometry) return { ok: false, error: 'Zonen-Geometrie ist ungueltig oder liegt ausserhalb der Karte.' };
 
-  const altitudeEnabled = body.altitudeEnabled ?? false;
-  if (typeof altitudeEnabled !== 'boolean') return { ok: false, error: 'Hoehenbegrenzung ist ungueltig.' };
-  const minAltitudeMeters = altitudeEnabled && body.minAltitudeMeters !== null && body.minAltitudeMeters !== undefined ? Number(body.minAltitudeMeters) : null;
-  const maxAltitudeMeters = altitudeEnabled && body.maxAltitudeMeters !== null && body.maxAltitudeMeters !== undefined ? Number(body.maxAltitudeMeters) : null;
-  if (altitudeEnabled && (
-    minAltitudeMeters === null || maxAltitudeMeters === null
-    || !Number.isFinite(minAltitudeMeters) || !Number.isFinite(maxAltitudeMeters)
-    || minAltitudeMeters >= maxAltitudeMeters
-  )) return { ok: false, error: 'Aktive Hoehenbegrenzung benoetigt eine gueltige minimale und maximale ADM-Hoehe.' };
-  if (altitudeEnabled && body.autoBanEnabled && maxAltitudeMeters! - minAltitudeMeters! < MIN_AUTO_BAN_ALTITUDE_BAND_METERS) {
-    return { ok: false, error: `Auto-Ban benoetigt bei Hoehenbegrenzung mindestens ${MIN_AUTO_BAN_ALTITUDE_BAND_METERS} m Hoehenband fuer den Sicherheitsrand.` };
+  if (!Array.isArray(body.enabledFunctions)
+    || new Set(body.enabledFunctions).size !== body.enabledFunctions.length
+    || body.enabledFunctions.some(key => !radarFunctionByKey(key))) {
+    return { ok: false, error: 'Funktionskatalog ist ungueltig.' };
   }
 
-  if (!Array.isArray(body.enabledFunctions) || new Set(body.enabledFunctions).size !== body.enabledFunctions.length || body.enabledFunctions.some(key => !radarFunctionByKey(key))) return { ok: false, error: 'Funktionskatalog ist ungueltig.' };
-  if (!Array.isArray(body.allowlist) || body.allowlist.some(entry => !entry || !isValidBattleyeGuid(entry.gameId) || (entry.playerName != null && (typeof entry.playerName !== 'string' || entry.playerName.length > 128)))) return { ok: false, error: 'Allowlist verlangt gueltige GUID-Eintraege.' };
-  if (body.allowlist.length > 0 && new Set(body.allowlist.map(entry => entry.gameId!.trim())).size !== body.allowlist.length) return { ok: false, error: 'Allowlist-GUIDs duerfen nicht doppelt vorkommen.' };
-  if (typeof body.channelId !== 'string' || !SNOWFLAKE_RE.test(body.channelId)) return { ok: false, error: 'channelId muss Discord-Snowflake sein.' };
-  if (typeof body.rolePingEnabled !== 'boolean' || !Array.isArray(body.roleIds) || body.roleIds.length > 8 || new Set(body.roleIds).size !== body.roleIds.length || body.roleIds.some(id => typeof id !== 'string' || !SNOWFLAKE_RE.test(id))) return { ok: false, error: 'Rollen-Ping oder Rollen sind ungueltig.' };
-  if (body.rolePingEnabled && body.roleIds.length === 0) return { ok: false, error: 'Aktiver Rollen-Ping benoetigt mindestens eine Rolle.' };
-  if (typeof body.embedColor !== 'string' || !HEX_RE.test(body.embedColor)) return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
-  return { ok: true, data: {
-    name, map, isActive: body.isActive, autoBanEnabled: body.autoBanEnabled,
-    altitudeEnabled, minAltitudeMeters, maxAltitudeMeters,
-    geometry, enabledFunctions: body.enabledFunctions, allowlist: body.allowlist,
-    channelId: body.channelId, rolePingEnabled: body.rolePingEnabled, roleIds: body.roleIds,
-    embedColor: body.embedColor, editorState: body.editorState ?? {},
-  } };
+  if (!Array.isArray(body.allowlist)
+    || body.allowlist.some(entry => !entry
+      || !isValidBattleyeGuid(entry.gameId)
+      || (entry.playerName != null && (typeof entry.playerName !== 'string' || entry.playerName.length > 128)))) {
+    return { ok: false, error: 'Allowlist verlangt gueltige GUID-Eintraege.' };
+  }
+  if (body.allowlist.length > 0
+    && new Set(body.allowlist.map(entry => entry.gameId!.trim())).size !== body.allowlist.length) {
+    return { ok: false, error: 'Allowlist-GUIDs duerfen nicht doppelt vorkommen.' };
+  }
+
+  if (typeof body.channelId !== 'string' || !SNOWFLAKE_RE.test(body.channelId)) {
+    return { ok: false, error: 'channelId muss Discord-Snowflake sein.' };
+  }
+  if (typeof body.rolePingEnabled !== 'boolean'
+    || !Array.isArray(body.roleIds)
+    || body.roleIds.length > 8
+    || new Set(body.roleIds).size !== body.roleIds.length
+    || body.roleIds.some(id => typeof id !== 'string' || !SNOWFLAKE_RE.test(id))) {
+    return { ok: false, error: 'Rollen-Ping oder Rollen sind ungueltig.' };
+  }
+  if (body.rolePingEnabled && body.roleIds.length === 0) {
+    return { ok: false, error: 'Aktiver Rollen-Ping benoetigt mindestens eine Rolle.' };
+  }
+  if (typeof body.embedColor !== 'string' || !HEX_RE.test(body.embedColor)) {
+    return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
+  }
+
+  return {
+    ok: true,
+    data: {
+      name,
+      map,
+      isActive: body.isActive,
+      geometry,
+      enabledFunctions: body.enabledFunctions,
+      autoBanEnabled: radarHasPunitiveFunction(body.enabledFunctions),
+      allowlist: body.allowlist,
+      channelId: body.channelId,
+      rolePingEnabled: body.rolePingEnabled,
+      roleIds: body.roleIds,
+      embedColor: body.embedColor,
+      editorState: editorStateFrom(body.editorState),
+    },
+  };
 }
 
 function zoneResponse(zone: RadarZoneWithRelations) {
   return {
-    id: zone.id, name: zone.name, map: zone.map, isActive: zone.isActive, autoBanEnabled: zone.autoBanEnabled, channelId: zone.channelId,
-    altitudeEnabled: zone.altitudeEnabled,
-    minAltitudeMeters: zone.minAltitudeMeters === null ? null : Number(zone.minAltitudeMeters),
-    maxAltitudeMeters: zone.maxAltitudeMeters === null ? null : Number(zone.maxAltitudeMeters),
-    rolePingEnabled: zone.rolePingEnabled, roleIds: zone.roleIds, embedColor: zone.embedColor, version: zone.version,
+    id: zone.id,
+    name: zone.name,
+    map: zone.map,
+    isActive: zone.isActive,
+    channelId: zone.channelId,
+    rolePingEnabled: zone.rolePingEnabled,
+    roleIds: zone.roleIds,
+    embedColor: zone.embedColor,
+    version: zone.version,
     geometry: zone.shape === 'CIRCLE'
       ? { type: 'CIRCLE', x: Number(zone.centerX), y: Number(zone.centerY), radiusMeters: Number(zone.radiusMeters) }
       : { type: 'POLYGON', points: zone.points.map(point => ({ x: Number(point.x), y: Number(point.y) })) },
     enabledFunctions: zone.functions.map(entry => entry.functionKey),
     allowlist: zone.allowlist.map(entry => ({ source: entry.source, gameId: entry.gameId, playerName: entry.playerName })),
-    editorState: { centerX: zone.editorCenterX === null ? undefined : Number(zone.editorCenterX), centerY: zone.editorCenterY === null ? undefined : Number(zone.editorCenterY), zoom: zone.editorZoom === null ? undefined : Number(zone.editorZoom), bearing: zone.editorBearing === null ? undefined : Number(zone.editorBearing), pitch: zone.editorPitch === null ? undefined : Number(zone.editorPitch) },
+    editorState: {
+      centerX: zone.editorCenterX === null ? undefined : Number(zone.editorCenterX),
+      centerY: zone.editorCenterY === null ? undefined : Number(zone.editorCenterY),
+      zoom: zone.editorZoom === null ? undefined : Number(zone.editorZoom),
+      bearing: zone.editorBearing === null ? undefined : Number(zone.editorBearing),
+      pitch: zone.editorPitch === null ? undefined : Number(zone.editorPitch),
+    },
   };
 }
 
@@ -232,10 +291,15 @@ radarRouter.get('/players', requireGuildPermission('radar.manage'), async (req, 
 
 radarRouter.put('/config', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const activeMap = readMap(req.body?.activeMap); if (!activeMap) { res.status(400).json({ error: 'activeMap ist ungueltig.' }); return; }
+  const activeMap = readMap(req.body?.activeMap);
+  if (!activeMap) { res.status(400).json({ error: 'activeMap ist ungueltig.' }); return; }
+
   const config = await prisma.$transaction(async tx => {
     await lockRadarScope(tx, scope.guildId, scope.connId);
-    const before = await tx.radarConfig.findUnique({ where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.connId } }, select: { activeMap: true } });
+    const before = await tx.radarConfig.findUnique({
+      where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: scope.connId } },
+      select: { activeMap: true },
+    });
     const saved = await ensureRadarConfigTx(tx, scope.guildId, scope.connId, activeMap);
     if (before && before.activeMap !== activeMap) {
       const now = new Date();
@@ -250,32 +314,55 @@ radarRouter.put('/config', requireGuildPermission('radar.manage'), async (req, r
     }
     return saved;
   });
+
   emitGuildEvent(scope.guildId, { type: 'radar.changed', payload: { guildId: scope.guildId, nitradoConnId: scope.connId } });
   res.json({ activeMap: config.activeMap, nitradoConnId: scope.connId });
 });
 
-radarRouter.get('/functions', requireGuildPermission('radar.view'), (_req, res) => res.json({ functions: RADAR_FUNCTIONS.map(({ selectPositions: _selector, ...definition }) => definition) }));
+radarRouter.get('/functions', requireGuildPermission('radar.view'), (_req, res) => {
+  res.json({ functions: RADAR_FUNCTIONS.map(({ selectPositions: _selector, ...definition }) => definition) });
+});
 
 radarRouter.get('/zones', requireGuildPermission('radar.view'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const map = req.query.map === undefined ? undefined : readMap(req.query.map); if (req.query.map !== undefined && !map) { res.status(400).json({ error: 'map ist ungueltig.' }); return; }
-  const zones = await prisma.radarZone.findMany({ where: { guildId: scope.guildId, nitradoConnId: scope.connId, ...(map ? { map } : {}) }, include: { points: { orderBy: { position: 'asc' } }, functions: { orderBy: { functionKey: 'asc' } }, allowlist: { orderBy: { gameId: 'asc' } } }, orderBy: { name: 'asc' } });
+  const map = req.query.map === undefined ? undefined : readMap(req.query.map);
+  if (req.query.map !== undefined && !map) { res.status(400).json({ error: 'map ist ungueltig.' }); return; }
+  const zones = await prisma.radarZone.findMany({
+    where: { guildId: scope.guildId, nitradoConnId: scope.connId, ...(map ? { map } : {}) },
+    include: {
+      points: { orderBy: { position: 'asc' } },
+      functions: { orderBy: { functionKey: 'asc' } },
+      allowlist: { orderBy: { gameId: 'asc' } },
+    },
+    orderBy: { name: 'asc' },
+  });
   res.json({ zones: zones.map(zoneResponse) });
 });
 
 radarRouter.get('/zones/:zoneId', requireGuildPermission('radar.view'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const zone = await prisma.radarZone.findFirst({ where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId }, include: { points: { orderBy: { position: 'asc' } }, functions: { orderBy: { functionKey: 'asc' } }, allowlist: { orderBy: { gameId: 'asc' } } } });
+  const zone = await prisma.radarZone.findFirst({
+    where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId },
+    include: {
+      points: { orderBy: { position: 'asc' } },
+      functions: { orderBy: { functionKey: 'asc' } },
+      allowlist: { orderBy: { gameId: 'asc' } },
+    },
+  });
   if (!zone) { res.status(404).json({ error: 'Radar-Zone nicht gefunden.' }); return; }
   res.json({ zone: zoneResponse(zone) });
 });
 
 radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const checked = validateBody(req.body ?? {}); if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
-  const channelValidation = await channelError(scope.guildId, checked.data.channelId); if (channelValidation) { res.status(400).json({ error: channelValidation }); return; }
-  const roleValidation = await roleError(scope.guildId, checked.data.roleIds); if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
+  const checked = validateBody(req.body ?? {});
+  if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
+  const channelValidation = await channelError(scope.guildId, checked.data.channelId);
+  if (channelValidation) { res.status(400).json({ error: channelValidation }); return; }
+  const roleValidation = await roleError(scope.guildId, checked.data.roleIds);
+  if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
   const data = checked.data;
+
   const zone = await prisma.$transaction(async tx => {
     await lockRadarScope(tx, scope.guildId, scope.connId);
     const radarConfig = await ensureRadarConfigTx(tx, scope.guildId, scope.connId);
@@ -292,9 +379,10 @@ radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, r
         autoBanEnabled: data.autoBanEnabled,
         autoBanEnabledAt,
         autoBanAuthorizedBy: data.autoBanEnabled ? scope.actorId : null,
-        altitudeEnabled: data.altitudeEnabled,
-        minAltitudeMeters: data.minAltitudeMeters,
-        maxAltitudeMeters: data.maxAltitudeMeters,
+        // Height is internal event evidence now, not a configurable zone band.
+        altitudeEnabled: false,
+        minAltitudeMeters: null,
+        maxAltitudeMeters: null,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
@@ -313,24 +401,41 @@ radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, r
         editorPitch: data.editorState.pitch,
         createdBy: scope.actorId,
         updatedBy: scope.actorId,
-        points: { create: data.geometry.shape === 'POLYGON' ? data.geometry.points.map((point, position) => ({ position, x: point.x, y: point.y })) : [] },
+        points: {
+          create: data.geometry.shape === 'POLYGON'
+            ? data.geometry.points.map((point, position) => ({ position, x: point.x, y: point.y }))
+            : [],
+        },
         functions: { create: data.enabledFunctions.map(functionKey => ({ functionKey })) },
-        allowlist: { create: data.allowlist.map(entry => ({ source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL', gameId: entry.gameId!.trim(), playerName: entry.playerName?.trim() || null })) },
+        allowlist: {
+          create: data.allowlist.map(entry => ({
+            source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL',
+            gameId: entry.gameId!.trim(),
+            playerName: entry.playerName?.trim() || null,
+          })),
+        },
       },
       include: { points: { orderBy: { position: 'asc' } }, functions: true, allowlist: true },
     });
   });
+
   emitGuildEvent(scope.guildId, { type: 'radar.changed', payload: { guildId: scope.guildId, nitradoConnId: scope.connId, zoneId: zone.id } });
   res.status(201).json({ zone: zoneResponse(zone) });
 });
 
 radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const checked = validateBody(req.body ?? {}); if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
-  if (!Number.isInteger(req.body?.version) || req.body.version < 1) { res.status(400).json({ error: 'version ist erforderlich.' }); return; }
-  const channelValidation = await channelError(scope.guildId, checked.data.channelId); if (channelValidation) { res.status(400).json({ error: channelValidation }); return; }
-  const roleValidation = await roleError(scope.guildId, checked.data.roleIds); if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
+  const checked = validateBody(req.body ?? {});
+  if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
+  if (!Number.isInteger(req.body?.version) || req.body.version < 1) {
+    res.status(400).json({ error: 'version ist erforderlich.' }); return;
+  }
+  const channelValidation = await channelError(scope.guildId, checked.data.channelId);
+  if (channelValidation) { res.status(400).json({ error: channelValidation }); return; }
+  const roleValidation = await roleError(scope.guildId, checked.data.roleIds);
+  if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
   const data = checked.data;
+
   const updated = await prisma.$transaction(async tx => {
     await lockRadarScope(tx, scope.guildId, scope.connId);
     const existing = await tx.radarZone.findFirst({
@@ -339,42 +444,80 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
     });
     if (!existing) return null;
 
-    // Every save starts a new evaluation generation. If Auto-Ban stays enabled,
-    // it is deliberately re-armed now so delayed ADM lines from the previous
-    // zone state can never become punitive under the new state.
+    // Every save starts a new punitive generation. A BAN_* toggle automatically
+    // arms the worker; no separate dashboard master switch can drift from it.
     const autoBanEnabledAt = data.autoBanEnabled ? new Date() : null;
     const autoBanAuthorizedBy = data.autoBanEnabled ? scope.actorId : null;
     const result = await tx.radarZone.updateMany({
       where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
       data: {
-        name: data.name, map: data.map, shape: data.geometry.shape, isActive: data.isActive,
-        autoBanEnabled: data.autoBanEnabled, autoBanEnabledAt, autoBanAuthorizedBy,
-        altitudeEnabled: data.altitudeEnabled, minAltitudeMeters: data.minAltitudeMeters, maxAltitudeMeters: data.maxAltitudeMeters,
+        name: data.name,
+        map: data.map,
+        shape: data.geometry.shape,
+        isActive: data.isActive,
+        autoBanEnabled: data.autoBanEnabled,
+        autoBanEnabledAt,
+        autoBanAuthorizedBy,
+        altitudeEnabled: false,
+        minAltitudeMeters: null,
+        maxAltitudeMeters: null,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
-        minX: data.geometry.minX, minY: data.geometry.minY, maxX: data.geometry.maxX, maxY: data.geometry.maxY,
-        channelId: data.channelId, rolePingEnabled: data.rolePingEnabled, roleIds: data.roleIds, embedColor: data.embedColor,
-        editorCenterX: data.editorState.centerX, editorCenterY: data.editorState.centerY, editorZoom: data.editorState.zoom, editorBearing: data.editorState.bearing, editorPitch: data.editorState.pitch,
-        updatedBy: scope.actorId, version: { increment: 1 },
+        minX: data.geometry.minX,
+        minY: data.geometry.minY,
+        maxX: data.geometry.maxX,
+        maxY: data.geometry.maxY,
+        channelId: data.channelId,
+        rolePingEnabled: data.rolePingEnabled,
+        roleIds: data.roleIds,
+        embedColor: data.embedColor,
+        editorCenterX: data.editorState.centerX,
+        editorCenterY: data.editorState.centerY,
+        editorZoom: data.editorState.zoom,
+        editorBearing: data.editorState.bearing,
+        editorPitch: data.editorState.pitch,
+        updatedBy: scope.actorId,
+        version: { increment: 1 },
       },
     });
     if (result.count !== 1) return null;
+
     await Promise.all([
       tx.radarZonePoint.deleteMany({ where: { zoneId: req.params.zoneId } }),
       tx.radarZoneFunction.deleteMany({ where: { zoneId: req.params.zoneId } }),
       tx.radarZoneAllowlist.deleteMany({ where: { zoneId: req.params.zoneId } }),
     ]);
     if (data.geometry.shape === 'POLYGON') {
-      await tx.radarZonePoint.createMany({ data: data.geometry.points.map((point, position) => ({ zoneId: req.params.zoneId, position, x: point.x, y: point.y })) });
+      await tx.radarZonePoint.createMany({
+        data: data.geometry.points.map((point, position) => ({ zoneId: req.params.zoneId, position, x: point.x, y: point.y })),
+      });
     }
     await Promise.all([
       tx.radarZoneFunction.createMany({ data: data.enabledFunctions.map(functionKey => ({ zoneId: req.params.zoneId, functionKey })) }),
-      tx.radarZoneAllowlist.createMany({ data: data.allowlist.map(entry => ({ zoneId: req.params.zoneId, source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL', gameId: entry.gameId!.trim(), playerName: entry.playerName?.trim() || null })) }),
+      tx.radarZoneAllowlist.createMany({
+        data: data.allowlist.map(entry => ({
+          zoneId: req.params.zoneId,
+          source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL',
+          gameId: entry.gameId!.trim(),
+          playerName: entry.playerName?.trim() || null,
+        })),
+      }),
     ]);
-    return tx.radarZone.findFirst({ where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId }, include: { points: { orderBy: { position: 'asc' } }, functions: { orderBy: { functionKey: 'asc' } }, allowlist: { orderBy: { gameId: 'asc' } } } });
+
+    return tx.radarZone.findFirst({
+      where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId },
+      include: {
+        points: { orderBy: { position: 'asc' } },
+        functions: { orderBy: { functionKey: 'asc' } },
+        allowlist: { orderBy: { gameId: 'asc' } },
+      },
+    });
   });
-  if (!updated) { res.status(409).json({ error: 'Radar-Zone wurde zwischenzeitlich geändert oder nicht gefunden.' }); return; }
+
+  if (!updated) {
+    res.status(409).json({ error: 'Radar-Zone wurde zwischenzeitlich geändert oder nicht gefunden.' }); return;
+  }
   emitGuildEvent(scope.guildId, { type: 'radar.changed', payload: { guildId: scope.guildId, nitradoConnId: scope.connId, zoneId: updated.id } });
   res.json({ zone: zoneResponse(updated) });
 });
