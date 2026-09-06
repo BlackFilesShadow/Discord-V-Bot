@@ -14,13 +14,14 @@ const CONNECTION_ID = 'c123456789012345678901234';
 const CHANNEL_ID = '222222222222222222';
 const ROLE_ID = '333333333333333333';
 
-type Row = Record<string, unknown>;
+type Row = Record<string, any>;
 const zones = new Map<string, Row>();
 let sequence = 0;
+let radarConfigRow: Row | null = null;
 
 interface PrismaMock {
   admEvent: { findFirst: jest.Mock };
-  radarConfig: { upsert: jest.Mock };
+  radarConfig: { upsert: jest.Mock; findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
   radarZone: {
     create: jest.Mock;
     findMany: jest.Mock;
@@ -31,16 +32,29 @@ interface PrismaMock {
   radarZonePoint: { deleteMany: jest.Mock; createMany: jest.Mock };
   radarZoneFunction: { deleteMany: jest.Mock; createMany: jest.Mock };
   radarZoneAllowlist: { deleteMany: jest.Mock; createMany: jest.Mock };
+  $queryRawUnsafe: jest.Mock;
   $transaction: <T>(operation: (tx: PrismaMock) => Promise<T>) => Promise<T>;
 }
 
 const prismaMock: PrismaMock = {
   admEvent: { findFirst: jest.fn().mockResolvedValue(null) },
   radarConfig: {
-    upsert: jest.fn(async ({ create, update }: { create: Row; update: Row }) => ({
-      id: 'config-1', guildId: GUILD_ID, nitradoConnId: CONNECTION_ID,
-      activeMap: update.activeMap ?? create.activeMap ?? 'CHERNARUS',
-    })),
+    upsert: jest.fn(async ({ create, update }: { create: Row; update: Row }) => {
+      radarConfigRow = {
+        id: 'config-1', guildId: GUILD_ID, nitradoConnId: CONNECTION_ID,
+        activeMap: update.activeMap ?? create.activeMap ?? radarConfigRow?.activeMap ?? 'CHERNARUS',
+      };
+      return radarConfigRow;
+    }),
+    findUnique: jest.fn(async () => radarConfigRow),
+    create: jest.fn(async ({ data }: { data: Row }) => {
+      radarConfigRow = { id: 'config-1', activeMap: 'CHERNARUS', ...data };
+      return radarConfigRow;
+    }),
+    update: jest.fn(async ({ data }: { data: Row }) => {
+      radarConfigRow = { ...(radarConfigRow ?? { id: 'config-1', guildId: GUILD_ID, nitradoConnId: CONNECTION_ID }), ...data };
+      return radarConfigRow;
+    }),
   },
   radarZone: {
     create: jest.fn(async ({ data }: { data: Row }) => {
@@ -59,12 +73,16 @@ const prismaMock: PrismaMock = {
       zone.guildId === where.guildId && zone.nitradoConnId === where.nitradoConnId && (!where.map || zone.map === where.map)
     ))),
     findFirst: jest.fn(async ({ where }: { where: Row }) => [...zones.values()].find(zone => (
-      zone.id === where.id && zone.guildId === where.guildId && zone.nitradoConnId === where.nitradoConnId
+      zone.id === where.id
+        && zone.guildId === where.guildId
+        && zone.nitradoConnId === where.nitradoConnId
+        && (where.version === undefined || zone.version === where.version)
     )) ?? null),
     updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
       const zone = zones.get(where.id as string);
       if (!zone || zone.guildId !== where.guildId || zone.nitradoConnId !== where.nitradoConnId || zone.version !== where.version) return { count: 0 };
-      Object.assign(zone, data, { version: Number(zone.version) + 1 });
+      const nextVersion = Number(zone.version) + 1;
+      Object.assign(zone, data, { version: nextVersion });
       return { count: 1 };
     }),
     deleteMany: jest.fn(async ({ where }: { where: Row }) => {
@@ -77,6 +95,7 @@ const prismaMock: PrismaMock = {
   radarZonePoint: { deleteMany: jest.fn(), createMany: jest.fn() },
   radarZoneFunction: { deleteMany: jest.fn(), createMany: jest.fn() },
   radarZoneAllowlist: { deleteMany: jest.fn(), createMany: jest.fn() },
+  $queryRawUnsafe: jest.fn().mockResolvedValue([{ pg_advisory_xact_lock: null }]),
   $transaction: async <T>(operation: (tx: typeof prismaMock) => Promise<T>) => operation(prismaMock),
 };
 
@@ -119,7 +138,7 @@ function app(): express.Express {
 const base = `/api/v2/guilds/${GUILD_ID}/radar`;
 function body(overrides: Row = {}): Row {
   return {
-    name: 'Nordtor', map: 'CHERNARUS', isActive: true,
+    name: 'Nordtor', map: 'CHERNARUS', isActive: true, autoBanEnabled: false,
     geometry: { type: 'POLYGON', points: [{ x: 100, y: 100 }, { x: 400, y: 100 }, { x: 400, y: 400 }, { x: 100, y: 400 }] },
     enabledFunctions: ['PLAYER_DETECTION'], allowlist: [{ source: 'MANUAL', gameId: 'abcdef1234567890' }],
     channelId: CHANNEL_ID, rolePingEnabled: true, roleIds: [ROLE_ID], embedColor: '#dc2626',
@@ -127,7 +146,14 @@ function body(overrides: Row = {}): Row {
   };
 }
 
-beforeEach(() => { zones.clear(); sequence = 0; jest.clearAllMocks(); });
+beforeEach(() => {
+  zones.clear();
+  sequence = 0;
+  radarConfigRow = null;
+  jest.clearAllMocks();
+  prismaMock.$queryRawUnsafe.mockResolvedValue([{ pg_advisory_xact_lock: null }]);
+  prismaMock.admEvent.findFirst.mockResolvedValue(null);
+});
 
 describe('Radar-Router', () => {
   it('liefert die serverseitig aufgeloeste Verbindung und erstellt ein geordnetes Polygon', async () => {
@@ -139,11 +165,33 @@ describe('Radar-Router', () => {
     const created = await request(instance).post(`${base}/zones?slot=1`).send(body());
     expect(created.status).toBe(201);
     expect(created.body.zone.geometry).toEqual(body().geometry);
+    expect(created.body.zone.autoBanEnabled).toBe(false);
 
     const listed = await request(instance).get(`${base}/zones?slot=1`);
     expect(listed.status).toBe(200);
     expect(listed.body.zones).toHaveLength(1);
     expect(listed.body.zones[0].geometry.points).toEqual((body().geometry as { points: unknown[] }).points);
+  });
+
+  it('armt Auto-Ban nur explizit und rearmt erst nach AUS -> AN', async () => {
+    const instance = app();
+    const created = await request(instance).post(`${base}/zones?slot=1`).send(body({ autoBanEnabled: true }));
+    expect(created.status).toBe(201);
+    expect(created.body.zone.autoBanEnabled).toBe(true);
+    const firstArmedAt = zones.get(created.body.zone.id)?.autoBanEnabledAt as Date;
+    expect(firstArmedAt).toBeInstanceOf(Date);
+
+    const kept = await request(instance).put(`${base}/zones/${created.body.zone.id}?slot=1`).send(body({ version: 1, autoBanEnabled: true, name: 'Nordtor 2' }));
+    expect(kept.status).toBe(200);
+    expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toEqual(firstArmedAt);
+
+    const disabled = await request(instance).put(`${base}/zones/${created.body.zone.id}?slot=1`).send(body({ version: 2, autoBanEnabled: false }));
+    expect(disabled.status).toBe(200);
+    expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toBeNull();
+
+    const rearmed = await request(instance).put(`${base}/zones/${created.body.zone.id}?slot=1`).send(body({ version: 3, autoBanEnabled: true }));
+    expect(rearmed.status).toBe(200);
+    expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toBeInstanceOf(Date);
   });
 
   it('lehnt fremde IDs, veraltete Versionen und ungueltige GUID- oder Rollenwerte ab', async () => {
@@ -152,6 +200,8 @@ describe('Radar-Router', () => {
     expect(invalid.status).toBe(400);
     const invalidRole = await request(instance).post(`${base}/zones?slot=1`).send(body({ roleIds: ['444444444444444444'] }));
     expect(invalidRole.status).toBe(400);
+    const missingAutoBan = await request(instance).post(`${base}/zones?slot=1`).send({ ...body(), autoBanEnabled: undefined });
+    expect(missingAutoBan.status).toBe(400);
 
     const created = await request(instance).post(`${base}/zones?slot=1`).send(body());
     expect(created.status).toBe(201);

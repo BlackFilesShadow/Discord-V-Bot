@@ -33,10 +33,6 @@ function finitePoint(point: RadarPoint): boolean {
   return Number.isFinite(point.x) && Number.isFinite(point.y);
 }
 
-function pointsEqual(a: RadarPoint, b: RadarPoint): boolean {
-  return Math.abs(a.x - b.x) <= EPSILON && Math.abs(a.y - b.y) <= EPSILON;
-}
-
 function cross(a: RadarPoint, b: RadarPoint, point: RadarPoint): number {
   return (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
 }
@@ -64,6 +60,17 @@ function segmentsIntersect(a: RadarPoint, b: RadarPoint, c: RadarPoint, d: Radar
     || (abD === 0 && pointOnSegment(d, a, b))
     || (cdA === 0 && pointOnSegment(a, c, d))
     || (cdB === 0 && pointOnSegment(b, c, d));
+}
+
+function distanceToSegment(point: RadarPoint, start: RadarPoint, end: RadarPoint): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= EPSILON) return Math.hypot(point.x - start.x, point.y - start.y);
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
+  const closestX = start.x + t * dx;
+  const closestY = start.y + t * dy;
+  return Math.hypot(point.x - closestX, point.y - closestY);
 }
 
 export function boundsForPoints(points: readonly RadarPoint[]): RadarBounds | null {
@@ -132,6 +139,34 @@ export function containsPosition(geometry: RadarGeometry, point: RadarPoint): bo
     if (crosses && point.x < xAtY) inside = !inside;
   }
   return inside;
+}
+
+/**
+ * Entfernung bis zur naechsten Zonengrenze. Fuer Kreis ist das die radiale
+ * Restdistanz, fuer Polygon die minimale Distanz zu einer Kante. Ausserhalb
+ * wird 0 geliefert, damit punitive Call-Sites fail-closed bleiben.
+ */
+export function distanceInsideBoundary(geometry: RadarGeometry, point: RadarPoint): number {
+  if (!containsPosition(geometry, point)) return 0;
+  if (geometry.shape === 'CIRCLE') {
+    return Math.max(0, geometry.radiusMeters - Math.hypot(point.x - geometry.centerX, point.y - geometry.centerY));
+  }
+  let min = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < geometry.points.length; index += 1) {
+    const next = geometry.points[(index + 1) % geometry.points.length];
+    min = Math.min(min, distanceToSegment(point, geometry.points[index], next));
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
+/** Punitive Entscheidungen verlangen einen echten Innenabstand, nicht nur Randkontakt. */
+export function containsPositionWithMargin(
+  geometry: RadarGeometry,
+  point: RadarPoint,
+  marginMeters: number,
+): boolean {
+  if (!Number.isFinite(marginMeters) || marginMeters < 0) return false;
+  return containsPosition(geometry, point) && distanceInsideBoundary(geometry, point) + EPSILON >= marginMeters;
 }
 
 export function geometryFitsMap(map: RadarMap, geometry: RadarGeometry): boolean {

@@ -4,6 +4,7 @@ import { decrypt, encrypt } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 import { NitradoClient } from '../nitrado/nitradoClient';
 import { tryAcquireNitradoConfigMutationLock } from '../nitrado/configMutationLock';
+import { inspectRadarAutoBanFenceForRemoteAdd } from '../radar/banFence';
 import { isBanActive } from './banRegistry';
 import { hashBanIdentifier, matchesBanIdentifier } from './banTarget';
 import {
@@ -95,8 +96,36 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
   let correctedRemoteFlags = 0;
   let missingRepairSecrets = 0;
   let manualRemoteMissing = 0;
+  let radarFenceRejected = 0;
 
   for (const ban of local) {
+    const fenceDecision = await inspectRadarAutoBanFenceForRemoteAdd(
+      prisma,
+      {
+        guildId: conn.guildId,
+        nitradoConnId: conn.id,
+        banId: ban.id,
+        currentServiceId: conn.nitradoServerId,
+      },
+    );
+    if (fenceDecision.kind === 'REJECT') {
+      // Weder ADD noch REMOVE noch Flag-Korrektur darf einen Radar-Ban auf eine
+      // andere physische Server-/Binding-Generation umdeuten. Der Rebind-
+      // Lifecycle deaktiviert solche Bans regulaer atomar; dies ist die zweite
+      // fail-closed Verteidigung fuer Legacy-/Race-/Recovery-Zustaende.
+      radarFenceRejected++;
+      logAudit('RADAR_AUTO_BAN_RECONCILE_SKIPPED', 'MODERATION', {
+        guildId: conn.guildId,
+        nitradoConnId: conn.id,
+        banId: ban.id,
+        radarEventId: fenceDecision.fence.radarEventId,
+        fenceServiceId: fenceDecision.fence.serviceId,
+        fenceBindingVersion: fenceDecision.fence.bindingVersion,
+        code: fenceDecision.code,
+      });
+      continue;
+    }
+
     const locallyActive = isBanActive(ban, now);
     const remoteIdentifier = remoteByHash.get(ban.identityHash) ?? null;
     const storedIdentityEnc = identityByBan.get(ban.id) ?? null;
@@ -242,6 +271,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     || correctedRemoteFlags > 0
     || missingRepairSecrets > 0
     || manualRemoteMissing > 0
+    || radarFenceRejected > 0
   ) {
     logAudit('SERVER_BAN_RECONCILED', 'NITRADO', {
       guildId: conn.guildId,
@@ -253,6 +283,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       correctedRemoteFlags,
       missingRepairSecrets,
       manualRemoteMissingObserved: manualRemoteMissing,
+      radarFenceRejected,
       remoteRows: remoteRows.length,
       localRows: local.length,
     });

@@ -11,6 +11,7 @@ import { startPermaOnlyCron, stopPermaOnlyCron } from './permaOnlyCron';
 import { startWhitelistSyncCron, stopWhitelistSyncCron } from '../whitelist/whitelistSyncCron';
 import { startGameplayFeedRuntime, stopGameplayFeedRuntime } from '../gameplayFeeds/runtime';
 import { startRadarRuntime, stopRadarRuntime } from '../radar/runtime';
+import { startRadarAutoBanRuntime, stopRadarAutoBanRuntime } from '../radar/autoBanRuntime';
 import { startBankInterestCron, stopBankInterestCron } from '../economy/interestCron';
 import { startBanExpiryRuntime, stopBanExpiryRuntime } from '../bans/expiryRuntime';
 import { startBanReconciliationCron, stopBanReconciliationCron } from '../bans/banReconciliation';
@@ -41,6 +42,9 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
   startAdmPostProcessCron();
   startGameplayFeedRuntime();
   startRadarRuntime();
+  // Punitive Radar-Aktionen laufen bewusst getrennt vom Alert-Worker und
+  // revalidieren Snapshot, aktuelle Zone, Binding und GUID fail-closed.
+  startRadarAutoBanRuntime();
 
   startBankInterestCron();
 
@@ -51,6 +55,7 @@ export function startNitradoRuntime(client: Client): NitradoRuntimeHandle {
       stopped = true;
 
       stopBankInterestCron();
+      stopRadarAutoBanRuntime();
       stopGameplayFeedRuntime();
       stopRadarRuntime();
       stopAdmPostProcessCron();

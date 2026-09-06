@@ -16,6 +16,7 @@ import {
   type RadarGeometry,
   type RadarPoint,
 } from '../../../modules/radar/geometry';
+import { lockRadarScope } from '../../../modules/radar/lock';
 import type { RadarMap } from '../../../shared/radarCoordinates';
 
 export const radarRouter = Router({ mergeParams: true });
@@ -29,6 +30,7 @@ type SaveBody = {
   name?: string;
   map?: RadarMap;
   isActive?: boolean;
+  autoBanEnabled?: boolean;
   geometry?: { type?: string; x?: number; y?: number; radiusMeters?: number; points?: RadarPoint[] };
   enabledFunctions?: string[];
   allowlist?: Array<{ source?: 'SERVER_WHITELIST' | 'MANUAL'; gameId?: string; playerName?: string | null }>;
@@ -96,6 +98,35 @@ async function ensureRadarConfig(guildId: string, nitradoConnId: string, activeM
   });
 }
 
+async function ensureRadarConfigTx(
+  tx: Prisma.TransactionClient,
+  guildId: string,
+  nitradoConnId: string,
+  activeMap?: RadarMap,
+) {
+  const existing = await tx.radarConfig.findUnique({
+    where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
+  });
+  if (existing) {
+    return activeMap
+      ? tx.radarConfig.update({ where: { id: existing.id }, data: { activeMap } })
+      : existing;
+  }
+  const highWatermark = await tx.admEvent.findFirst({
+    where: { guildId, nitradoConnId },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    select: { createdAt: true, id: true },
+  });
+  return tx.radarConfig.create({
+    data: {
+      guildId,
+      nitradoConnId,
+      ...(activeMap ? { activeMap } : {}),
+      ...(highWatermark ? { cursorCreatedAt: highWatermark.createdAt, cursorEventId: highWatermark.id } : {}),
+    },
+  });
+}
+
 function readMap(value: unknown): RadarMap | null {
   const map = String(value ?? '').trim().toUpperCase() as RadarMap;
   return MAPS.has(map) ? map : null;
@@ -112,10 +143,10 @@ function geometryFrom(body: SaveBody, map: RadarMap): RadarGeometry | null {
   return geometry && geometryFitsMap(map, geometry) ? geometry : null;
 }
 
-function validateBody(body: SaveBody): { ok: true; data: Required<Pick<SaveBody, 'name' | 'map' | 'isActive' | 'enabledFunctions' | 'allowlist' | 'channelId' | 'rolePingEnabled' | 'roleIds' | 'embedColor'>> & { geometry: RadarGeometry; editorState: NonNullable<SaveBody['editorState']> } } | { ok: false; error: string } {
+function validateBody(body: SaveBody): { ok: true; data: Required<Pick<SaveBody, 'name' | 'map' | 'isActive' | 'autoBanEnabled' | 'enabledFunctions' | 'allowlist' | 'channelId' | 'rolePingEnabled' | 'roleIds' | 'embedColor'>> & { geometry: RadarGeometry; editorState: NonNullable<SaveBody['editorState']> } } | { ok: false; error: string } {
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const map = readMap(body.map);
-  if (!name || name.length > 120 || !map || typeof body.isActive !== 'boolean') return { ok: false, error: 'Name, Karte und Aktivstatus sind ungueltig.' };
+  if (!name || name.length > 120 || !map || typeof body.isActive !== 'boolean' || typeof body.autoBanEnabled !== 'boolean') return { ok: false, error: 'Name, Karte, Aktivstatus und Auto-Ban-Status sind ungueltig.' };
   const geometry = geometryFrom(body, map);
   if (!geometry) return { ok: false, error: 'Zonen-Geometrie ist ungueltig oder liegt ausserhalb der Karte.' };
   if (!Array.isArray(body.enabledFunctions) || new Set(body.enabledFunctions).size !== body.enabledFunctions.length || body.enabledFunctions.some(key => !radarFunctionByKey(key))) return { ok: false, error: 'Funktionskatalog ist ungueltig.' };
@@ -125,12 +156,12 @@ function validateBody(body: SaveBody): { ok: true; data: Required<Pick<SaveBody,
   if (typeof body.rolePingEnabled !== 'boolean' || !Array.isArray(body.roleIds) || body.roleIds.length > 8 || new Set(body.roleIds).size !== body.roleIds.length || body.roleIds.some(id => typeof id !== 'string' || !SNOWFLAKE_RE.test(id))) return { ok: false, error: 'Rollen-Ping oder Rollen sind ungueltig.' };
   if (body.rolePingEnabled && body.roleIds.length === 0) return { ok: false, error: 'Aktiver Rollen-Ping benoetigt mindestens eine Rolle.' };
   if (typeof body.embedColor !== 'string' || !HEX_RE.test(body.embedColor)) return { ok: false, error: 'embedColor muss Hex sein (z.B. #dc2626).' };
-  return { ok: true, data: { name, map, isActive: body.isActive, geometry, enabledFunctions: body.enabledFunctions, allowlist: body.allowlist, channelId: body.channelId, rolePingEnabled: body.rolePingEnabled, roleIds: body.roleIds, embedColor: body.embedColor, editorState: body.editorState ?? {} } };
+  return { ok: true, data: { name, map, isActive: body.isActive, autoBanEnabled: body.autoBanEnabled, geometry, enabledFunctions: body.enabledFunctions, allowlist: body.allowlist, channelId: body.channelId, rolePingEnabled: body.rolePingEnabled, roleIds: body.roleIds, embedColor: body.embedColor, editorState: body.editorState ?? {} } };
 }
 
 function zoneResponse(zone: RadarZoneWithRelations) {
   return {
-    id: zone.id, name: zone.name, map: zone.map, isActive: zone.isActive, channelId: zone.channelId,
+    id: zone.id, name: zone.name, map: zone.map, isActive: zone.isActive, autoBanEnabled: zone.autoBanEnabled, channelId: zone.channelId,
     rolePingEnabled: zone.rolePingEnabled, roleIds: zone.roleIds, embedColor: zone.embedColor, version: zone.version,
     geometry: zone.shape === 'CIRCLE'
       ? { type: 'CIRCLE', x: Number(zone.centerX), y: Number(zone.centerY), radiusMeters: Number(zone.radiusMeters) }
@@ -169,7 +200,10 @@ radarRouter.get('/players', requireGuildPermission('radar.manage'), async (req, 
 radarRouter.put('/config', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
   const activeMap = readMap(req.body?.activeMap); if (!activeMap) { res.status(400).json({ error: 'activeMap ist ungueltig.' }); return; }
-  const config = await ensureRadarConfig(scope.guildId, scope.connId, activeMap);
+  const config = await prisma.$transaction(async tx => {
+    await lockRadarScope(tx, scope.guildId, scope.connId);
+    return ensureRadarConfigTx(tx, scope.guildId, scope.connId, activeMap);
+  });
   emitGuildEvent(scope.guildId, { type: 'radar.changed', payload: { guildId: scope.guildId, nitradoConnId: scope.connId } });
   res.json({ activeMap: config.activeMap, nitradoConnId: scope.connId });
 });
@@ -195,40 +229,47 @@ radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, r
   const checked = validateBody(req.body ?? {}); if (!checked.ok) { res.status(400).json({ error: checked.error }); return; }
   const channelValidation = await channelError(scope.guildId, checked.data.channelId); if (channelValidation) { res.status(400).json({ error: channelValidation }); return; }
   const roleValidation = await roleError(scope.guildId, checked.data.roleIds); if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
-  const config = await ensureRadarConfig(scope.guildId, scope.connId);
   const data = checked.data;
-  const zone = await prisma.radarZone.create({
-    data: {
-      configId: config.id,
-      guildId: scope.guildId,
-      nitradoConnId: scope.connId,
-      name: data.name,
-      map: data.map,
-      shape: data.geometry.shape,
-      isActive: data.isActive,
-      centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
-      centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
-      radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
-      minX: data.geometry.minX,
-      minY: data.geometry.minY,
-      maxX: data.geometry.maxX,
-      maxY: data.geometry.maxY,
-      channelId: data.channelId,
-      rolePingEnabled: data.rolePingEnabled,
-      roleIds: data.roleIds,
-      embedColor: data.embedColor,
-      editorCenterX: data.editorState.centerX,
-      editorCenterY: data.editorState.centerY,
-      editorZoom: data.editorState.zoom,
-      editorBearing: data.editorState.bearing,
-      editorPitch: data.editorState.pitch,
-      createdBy: scope.actorId,
-      updatedBy: scope.actorId,
-      points: { create: data.geometry.shape === 'POLYGON' ? data.geometry.points.map((point, position) => ({ position, x: point.x, y: point.y })) : [] },
-      functions: { create: data.enabledFunctions.map(functionKey => ({ functionKey })) },
-      allowlist: { create: data.allowlist.map(entry => ({ source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL', gameId: entry.gameId!.trim(), playerName: entry.playerName?.trim() || null })) },
-    },
-    include: { points: { orderBy: { position: 'asc' } }, functions: true, allowlist: true },
+  const zone = await prisma.$transaction(async tx => {
+    await lockRadarScope(tx, scope.guildId, scope.connId);
+    const radarConfig = await ensureRadarConfigTx(tx, scope.guildId, scope.connId);
+    const autoBanEnabledAt = data.autoBanEnabled ? new Date() : null;
+    return tx.radarZone.create({
+      data: {
+        configId: radarConfig.id,
+        guildId: scope.guildId,
+        nitradoConnId: scope.connId,
+        name: data.name,
+        map: data.map,
+        shape: data.geometry.shape,
+        isActive: data.isActive,
+        autoBanEnabled: data.autoBanEnabled,
+        autoBanEnabledAt,
+        autoBanAuthorizedBy: data.autoBanEnabled ? scope.actorId : null,
+        centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
+        centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
+        radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
+        minX: data.geometry.minX,
+        minY: data.geometry.minY,
+        maxX: data.geometry.maxX,
+        maxY: data.geometry.maxY,
+        channelId: data.channelId,
+        rolePingEnabled: data.rolePingEnabled,
+        roleIds: data.roleIds,
+        embedColor: data.embedColor,
+        editorCenterX: data.editorState.centerX,
+        editorCenterY: data.editorState.centerY,
+        editorZoom: data.editorState.zoom,
+        editorBearing: data.editorState.bearing,
+        editorPitch: data.editorState.pitch,
+        createdBy: scope.actorId,
+        updatedBy: scope.actorId,
+        points: { create: data.geometry.shape === 'POLYGON' ? data.geometry.points.map((point, position) => ({ position, x: point.x, y: point.y })) : [] },
+        functions: { create: data.enabledFunctions.map(functionKey => ({ functionKey })) },
+        allowlist: { create: data.allowlist.map(entry => ({ source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL', gameId: entry.gameId!.trim(), playerName: entry.playerName?.trim() || null })) },
+      },
+      include: { points: { orderBy: { position: 'asc' } }, functions: true, allowlist: true },
+    });
   });
   emitGuildEvent(scope.guildId, { type: 'radar.changed', payload: { guildId: scope.guildId, nitradoConnId: scope.connId, zoneId: zone.id } });
   res.status(201).json({ zone: zoneResponse(zone) });
@@ -242,10 +283,24 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
   const roleValidation = await roleError(scope.guildId, checked.data.roleIds); if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
   const data = checked.data;
   const updated = await prisma.$transaction(async tx => {
+    await lockRadarScope(tx, scope.guildId, scope.connId);
+    const existing = await tx.radarZone.findFirst({
+      where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
+      select: { autoBanEnabled: true, autoBanEnabledAt: true, autoBanAuthorizedBy: true },
+    });
+    if (!existing) return null;
+    const preservingArm = data.autoBanEnabled && existing.autoBanEnabled && existing.autoBanEnabledAt && existing.autoBanAuthorizedBy;
+    const autoBanEnabledAt = data.autoBanEnabled
+      ? (preservingArm ? existing.autoBanEnabledAt : new Date())
+      : null;
+    const autoBanAuthorizedBy = data.autoBanEnabled
+      ? (preservingArm ? existing.autoBanAuthorizedBy : scope.actorId)
+      : null;
     const result = await tx.radarZone.updateMany({
       where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
       data: {
         name: data.name, map: data.map, shape: data.geometry.shape, isActive: data.isActive,
+        autoBanEnabled: data.autoBanEnabled, autoBanEnabledAt, autoBanAuthorizedBy,
         centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
         centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
         radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
@@ -277,7 +332,10 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
 
 radarRouter.delete('/zones/:zoneId', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const result = await prisma.radarZone.deleteMany({ where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId } });
+  const result = await prisma.$transaction(async tx => {
+    await lockRadarScope(tx, scope.guildId, scope.connId);
+    return tx.radarZone.deleteMany({ where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId } });
+  });
   if (result.count !== 1) { res.status(404).json({ error: 'Radar-Zone nicht gefunden.' }); return; }
   emitGuildEvent(scope.guildId, { type: 'radar.zone.deleted', payload: { guildId: scope.guildId, nitradoConnId: scope.connId, zoneId: req.params.zoneId } });
   res.status(204).end();

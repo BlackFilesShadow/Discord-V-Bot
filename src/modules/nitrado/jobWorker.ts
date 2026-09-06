@@ -40,6 +40,7 @@ import {
   parseServerBanJobPayload,
   type BanOutboxClient,
 } from '../bans/banOutbox';
+import { inspectRadarAutoBanFenceForRemoteAdd } from '../radar/banFence';
 import {
   NITRADO_JOB_HEARTBEAT_INTERVAL_MS,
   claimNitradoJob,
@@ -478,6 +479,28 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             const banPayload = parsePermanentServerBanPayload(payload);
             if (!banPayload.encryptedIdentifier) {
               throw new PermanentJobError('SERVER_BAN_ADD ohne verschluesselten Identifier');
+            }
+
+            const fenceDecision = await inspectRadarAutoBanFenceForRemoteAdd(
+              prisma,
+              {
+                guildId: job.guildId,
+                nitradoConnId: conn.id,
+                banId: banPayload.banId,
+                currentServiceId: conn.nitradoServerId,
+              },
+            );
+            if (fenceDecision.kind === 'REJECT') {
+              logAudit('RADAR_AUTO_BAN_REMOTE_ADD_SKIPPED', 'MODERATION', {
+                guildId: job.guildId,
+                nitradoConnId: conn.id,
+                banId: banPayload.banId,
+                radarEventId: fenceDecision.fence.radarEventId,
+                fenceServiceId: fenceDecision.fence.serviceId,
+                fenceBindingVersion: fenceDecision.fence.bindingVersion,
+                code: fenceDecision.code,
+              });
+              break;
             }
 
             const ban = await prisma.serverBanEntry.findFirst({

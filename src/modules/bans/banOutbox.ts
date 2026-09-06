@@ -21,6 +21,11 @@
  * Nitrado-1U: Jeder Ban-Enqueue nimmt zusaetzlich eine Connection-weite
  * DB-xact-Barriere. Service-Rebind und Outbox-Neuanlage koennen dadurch nicht
  * aneinander vorbeicommitten.
+ *
+ * Radar-Auto-Bans tragen zusaetzlich `radarAutoBan: true`. Dieses Flag wird
+ * ausschliesslich aus einem tatsaechlich vorhandenen, nicht invalidierten
+ * RadarAutoBanBanFence abgeleitet. Es ist nur Herkunftsmarker; Autoritaet bleibt
+ * der Fence selbst, der vor Remote-Durchsetzung erneut geprueft wird.
  */
 
 import { encrypt } from '../../utils/security';
@@ -36,6 +41,7 @@ export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 export interface ServerBanJobPayload {
   banId: string;
   encryptedIdentifier?: string;
+  radarAutoBan?: true;
 }
 
 export interface BanOutboxScope {
@@ -70,6 +76,9 @@ interface BanRemoteIdentityTxClient {
       update: { identifierEnc: string };
     }): Promise<unknown>;
   };
+  radarAutoBanBanFence?: {
+    findFirst(args: unknown): Promise<{ banId: string } | null>;
+  };
 }
 
 function asPayload(value: unknown): ServerBanJobPayload | null {
@@ -77,9 +86,11 @@ function asPayload(value: unknown): ServerBanJobPayload | null {
   const v = value as Record<string, unknown>;
   if (typeof v.banId !== 'string' || !v.banId.trim()) return null;
   if (v.encryptedIdentifier !== undefined && typeof v.encryptedIdentifier !== 'string') return null;
+  if (v.radarAutoBan !== undefined && v.radarAutoBan !== true) return null;
   return {
     banId: v.banId,
     ...(typeof v.encryptedIdentifier === 'string' ? { encryptedIdentifier: v.encryptedIdentifier } : {}),
+    ...(v.radarAutoBan === true ? { radarAutoBan: true as const } : {}),
   };
 }
 
@@ -96,10 +107,6 @@ async function ensureJobInLock(
   payload: ServerBanJobPayload,
   options: { recentDeadCooldownMs?: number; now?: Date } = {},
 ): Promise<boolean> {
-  // Nitrado-1W: ADD-Identifier wird innerhalb derselben Connection+Subject-
-  // Transaktion dauerhaft verschluesselt gespeichert. Das passiert bewusst vor
-  // der aktiven Job-Dedupe: auch ein bereits vorhandener Intent darf die
-  // kanonische Reconciliation-Identitaet aktualisieren/backfillen.
   if (operation === 'SERVER_BAN_ADD' && payload.encryptedIdentifier) {
     const identityTx = tx as unknown as BanRemoteIdentityTxClient;
     await identityTx.serverBanRemoteIdentity.upsert({
@@ -109,8 +116,6 @@ async function ensureJobInLock(
     });
   }
 
-  // Aktive Jobs blockieren immer. Ohne `take`-Fenster werden auch vorhandene
-  // Legacy-Outboxen vollstaendig in die atomare Deduplizierung einbezogen.
   const existing = await tx.nitradoJob.findMany({
     where: {
       guildId: scope.guildId,
@@ -174,6 +179,28 @@ async function ensureJob(
   );
 }
 
+async function hasActiveRadarFence(
+  client: BanOutboxClient,
+  scope: BanOutboxScope,
+  banId: string,
+): Promise<boolean> {
+  const db = client as unknown as BanRemoteIdentityTxClient;
+  // Bestehende Minimal-Adapter/Unit-Test-Clients koennen dieses additive Modell
+  // nicht besitzen. Ein produktiver Radar-Auto-Ban kann ohne vorherigen
+  // Fence-Upsert ohnehin nicht entstehen.
+  if (!db.radarAutoBanBanFence) return false;
+  const fence = await db.radarAutoBanBanFence.findFirst({
+    where: {
+      banId,
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      invalidatedAt: null,
+    },
+    select: { banId: true },
+  });
+  return fence !== null;
+}
+
 /** Queued Remote-Ban; Klartext-Identifier wird nie in der Job-Payload gespeichert. */
 export async function enqueueServerBanAdd(
   client: BanOutboxClient,
@@ -185,6 +212,7 @@ export async function enqueueServerBanAdd(
 ): Promise<boolean> {
   const identifier = rawIdentifier.trim();
   if (!identifier) throw new Error('Leerer Server-Ban-Identifier');
+  const radarAutoBan = await hasActiveRadarFence(client, scope, banId);
   return ensureJob(
     client,
     scope,
@@ -192,6 +220,7 @@ export async function enqueueServerBanAdd(
     {
       banId,
       encryptedIdentifier: encrypt(identifier, encryptionKey),
+      ...(radarAutoBan ? { radarAutoBan: true as const } : {}),
     },
     {
       recentDeadCooldownMs: Math.max(0, options.recentDeadCooldownMs ?? 0),

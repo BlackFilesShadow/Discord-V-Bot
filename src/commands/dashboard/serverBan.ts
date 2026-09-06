@@ -36,6 +36,8 @@ import {
   readCurrentAdmBinding,
   withFreshAdmBinding,
 } from '../../modules/nitrado/adm/bindingFence';
+import { clearRadarAutoBanFence } from '../../modules/radar/banFence';
+import { lockRadarScope } from '../../modules/radar/lock';
 import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
@@ -112,6 +114,11 @@ export const serverBanCommand: Command = {
       const label = targetLabel(target);
       try {
         const stored = await prisma.$transaction(async tx => {
+          // Manueller Ban und Radar-Auto-Ban teilen denselben Scope-Lock. Damit
+          // kann ein Auto-Ban nach einem manuellen Override nicht noch in
+          // derselben Race-Phase seinen alten Generation-Fence zurueckschreiben.
+          await lockRadarScope(tx, scope.guildId, target.id);
+
           // Nicht vor Remote-Bestaetigung loeschen. PENDING_REMOVE verhindert
           // gleichzeitig ein Re-Add durch den Whitelist-Reconciler.
           await tx.whitelistEntry.updateMany({
@@ -153,6 +160,10 @@ export const serverBanCommand: Command = {
           });
           if (!row) throw new Error('Server-Ban konnte nach dem Anlegen nicht wiedergefunden werden.');
 
+          // Explizite Moderation hebt die spezielle Radar-Bindung bewusst auf.
+          // Ab hier ist der Ban wieder ein normaler manueller Policy-Sollzustand.
+          const clearedRadarFence = await clearRadarAutoBanFence(tx, banScope, row.id);
+
           if (expiresAt && noticeIdentifierEnc) {
             await tx.serverBanExpiryNotice.upsert({
               where: { banId: row.id },
@@ -193,7 +204,7 @@ export const serverBanCommand: Command = {
             identifier,
             config.security.encryptionKey,
           );
-          return { id: row.id, queued };
+          return { id: row.id, queued, clearedRadarFence };
         });
 
         logAudit('SERVER_BAN_SET', 'MODERATION', {
@@ -208,6 +219,7 @@ export const serverBanCommand: Command = {
           remoteQueued: stored.queued,
           whitelistState: 'PENDING_REMOVE',
           remoteSequence: 'BAN_THEN_WHITELIST_REMOVE',
+          radarFenceCleared: stored.clearedRadarFence > 0,
         });
         results.push(`✅ **${label}** — Bann und anschliessende Whitelist-Entfernung ${stored.queued ? 'sicher eingereiht' : 'bereits in Bearbeitung'}.`);
       } catch (error) {
@@ -282,6 +294,7 @@ export const serverUnbanCommand: Command = {
         // gueltig ist, darf die Remote-Beobachtung lokalen Ban-Zustand oder eine
         // Remove-Outbox beeinflussen. Der DB-Commit liegt dabei unter dem Lock.
         const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
+          await lockRadarScope(tx, scope.guildId, target.id);
           const row = await tx.serverBanEntry.upsert({
             where: {
               guildId_nitradoConnId_identityHash: {
@@ -309,6 +322,12 @@ export const serverUnbanCommand: Command = {
             select: { id: true },
           });
 
+          const clearedRadarFence = await clearRadarAutoBanFence(
+            tx,
+            { guildId: scope.guildId, nitradoConnId: target.id },
+            row.id,
+          );
+
           await tx.serverBanExpiryNotice.updateMany({
             where: {
               banId: row.id,
@@ -332,7 +351,7 @@ export const serverUnbanCommand: Command = {
                 { bypassRecentDeadCooldown: true },
               )
             : false;
-          return { banId: row.id, existsRemotely, queued };
+          return { banId: row.id, existsRemotely, queued, clearedRadarFence };
         }));
 
         logAudit('SERVER_BAN_LIFT', 'MODERATION', {
@@ -346,6 +365,7 @@ export const serverUnbanCommand: Command = {
           remoteQueued: result.queued,
           directIdentifier: true,
           automaticExpiryNotice: false,
+          radarFenceCleared: result.clearedRadarFence > 0,
         });
 
         results.push(result.existsRemotely

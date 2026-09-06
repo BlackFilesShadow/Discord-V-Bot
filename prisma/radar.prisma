@@ -22,15 +22,25 @@ enum RadarDeliveryStatus {
   FAILED
 }
 
+enum RadarAutoBanStatus {
+  DISABLED
+  PENDING
+  PROCESSING
+  APPLIED
+  SKIPPED
+  RETRY
+  FAILED
+}
+
 model RadarConfig {
-  id             String   @id @default(cuid())
-  guildId        String
-  nitradoConnId  String
-  activeMap      RadarMap @default(CHERNARUS)
+  id              String   @id @default(cuid())
+  guildId         String
+  nitradoConnId   String
+  activeMap       RadarMap @default(CHERNARUS)
   cursorCreatedAt DateTime @default(now())
-  cursorEventId  String   @default("")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  cursorEventId   String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   zones RadarZone[]
 
@@ -39,36 +49,39 @@ model RadarConfig {
 }
 
 model RadarZone {
-  id              String         @id @default(cuid())
-  configId        String
-  config          RadarConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
-  guildId         String
-  nitradoConnId   String
-  name            String         @db.VarChar(120)
-  map             RadarMap
-  shape           RadarZoneShape
-  isActive        Boolean        @default(true)
-  centerX         Decimal?       @db.Decimal(12, 3)
-  centerY         Decimal?       @db.Decimal(12, 3)
-  radiusMeters    Decimal?       @db.Decimal(12, 3)
-  minX            Decimal        @db.Decimal(12, 3)
-  minY            Decimal        @db.Decimal(12, 3)
-  maxX            Decimal        @db.Decimal(12, 3)
-  maxY            Decimal        @db.Decimal(12, 3)
-  channelId       String         @db.VarChar(32)
-  rolePingEnabled Boolean        @default(true)
-  roleIds         String[]
-  embedColor      String         @default("#dc2626") @db.VarChar(9)
-  editorCenterX   Decimal?       @db.Decimal(12, 3)
-  editorCenterY   Decimal?       @db.Decimal(12, 3)
-  editorZoom      Decimal?       @db.Decimal(8, 3)
-  editorBearing   Decimal?       @db.Decimal(8, 3)
-  editorPitch     Decimal?       @db.Decimal(8, 3)
-  version         Int            @default(1)
-  createdBy       String         @db.VarChar(32)
-  updatedBy       String         @db.VarChar(32)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                  String         @id @default(cuid())
+  configId            String
+  config              RadarConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
+  guildId             String
+  nitradoConnId       String
+  name                String         @db.VarChar(120)
+  map                 RadarMap
+  shape               RadarZoneShape
+  isActive            Boolean        @default(true)
+  autoBanEnabled      Boolean        @default(false)
+  autoBanEnabledAt    DateTime?
+  autoBanAuthorizedBy String?        @db.VarChar(32)
+  centerX             Decimal?       @db.Decimal(12, 3)
+  centerY             Decimal?       @db.Decimal(12, 3)
+  radiusMeters        Decimal?       @db.Decimal(12, 3)
+  minX                Decimal        @db.Decimal(12, 3)
+  minY                Decimal        @db.Decimal(12, 3)
+  maxX                Decimal        @db.Decimal(12, 3)
+  maxY                Decimal        @db.Decimal(12, 3)
+  channelId           String         @db.VarChar(32)
+  rolePingEnabled     Boolean        @default(true)
+  roleIds             String[]
+  embedColor          String         @default("#dc2626") @db.VarChar(9)
+  editorCenterX       Decimal?       @db.Decimal(12, 3)
+  editorCenterY       Decimal?       @db.Decimal(12, 3)
+  editorZoom          Decimal?       @db.Decimal(8, 3)
+  editorBearing       Decimal?       @db.Decimal(8, 3)
+  editorPitch         Decimal?       @db.Decimal(8, 3)
+  version             Int            @default(1)
+  createdBy           String         @db.VarChar(32)
+  updatedBy           String         @db.VarChar(32)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
 
   points     RadarZonePoint[]
   functions  RadarZoneFunction[]
@@ -77,6 +90,7 @@ model RadarZone {
 
   @@index([guildId, nitradoConnId, map, isActive])
   @@index([configId, map, isActive])
+  @@index([guildId, nitradoConnId, autoBanEnabled])
 }
 
 model RadarZonePoint {
@@ -101,50 +115,86 @@ model RadarZoneFunction {
 }
 
 model RadarZoneAllowlist {
-  id       String               @id @default(cuid())
-  zoneId   String
-  zone     RadarZone            @relation(fields: [zoneId], references: [id], onDelete: Cascade)
-  source   RadarAllowlistSource
-  gameId   String               @db.VarChar(128)
-  playerName String?            @db.VarChar(128)
-  createdAt DateTime            @default(now())
+  id         String               @id @default(cuid())
+  zoneId     String
+  zone       RadarZone            @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  source     RadarAllowlistSource
+  gameId     String               @db.VarChar(128)
+  playerName String?              @db.VarChar(128)
+  createdAt  DateTime             @default(now())
 
   @@unique([zoneId, gameId])
   @@index([gameId])
 }
 
 model RadarZoneEvent {
-  id            String   @id @default(cuid())
-  zoneId        String
-  zone          RadarZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
-  admEventId    String
-  functionKey   String   @db.VarChar(80)
-  guildId       String
-  nitradoConnId String
-  channelId     String   @db.VarChar(32)
-  admEventType  AdmEventType
-  actorGameId   String?  @db.VarChar(128)
-  actorName     String?  @db.VarChar(128)
-  targetGameId  String?  @db.VarChar(128)
-  targetName    String?  @db.VarChar(128)
-  objectType    String?  @db.VarChar(256)
-  toolOrWeapon  String?  @db.VarChar(256)
-  distanceMeters Decimal? @db.Decimal(12, 3)
-  x             Decimal  @db.Decimal(12, 3)
-  y             Decimal  @db.Decimal(12, 3)
-  altitude      Decimal? @db.Decimal(12, 3)
-  admOccurredAt DateTime?
-  status        RadarDeliveryStatus @default(PENDING)
-  attempts      Int      @default(0)
-  nextAttemptAt DateTime @default(now())
-  leaseUntil    DateTime?
-  messageId     String?  @db.VarChar(32)
-  lastError     String?  @db.Text
-  sentAt        DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id                       String   @id @default(cuid())
+  zoneId                   String
+  zone                     RadarZone @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  admEventId               String
+  functionKey              String   @db.VarChar(80)
+  guildId                  String
+  nitradoConnId            String
+  channelId                String   @db.VarChar(32)
+  admEventType             AdmEventType
+  actorGameId              String?  @db.VarChar(128)
+  actorName                String?  @db.VarChar(128)
+  targetGameId             String?  @db.VarChar(128)
+  targetName               String?  @db.VarChar(128)
+  objectType               String?  @db.VarChar(256)
+  toolOrWeapon             String?  @db.VarChar(256)
+  distanceMeters           Decimal? @db.Decimal(12, 3)
+  x                        Decimal  @db.Decimal(12, 3)
+  y                        Decimal  @db.Decimal(12, 3)
+  altitude                 Decimal? @db.Decimal(12, 3)
+  admOccurredAt            DateTime?
+
+  zoneVersionSnapshot      Int      @default(0)
+  zoneMapSnapshot          RadarMap?
+  zoneGeometrySnapshot     Json?
+  zoneFunctionsSnapshot    Json?
+  zoneAllowlistSnapshot    Json?
+  autoBanEnabledSnapshot   Boolean  @default(false)
+  autoBanEnabledAtSnapshot DateTime?
+  autoBanAuthorizedBy      String?  @db.VarChar(32)
+  autoBanStatus            RadarAutoBanStatus @default(DISABLED)
+  autoBanAttempts          Int      @default(0)
+  autoBanNextAttemptAt     DateTime @default(now())
+  autoBanLeaseUntil        DateTime?
+  autoBanBanId             String?  @db.VarChar(32)
+  autoBanProcessedAt       DateTime?
+  autoBanLastError         String?  @db.Text
+
+  status                   RadarDeliveryStatus @default(PENDING)
+  attempts                 Int      @default(0)
+  nextAttemptAt            DateTime @default(now())
+  leaseUntil               DateTime?
+  messageId                String?  @db.VarChar(32)
+  lastError                String?  @db.Text
+  sentAt                   DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
 
   @@unique([zoneId, admEventId, functionKey])
   @@index([guildId, nitradoConnId, status, nextAttemptAt])
+  @@index([guildId, nitradoConnId, autoBanStatus, autoBanNextAttemptAt])
   @@index([zoneId, sentAt])
+}
+
+// Ein Radar-Auto-Ban ist an genau die Nitrado-Service-/Binding-Generation
+// gebunden, in der das ausloesende ADM-Ereignis validiert wurde. Kein FK zum
+// allgemeinen Ban-Modell: die Ban-Domaene bleibt unabhaengig, waehrend Worker
+// und Rebind-Lifecycle diesen Fence explizit fail-closed auswerten.
+model RadarAutoBanBanFence {
+  banId          String   @id @db.VarChar(32)
+  radarEventId   String   @unique @db.VarChar(32)
+  guildId        String
+  nitradoConnId  String
+  serviceId      String   @db.VarChar(64)
+  bindingVersion Int
+  createdAt      DateTime @default(now())
+  invalidatedAt  DateTime?
+
+  @@index([guildId, nitradoConnId, invalidatedAt])
+  @@index([serviceId, bindingVersion])
 }
