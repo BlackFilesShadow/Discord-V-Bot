@@ -61,6 +61,9 @@ model RadarZone {
   autoBanEnabled      Boolean        @default(false)
   autoBanEnabledAt    DateTime?
   autoBanAuthorizedBy String?        @db.VarChar(32)
+  altitudeEnabled     Boolean        @default(false)
+  minAltitudeMeters   Decimal?       @db.Decimal(12, 3)
+  maxAltitudeMeters   Decimal?       @db.Decimal(12, 3)
   centerX             Decimal?       @db.Decimal(12, 3)
   centerY             Decimal?       @db.Decimal(12, 3)
   radiusMeters        Decimal?       @db.Decimal(12, 3)
@@ -152,6 +155,7 @@ model RadarZoneEvent {
   zoneVersionSnapshot      Int      @default(0)
   zoneMapSnapshot          RadarMap?
   zoneGeometrySnapshot     Json?
+  zoneAltitudeSnapshot     Json?
   zoneFunctionsSnapshot    Json?
   zoneAllowlistSnapshot    Json?
   autoBanEnabledSnapshot   Boolean  @default(false)
