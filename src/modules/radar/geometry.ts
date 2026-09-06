@@ -13,6 +13,12 @@ export interface RadarBounds {
   maxY: number;
 }
 
+export interface RadarAltitudeRange {
+  enabled: boolean;
+  minAltitudeMeters: number | null;
+  maxAltitudeMeters: number | null;
+}
+
 export interface CircleGeometry extends RadarBounds {
   shape: 'CIRCLE';
   centerX: number;
@@ -141,6 +147,14 @@ export function containsPosition(geometry: RadarGeometry, point: RadarPoint): bo
   return inside;
 }
 
+export function altitudeContains(range: RadarAltitudeRange, altitude: number | null): boolean {
+  if (!range.enabled) return true;
+  if (altitude === null || !Number.isFinite(altitude)) return false;
+  if (range.minAltitudeMeters === null || range.maxAltitudeMeters === null) return false;
+  if (!Number.isFinite(range.minAltitudeMeters) || !Number.isFinite(range.maxAltitudeMeters) || range.minAltitudeMeters >= range.maxAltitudeMeters) return false;
+  return altitude + EPSILON >= range.minAltitudeMeters && altitude - EPSILON <= range.maxAltitudeMeters;
+}
+
 /**
  * Entfernung bis zur naechsten Zonengrenze. Fuer Kreis ist das die radiale
  * Restdistanz, fuer Polygon die minimale Distanz zu einer Kante. Ausserhalb
@@ -167,6 +181,24 @@ export function containsPositionWithMargin(
 ): boolean {
   if (!Number.isFinite(marginMeters) || marginMeters < 0) return false;
   return containsPosition(geometry, point) && distanceInsideBoundary(geometry, point) + EPSILON >= marginMeters;
+}
+
+/**
+ * Vertikale Variante des Sicherheitsrands. Ist der Hoehenfilter deaktiviert,
+ * bleibt das bisherige 2D-Verhalten erhalten. Bei aktivem Filter muss die ADM-
+ * Hoehe eindeutig innerhalb des Bandes und fuer punitive Entscheidungen auch
+ * innerhalb des vertikalen Sicherheitsrands liegen.
+ */
+export function altitudeContainsWithMargin(
+  range: RadarAltitudeRange,
+  altitude: number | null,
+  marginMeters: number,
+): boolean {
+  if (!range.enabled) return true;
+  if (!Number.isFinite(marginMeters) || marginMeters < 0 || !altitudeContains(range, altitude) || altitude === null) return false;
+  if (range.minAltitudeMeters === null || range.maxAltitudeMeters === null) return false;
+  return altitude + EPSILON >= range.minAltitudeMeters + marginMeters
+    && altitude - EPSILON <= range.maxAltitudeMeters - marginMeters;
 }
 
 export function geometryFitsMap(map: RadarMap, geometry: RadarGeometry): boolean {
