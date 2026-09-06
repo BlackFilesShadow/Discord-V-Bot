@@ -22,6 +22,7 @@ export interface EditableRadarZone {
   name: string;
   map: RadarMap;
   isActive: boolean;
+  autoBanEnabled: boolean;
   channelId: string;
   rolePingEnabled: boolean;
   roleIds: string[];
@@ -56,7 +57,7 @@ interface ZoneEditorProps {
 
 function freshZone(activeMap: RadarMap, functions: RadarFunctionDefinition[]): Omit<EditableRadarZone, 'id' | 'version'> {
   return {
-    name: '', map: activeMap, isActive: true, channelId: '', rolePingEnabled: false, roleIds: [], embedColor: '#dc2626',
+    name: '', map: activeMap, isActive: true, autoBanEnabled: false, channelId: '', rolePingEnabled: false, roleIds: [], embedColor: '#dc2626',
     enabledFunctions: functions.filter(item => item.defaultEnabled).map(item => item.key), allowlist: [],
     geometry: { type: 'CIRCLE', x: 0, y: 0, radiusMeters: 100 },
   };
@@ -78,7 +79,7 @@ export function ZoneEditor({ activeMap, functions, channels, roles, players, zon
 
   useEffect(() => {
     setDraft(zone ? {
-      name: zone.name, map: zone.map, isActive: zone.isActive, channelId: zone.channelId, rolePingEnabled: zone.rolePingEnabled,
+      name: zone.name, map: zone.map, isActive: zone.isActive, autoBanEnabled: zone.autoBanEnabled, channelId: zone.channelId, rolePingEnabled: zone.rolePingEnabled,
       roleIds: zone.roleIds, embedColor: zone.embedColor, enabledFunctions: zone.enabledFunctions, allowlist: zone.allowlist, geometry: zone.geometry,
     } : freshZone(activeMap, functions));
     setInteractionMode(initialMode(zone));
@@ -197,6 +198,12 @@ export function ZoneEditor({ activeMap, functions, channels, roles, players, zon
       </fieldset>
 
       <fieldset className={sectionClass}><legend className="px-2 text-sm font-medium text-white">Funktionen</legend><div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(11rem,1fr))]">{functions.map(definition => <div key={definition.key} className="min-w-0 rounded-lg border border-border/70 bg-bg-elev/40 p-4"><Switch checked={draft.enabledFunctions.includes(definition.key)} onChange={() => toggleFunction(definition.key)} label={definition.label} /></div>)}</div></fieldset>
+
+      <fieldset className="space-y-4 rounded-xl border border-danger/40 bg-danger/5 p-4 sm:p-5"><legend className="px-2 text-sm font-medium text-white">Automatische Sanktion</legend>
+        <Switch checked={draft.autoBanEnabled} onChange={autoBanEnabled => update({ autoBanEnabled })} label="Automatischer Server-Ban" />
+        <p className="text-xs leading-relaxed text-muted">Wenn aktiviert, werden nur eindeutig validierte Ereignisse der oben aktivierten Radar-Funktionen automatisch auf genau diesem Nitrado-Server gebannt. Alte Ereignisse, unklare GUIDs, geänderte Zonen, falsche Eventtypen, Allowlist-Spieler und Positionen innerhalb des 10-m-Sicherheitsrands zur Zonengrenze werden grundsätzlich nicht gebannt.</p>
+        {draft.autoBanEnabled && <p role="status" className="rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-xs text-danger">Auto-Ban ist scharf. Jede spätere Zonenänderung invalidiert noch nicht verarbeitete Ban-Entscheidungen; neue Ereignisse werden danach mit der neuen Zonen-Version bewertet.</p>}
+      </fieldset>
 
       <fieldset className={sectionClass}><legend className="px-2 text-sm font-medium text-white">Discord</legend><label className="space-y-2 text-sm text-muted"><span>Kanal</span><Select aria-label="Radar-Kanal" value={draft.channelId} onChange={event => update({ channelId: event.target.value })} required><option value="">Kanal wählen</option>{channels.filter(channel => channel.type === 0 || channel.type === 5).map(channel => <option key={channel.id} value={channel.id}>#{channel.name}</option>)}</Select></label><div className="rounded-lg border border-border/60 bg-bg-card/25 px-4 py-3"><Switch checked={draft.rolePingEnabled} onChange={rolePingEnabled => update({ rolePingEnabled })} label="Rollen-Ping" /></div><div className="grid gap-3 md:grid-cols-2">{roles.filter(role => !role.managed).map(role => <label key={role.id} className="flex min-h-11 items-center gap-3 rounded-lg border border-border/60 bg-bg-card/20 px-3 py-2 text-sm text-muted"><input type="checkbox" checked={draft.roleIds.includes(role.id)} disabled={!draft.rolePingEnabled || (!draft.roleIds.includes(role.id) && draft.roleIds.length >= 8)} onChange={() => toggleRole(role.id)} />@{role.name}</label>)}</div><label className="space-y-2 text-sm text-muted"><span>Embed-Farbe</span><Input value={draft.embedColor} onChange={event => update({ embedColor: event.target.value })} pattern="^#[0-9a-fA-F]{6}$" /></label></fieldset>
 
