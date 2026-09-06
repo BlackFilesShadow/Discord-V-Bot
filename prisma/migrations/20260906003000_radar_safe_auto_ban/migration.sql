@@ -2,7 +2,8 @@ CREATE TYPE "RadarAutoBanStatus" AS ENUM ('DISABLED', 'PENDING', 'PROCESSING', '
 
 ALTER TABLE "RadarZone"
   ADD COLUMN "autoBanEnabled" BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN "autoBanEnabledAt" TIMESTAMP(3);
+  ADD COLUMN "autoBanEnabledAt" TIMESTAMP(3),
+  ADD COLUMN "autoBanAuthorizedBy" VARCHAR(32);
 
 ALTER TABLE "RadarZoneEvent"
   ADD COLUMN "zoneVersionSnapshot" INTEGER NOT NULL DEFAULT 0,
@@ -27,13 +28,15 @@ CREATE INDEX "RadarZoneEvent_guildId_nitradoConnId_autoBanStatus_autoBanNextAtte
   ON "RadarZoneEvent"("guildId", "nitradoConnId", "autoBanStatus", "autoBanNextAttemptAt");
 
 -- Immutable evidence snapshot. RadarZoneEvent remains an alert record; this trigger only
--- arms the separate auto-ban worker when the source event is newer than the exact moment
--- auto-ban was enabled. Backlogged/pre-existing ADM events therefore cannot become bans.
+-- arms the separate auto-ban worker when both the actual ADM occurrence and its DB insert
+-- are newer than the exact moment auto-ban was enabled. A delayed/backlogged old ADM line
+-- can therefore never become punitive merely because it was ingested after arming.
 CREATE OR REPLACE FUNCTION "snapshot_radar_zone_event_for_auto_ban"()
 RETURNS TRIGGER AS $$
 DECLARE
   z "RadarZone"%ROWTYPE;
   adm_created_at TIMESTAMP(3);
+  adm_occurred_at TIMESTAMP(3);
   adm_event_type "AdmEventType";
 BEGIN
   SELECT * INTO z
@@ -52,7 +55,7 @@ BEGIN
   NEW."zoneMapSnapshot" := z."map";
   NEW."autoBanEnabledSnapshot" := z."autoBanEnabled";
   NEW."autoBanEnabledAtSnapshot" := z."autoBanEnabledAt";
-  NEW."autoBanAuthorizedBy" := CASE WHEN z."autoBanEnabled" THEN z."updatedBy" ELSE NULL END;
+  NEW."autoBanAuthorizedBy" := CASE WHEN z."autoBanEnabled" THEN z."autoBanAuthorizedBy" ELSE NULL END;
 
   NEW."zoneGeometrySnapshot" := CASE
     WHEN z."shape" = 'CIRCLE' THEN jsonb_build_object(
@@ -85,8 +88,8 @@ BEGIN
     WHERE a."zoneId" = z."id"
   ), '[]'::jsonb);
 
-  SELECT a."createdAt", a."eventType"
-    INTO adm_created_at, adm_event_type
+  SELECT a."createdAt", a."occurredAt", a."eventType"
+    INTO adm_created_at, adm_occurred_at, adm_event_type
   FROM "AdmEvent" a
   WHERE a."id" = NEW."admEventId"
     AND a."guildId" = NEW."guildId"
@@ -94,13 +97,13 @@ BEGIN
 
   IF NOT z."autoBanEnabled" THEN
     NEW."autoBanStatus" := 'DISABLED';
-  ELSIF z."autoBanEnabledAt" IS NULL THEN
+  ELSIF z."autoBanEnabledAt" IS NULL OR z."autoBanAuthorizedBy" IS NULL THEN
     NEW."autoBanStatus" := 'SKIPPED';
-    NEW."autoBanLastError" := 'AUTOBAN_ARM_TIMESTAMP_MISSING';
-  ELSIF adm_created_at IS NULL OR adm_event_type IS NULL OR adm_event_type <> NEW."admEventType" THEN
+    NEW."autoBanLastError" := 'AUTOBAN_ARM_METADATA_MISSING';
+  ELSIF adm_created_at IS NULL OR adm_occurred_at IS NULL OR adm_event_type IS NULL OR adm_event_type <> NEW."admEventType" THEN
     NEW."autoBanStatus" := 'SKIPPED';
-    NEW."autoBanLastError" := 'ADM_SOURCE_SCOPE_OR_TYPE_MISMATCH';
-  ELSIF adm_created_at <= z."autoBanEnabledAt" THEN
+    NEW."autoBanLastError" := 'ADM_SOURCE_SCOPE_TYPE_OR_TIME_MISMATCH';
+  ELSIF adm_created_at <= z."autoBanEnabledAt" OR adm_occurred_at <= z."autoBanEnabledAt" THEN
     NEW."autoBanStatus" := 'SKIPPED';
     NEW."autoBanLastError" := 'ADM_EVENT_PREDATES_AUTOBAN_ARM';
   ELSE
