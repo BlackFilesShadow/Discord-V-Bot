@@ -47,6 +47,7 @@ type ZoneForAutoBan = {
   isActive: boolean;
   autoBanEnabled: boolean;
   autoBanEnabledAt: Date | null;
+  autoBanAuthorizedBy: string | null;
   version: number;
   centerX: unknown;
   centerY: unknown;
@@ -182,6 +183,7 @@ async function validateInsideTransaction(
   if (!event.autoBanAuthorizedBy || !DISCORD_SNOWFLAKE_RE.test(event.autoBanAuthorizedBy)) return { ok: false, code: 'AUTOBAN_AUTHORIZER_INVALID' };
   if (!isValidBattleyeGuid(event.actorGameId)) return { ok: false, code: 'ACTOR_GUID_INVALID_OR_MISSING' };
   if (!event.admOccurredAt) return { ok: false, code: 'ADM_OCCURRED_AT_MISSING' };
+  if (event.admOccurredAt.getTime() <= event.autoBanEnabledAtSnapshot.getTime()) return { ok: false, code: 'ADM_EVENT_PREDATES_AUTOBAN_ARM' };
   if (event.admOccurredAt.getTime() > now.getTime() + MAX_FUTURE_ADM_SKEW_MS) return { ok: false, code: 'ADM_TIME_IN_FUTURE' };
 
   const zone = await tx.radarZone.findFirst({
@@ -193,6 +195,7 @@ async function validateInsideTransaction(
   if (zone.version !== event.zoneVersionSnapshot) return { ok: false, code: 'ZONE_VERSION_CHANGED' };
   if (zone.map !== event.zoneMapSnapshot) return { ok: false, code: 'ZONE_MAP_CHANGED' };
   if (!sameInstant(zone.autoBanEnabledAt, event.autoBanEnabledAtSnapshot)) return { ok: false, code: 'AUTOBAN_ARM_GENERATION_CHANGED' };
+  if (!zone.autoBanAuthorizedBy || zone.autoBanAuthorizedBy !== event.autoBanAuthorizedBy) return { ok: false, code: 'AUTOBAN_AUTHORIZER_CHANGED' };
 
   const radarConfig = await tx.radarConfig.findUnique({
     where: { guildId_nitradoConnId: { guildId: event.guildId, nitradoConnId: event.nitradoConnId } },
@@ -240,6 +243,7 @@ async function validateInsideTransaction(
   if (!adm) return { ok: false, code: 'ADM_EVENT_NOT_FOUND_IN_SCOPE' };
   if (adm.eventType !== event.admEventType) return { ok: false, code: 'ADM_EVENT_TYPE_CHANGED' };
   if (!sameInstant(adm.occurredAt, event.admOccurredAt)) return { ok: false, code: 'ADM_EVENT_TIME_MISMATCH' };
+  if (!adm.occurredAt || adm.occurredAt.getTime() <= event.autoBanEnabledAtSnapshot.getTime()) return { ok: false, code: 'ADM_EVENT_PREDATES_AUTOBAN_ARM' };
   if (adm.createdAt.getTime() <= event.autoBanEnabledAtSnapshot.getTime()) return { ok: false, code: 'ADM_EVENT_PREDATES_AUTOBAN_ARM' };
   if (adm.actorGameId !== event.actorGameId) return { ok: false, code: 'ADM_ACTOR_GUID_MISMATCH' };
 
@@ -261,7 +265,7 @@ async function validateInsideTransaction(
     targetName: adm.targetName,
     objectType: adm.objectType,
     toolOrWeapon: adm.toolOrWeapon,
-    distanceMeters: adm.distanceMeters,
+    distanceMeters: adm.distanceMeters === null ? null : Number(adm.distanceMeters),
     actorPosition: adm.actorPosition,
     targetPosition: adm.targetPosition,
   };
