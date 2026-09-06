@@ -11,6 +11,7 @@ import { addBan, isBanActive, type BanClient } from '../bans/banRegistry';
 import { hashBanIdentifier } from '../bans/banTarget';
 import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';
 import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
+import { upsertRadarAutoBanFence } from './banFence';
 import { radarFunctionByKey, type RadarAdmEvent } from './catalog';
 import {
   containsPositionWithMargin,
@@ -87,7 +88,14 @@ type EventForAutoBan = {
 };
 
 type ValidationResult =
-  | { ok: true; identifier: string; reason: string; actorName: string | null }
+  | {
+    ok: true;
+    identifier: string;
+    reason: string;
+    actorName: string | null;
+    serviceId: string;
+    bindingVersion: number;
+  }
   | { ok: false; code: string };
 
 function retryDelayMs(attempt: number): number {
@@ -278,6 +286,8 @@ async function validateInsideTransaction(
     identifier: event.actorGameId,
     actorName: event.actorName,
     reason: `Radar Auto-Ban: ${zone.name} / ${definition.label}`.slice(0, 300),
+    serviceId: binding.currentServiceId,
+    bindingVersion: binding.bindingVersion,
   };
 }
 
@@ -368,6 +378,14 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
         select: { id: true },
       });
       if (!ban) throw new Error('Radar-Auto-Ban konnte nach Registry-Upsert nicht wiedergefunden werden.');
+
+      await upsertRadarAutoBanFence(tx, {
+        ...scope,
+        banId: ban.id,
+        radarEventId: event.id,
+        serviceId: validation.serviceId,
+        bindingVersion: validation.bindingVersion,
+      });
 
       const queued = await enqueueServerBanAdd(
         tx as unknown as BanOutboxClient,
