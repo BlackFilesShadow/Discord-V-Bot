@@ -1,4 +1,6 @@
 import {
+  altitudeContains,
+  altitudeContainsWithMargin,
   containsPosition,
   containsPositionWithMargin,
   createCircleGeometry,
@@ -38,6 +40,23 @@ describe('Radar-Zonengeometrie', () => {
     expect(containsPositionWithMargin(polygon, { x: 5, y: 50 }, 10)).toBe(false);
     expect(containsPositionWithMargin(polygon, { x: 50, y: 50 }, 10)).toBe(true);
     expect(containsPositionWithMargin(polygon, { x: 50, y: 0 }, 10)).toBe(false);
+  });
+
+  it('wertet optionale ADM-Hoehenbaender fail-closed und mit vertikalem Sicherheitsrand aus', () => {
+    const off = { enabled: false, minAltitudeMeters: null, maxAltitudeMeters: null };
+    expect(altitudeContains(off, null)).toBe(true);
+    expect(altitudeContainsWithMargin(off, null, 10)).toBe(true);
+
+    const range = { enabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 200 };
+    expect(altitudeContains(range, 100)).toBe(true);
+    expect(altitudeContains(range, 150)).toBe(true);
+    expect(altitudeContains(range, 200)).toBe(true);
+    expect(altitudeContains(range, 99.9)).toBe(false);
+    expect(altitudeContains(range, null)).toBe(false);
+    expect(altitudeContainsWithMargin(range, 105, 10)).toBe(false);
+    expect(altitudeContainsWithMargin(range, 110, 10)).toBe(true);
+    expect(altitudeContainsWithMargin(range, 190, 10)).toBe(true);
+    expect(altitudeContainsWithMargin(range, 195, 10)).toBe(false);
   });
 
   it('lehnt selbstüberschneidende und kartenüberschreitende Geometrien ab', () => {
