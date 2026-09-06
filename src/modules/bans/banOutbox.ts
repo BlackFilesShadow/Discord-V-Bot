@@ -22,12 +22,10 @@
  * DB-xact-Barriere. Service-Rebind und Outbox-Neuanlage koennen dadurch nicht
  * aneinander vorbeicommitten.
  *
- * Radar-Auto-Bans tragen zusaetzlich `radarAutoBan: true`. Dieses Flag wird im
- * selben gelockten Prisma-TransactionClient aus dem persistenten
- * RadarAutoBanBanFence abgeleitet. Es ist nur ein Herkunftsmarker; Autoritaet
- * bleibt der Fence selbst, der vor jeder Remote-Durchsetzung erneut geprueft
- * wird. Manuelle Bans entfernen ihren Radar-Fence vor dem Enqueue und bleiben
- * dadurch unveraendert im bisherigen Outbox-Pfad.
+ * Radar-Auto-Bans tragen zusaetzlich `radarAutoBan: true`. Dieses Flag wird
+ * ausschliesslich aus einem tatsaechlich vorhandenen, nicht invalidierten
+ * RadarAutoBanBanFence abgeleitet. Es ist nur Herkunftsmarker; Autoritaet bleibt
+ * der Fence selbst, der vor Remote-Durchsetzung erneut geprueft wird.
  */
 
 import { encrypt } from '../../utils/security';
@@ -54,8 +52,6 @@ export interface BanOutboxScope {
 export interface ServerBanAddEnqueueOptions {
   /** Nur fuer automatische Reconciliation setzen; Bediener-ADDs bleiben direkt retrybar. */
   recentDeadCooldownMs?: number;
-  /** Expliziter Zusatzmarker; ein vorhandener DB-Fence setzt ihn ohnehin. */
-  radarAutoBan?: boolean;
   /** Test-/Scheduler-Zeitpunkt; Produktion verwendet standardmaessig jetzt. */
   now?: Date;
 }
@@ -111,10 +107,6 @@ async function ensureJobInLock(
   payload: ServerBanJobPayload,
   options: { recentDeadCooldownMs?: number; now?: Date } = {},
 ): Promise<boolean> {
-  // Nitrado-1W: ADD-Identifier wird innerhalb derselben Connection+Subject-
-  // Transaktion dauerhaft verschluesselt gespeichert. Das passiert bewusst vor
-  // der aktiven Job-Dedupe: auch ein bereits vorhandener Intent darf die
-  // kanonische Reconciliation-Identitaet aktualisieren/backfillen.
   if (operation === 'SERVER_BAN_ADD' && payload.encryptedIdentifier) {
     const identityTx = tx as unknown as BanRemoteIdentityTxClient;
     await identityTx.serverBanRemoteIdentity.upsert({
@@ -124,8 +116,6 @@ async function ensureJobInLock(
     });
   }
 
-  // Aktive Jobs blockieren immer. Ohne `take`-Fenster werden auch vorhandene
-  // Legacy-Outboxen vollstaendig in die atomare Deduplizierung einbezogen.
   const existing = await tx.nitradoJob.findMany({
     where: {
       guildId: scope.guildId,
@@ -195,10 +185,9 @@ async function hasActiveRadarFence(
   banId: string,
 ): Promise<boolean> {
   const db = client as unknown as BanRemoteIdentityTxClient;
-  // Kleine Unit-Test-/Adapter-Clients besitzen dieses additive Modell nicht.
-  // Produktions-Auto-Bans koennen ohne das Modell bereits beim Fence-Upsert
-  // nicht entstehen; deshalb ist dieser Fallback nur fuer bestehende unfenced
-  // manuelle Clients relevant und aendert keinen Radar-Sicherheitsweg.
+  // Bestehende Minimal-Adapter/Unit-Test-Clients koennen dieses additive Modell
+  // nicht besitzen. Ein produktiver Radar-Auto-Ban kann ohne vorherigen
+  // Fence-Upsert ohnehin nicht entstehen.
   if (!db.radarAutoBanBanFence) return false;
   const fence = await db.radarAutoBanBanFence.findFirst({
     where: {
@@ -223,7 +212,7 @@ export async function enqueueServerBanAdd(
 ): Promise<boolean> {
   const identifier = rawIdentifier.trim();
   if (!identifier) throw new Error('Leerer Server-Ban-Identifier');
-  const radarAutoBan = options.radarAutoBan === true || await hasActiveRadarFence(client, scope, banId);
+  const radarAutoBan = await hasActiveRadarFence(client, scope, banId);
   return ensureJob(
     client,
     scope,
