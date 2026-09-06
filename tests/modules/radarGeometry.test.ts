@@ -1,7 +1,9 @@
 import {
   containsPosition,
+  containsPositionWithMargin,
   createCircleGeometry,
   createPolygonGeometry,
+  distanceInsideBoundary,
   geometryFitsMap,
   polygonSelfIntersects,
 } from '../../src/modules/radar/geometry';
@@ -22,6 +24,20 @@ describe('Radar-Zonengeometrie', () => {
     expect(containsPosition(polygon!, { x: 50, y: 0 })).toBe(true);
     expect(containsPosition(polygon!, { x: 50, y: 50 })).toBe(true);
     expect(containsPosition(polygon!, { x: 101, y: 50 })).toBe(false);
+  });
+
+  it('trennt Radar-Erkennung vom 10m-Sicherheitsrand fuer punitive Entscheidungen', () => {
+    const circle = createCircleGeometry(100, 100, 50)!;
+    expect(containsPosition(circle, { x: 149, y: 100 })).toBe(true);
+    expect(distanceInsideBoundary(circle, { x: 149, y: 100 })).toBeCloseTo(1);
+    expect(containsPositionWithMargin(circle, { x: 149, y: 100 }, 10)).toBe(false);
+    expect(containsPositionWithMargin(circle, { x: 140, y: 100 }, 10)).toBe(true);
+
+    const polygon = createPolygonGeometry([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }])!;
+    expect(containsPosition(polygon, { x: 5, y: 50 })).toBe(true);
+    expect(containsPositionWithMargin(polygon, { x: 5, y: 50 }, 10)).toBe(false);
+    expect(containsPositionWithMargin(polygon, { x: 50, y: 50 }, 10)).toBe(true);
+    expect(containsPositionWithMargin(polygon, { x: 50, y: 0 }, 10)).toBe(false);
   });
 
   it('lehnt selbstüberschneidende und kartenüberschreitende Geometrien ab', () => {
