@@ -21,6 +21,10 @@
  * Nitrado-1U: Jeder Ban-Enqueue nimmt zusaetzlich eine Connection-weite
  * DB-xact-Barriere. Service-Rebind und Outbox-Neuanlage koennen dadurch nicht
  * aneinander vorbeicommitten.
+ *
+ * Radar-Auto-Bans tragen zusaetzlich `radarAutoBan: true`. Dieses Flag ist nur
+ * ein Herkunftsmarker und niemals Autoritaet; vor jeder Remote-Durchsetzung
+ * muss der persistente RadarAutoBanBanFence weiterhin exakt passen.
  */
 
 import { encrypt } from '../../utils/security';
@@ -36,6 +40,7 @@ export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 export interface ServerBanJobPayload {
   banId: string;
   encryptedIdentifier?: string;
+  radarAutoBan?: true;
 }
 
 export interface BanOutboxScope {
@@ -46,6 +51,8 @@ export interface BanOutboxScope {
 export interface ServerBanAddEnqueueOptions {
   /** Nur fuer automatische Reconciliation setzen; Bediener-ADDs bleiben direkt retrybar. */
   recentDeadCooldownMs?: number;
+  /** Exklusiver Herkunftsmarker; Autoritaet bleibt RadarAutoBanBanFence. */
+  radarAutoBan?: boolean;
   /** Test-/Scheduler-Zeitpunkt; Produktion verwendet standardmaessig jetzt. */
   now?: Date;
 }
@@ -77,9 +84,11 @@ function asPayload(value: unknown): ServerBanJobPayload | null {
   const v = value as Record<string, unknown>;
   if (typeof v.banId !== 'string' || !v.banId.trim()) return null;
   if (v.encryptedIdentifier !== undefined && typeof v.encryptedIdentifier !== 'string') return null;
+  if (v.radarAutoBan !== undefined && v.radarAutoBan !== true) return null;
   return {
     banId: v.banId,
     ...(typeof v.encryptedIdentifier === 'string' ? { encryptedIdentifier: v.encryptedIdentifier } : {}),
+    ...(v.radarAutoBan === true ? { radarAutoBan: true as const } : {}),
   };
 }
 
@@ -192,6 +201,7 @@ export async function enqueueServerBanAdd(
     {
       banId,
       encryptedIdentifier: encrypt(identifier, encryptionKey),
+      ...(options.radarAutoBan === true ? { radarAutoBan: true as const } : {}),
     },
     {
       recentDeadCooldownMs: Math.max(0, options.recentDeadCooldownMs ?? 0),
