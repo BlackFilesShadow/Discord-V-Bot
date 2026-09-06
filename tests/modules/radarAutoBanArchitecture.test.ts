@@ -26,6 +26,7 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
   it('erhaelt die bewaehrten Zeit-/Snapshot-Sicherungen und rearmt die neue Policy an der Migrationsgrenze', () => {
     expect(autoBanMigration).toContain('ADD COLUMN "autoBanEnabled" BOOLEAN NOT NULL DEFAULT FALSE');
     expect(precisionMigration).toContain('RADAR_PRECISION_POLICY_MIGRATION_REARMED');
+    expect((precisionMigration.match(/WHERE z\."autoBanEnabled" = TRUE/g) ?? [])).toHaveLength(2);
     expect(precisionMigration).toContain('"version" = z."version" + 1');
     expect(precisionMigration).toContain('"updatedAt" = CURRENT_TIMESTAMP');
     expect(precisionMigration).toContain('adm_created_at <= z."updatedAt" OR adm_occurred_at <= z."updatedAt"');
@@ -78,7 +79,9 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
   });
 
   it('ordnet Hit/Kill dem Target-Angreifer zu und trennt Explosion fail-closed von normalen Hit/Kill-Regeln', () => {
-    expect(catalog).toContain("identity: 'TARGET'");
+    expect(catalog).toMatch(
+      /return candidate\(\s*'TARGET',\s*event\.targetGameId,\s*event\.targetName,\s*parseAdmDayzPosition\(event\.targetPosition\)/s,
+    );
     expect(catalog).toContain('event.targetGameId === event.actorGameId');
     expect(catalog).toContain('isExplosiveRadarEvent(event) ? [] : attackingPlayerPosition(event)');
     expect(catalog).toContain('isExplosiveRadarEvent(event) ? attackingPlayerPosition(event) : []');
