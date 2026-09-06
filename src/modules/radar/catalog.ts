@@ -28,6 +28,8 @@ export interface RadarPositionCandidate {
   playerName: string | null;
   /** The exact X/Z/height evidence used to decide whether the action is in-zone. */
   position: DayzPosition;
+  /** Timestamp of the exact position evidence, not merely the action wrapper. */
+  evidenceOccurredAt: Date | null;
   /** Optional counterpart shown in the event (victim, target player, flag, ...). */
   relatedGameId: string | null;
   relatedName: string | null;
@@ -56,10 +58,11 @@ function candidate(
   gameId: string | null,
   playerName: string | null,
   position: DayzPosition | null,
+  evidenceOccurredAt: Date | null,
   relatedGameId: string | null,
   relatedName: string | null,
 ): RadarPositionCandidate[] {
-  return position ? [{ identity, gameId, playerName, position, relatedGameId, relatedName }] : [];
+  return position ? [{ identity, gameId, playerName, position, evidenceOccurredAt, relatedGameId, relatedName }] : [];
 }
 
 function actorPosition(event: RadarAdmEvent): RadarPositionCandidate[] {
@@ -68,6 +71,7 @@ function actorPosition(event: RadarAdmEvent): RadarPositionCandidate[] {
     event.actorGameId,
     event.actorName,
     parseAdmDayzPosition(event.actorPosition),
+    event.occurredAt,
     event.targetGameId,
     event.targetName,
   );
@@ -80,6 +84,7 @@ function attackingPlayerPosition(event: RadarAdmEvent): RadarPositionCandidate[]
     event.targetGameId,
     event.targetName,
     parseAdmDayzPosition(event.targetPosition),
+    event.occurredAt,
     event.actorGameId,
     event.actorName,
   );
@@ -100,6 +105,7 @@ function territoryFlagPosition(event: RadarAdmEvent): RadarPositionCandidate[] {
     event.actorGameId,
     event.actorName,
     parseAdmTerritoryFlagPosition(event.targetPosition),
+    event.occurredAt,
     null,
     'TerritoryFlag',
   );
