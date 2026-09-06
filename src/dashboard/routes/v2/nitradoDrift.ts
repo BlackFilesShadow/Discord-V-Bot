@@ -190,7 +190,7 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
       }
 
       await tx.whitelistEntry.updateMany({
-        where: { id: row.id, guildId: scope.guildId, nitradoConnId: connId, gameId, syncState: 'SYNCED' },
+        where: { id: row.id, guildId: scope.guildId, nitradoConnId: connId, syncState: 'SYNCED' },
         data: { syncState: 'LOCAL_ONLY', lastSyncedAt: null },
       });
       const queued = await enqueueWhitelistAdd(
