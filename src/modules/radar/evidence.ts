@@ -94,6 +94,7 @@ export async function resolveRadarCandidates(
       gameId: event.actorGameId,
       playerName: event.actorName ?? row.actorName,
       position,
+      evidenceOccurredAt: row.occurredAt,
       relatedGameId: null,
       relatedName: null,
     }];
