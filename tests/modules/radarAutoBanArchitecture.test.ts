@@ -6,9 +6,12 @@ function read(relative: string): string {
 }
 
 describe('Radar Auto-Ban Architektur-Invarianten', () => {
-  const runtime = read('src/modules/radar/autoBanRuntime.ts');
+  const autoBanRuntime = read('src/modules/radar/autoBanRuntime.ts');
+  const radarRuntime = read('src/modules/radar/runtime.ts');
+  const geometry = read('src/modules/radar/geometry.ts');
   const fence = read('src/modules/radar/banFence.ts');
-  const migration = read('prisma/migrations/20260906003000_radar_safe_auto_ban/migration.sql');
+  const autoBanMigration = read('prisma/migrations/20260906003000_radar_safe_auto_ban/migration.sql');
+  const altitudeMigration = read('prisma/migrations/20260906130000_radar_altitude_temporal_guard/migration.sql');
   const route = read('src/dashboard/routes/v2/radar.ts');
   const editor = read('dashboard-ui/src/components/radar/ZoneEditor.tsx');
   const jobWorker = read('src/modules/nitrado/jobWorker.ts');
@@ -18,13 +21,30 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
   const banOutbox = read('src/modules/bans/banOutbox.ts');
 
   it('ist opt-in und schließt alte oder verspätet ingestierte ADM-Ereignisse schon beim Snapshot aus', () => {
-    expect(migration).toContain('ADD COLUMN "autoBanEnabled" BOOLEAN NOT NULL DEFAULT FALSE');
-    expect(migration).toContain('adm_created_at <= z."autoBanEnabledAt" OR adm_occurred_at <= z."autoBanEnabledAt"');
-    expect(migration).toContain("NEW.\"autoBanStatus\" := 'SKIPPED'");
-    expect(migration).toContain('ADM_EVENT_PREDATES_AUTOBAN_ARM');
+    expect(autoBanMigration).toContain('ADD COLUMN "autoBanEnabled" BOOLEAN NOT NULL DEFAULT FALSE');
+    expect(autoBanMigration).toContain('adm_created_at <= z."autoBanEnabledAt" OR adm_occurred_at <= z."autoBanEnabledAt"');
+    expect(autoBanMigration).toContain("NEW.\"autoBanStatus\" := 'SKIPPED'");
+    expect(autoBanMigration).toContain('ADM_EVENT_PREDATES_AUTOBAN_ARM');
+    expect(altitudeMigration).toContain('adm_created_at <= z."updatedAt" OR adm_occurred_at <= z."updatedAt"');
+    expect(altitudeMigration).toContain('ADM_EVENT_PREDATES_ZONE_GENERATION');
   });
 
-  it('bindet jede punitive Entscheidung an Version, Funktion, Allowlist, Binding und Sicherheitsrand', () => {
+  it('interpretiert auch normale Radar-Events nie gegen eine spaetere Zonen-Generation', () => {
+    expect(radarRuntime).toContain('eventBelongsToCurrentZoneGeneration');
+    expect(radarRuntime).toContain('event.occurredAt.getTime() > generationStartedAt');
+    expect(radarRuntime).toContain('event.createdAt.getTime() > generationStartedAt');
+    expect(radarRuntime).toContain('if (!eventBelongsToCurrentZoneGeneration(zone, event)) continue;');
+  });
+
+  it('rearmt Auto-Ban bei jedem Speichern einer scharfen Zone und bei Wechsel der aktiven Karte', () => {
+    expect(route).toContain('const autoBanEnabledAt = data.autoBanEnabled ? new Date() : null;');
+    expect(route).not.toContain('preservingArm');
+    expect(route).toContain('before.activeMap !== activeMap');
+    expect(route).toContain('data: { version: { increment: 1 } }');
+    expect(route).toContain('data: { autoBanEnabledAt: now, autoBanAuthorizedBy: scope.actorId }');
+  });
+
+  it('bindet jede punitive Entscheidung an Version, Funktion, Allowlist, Binding und horizontalen/vertikalen Sicherheitsrand', () => {
     for (const invariant of [
       'ZONE_VERSION_CHANGED',
       'AUTOBAN_ARM_GENERATION_CHANGED',
@@ -32,22 +52,38 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
       'FUNCTION_DISABLED_CURRENTLY',
       'ACTOR_ALLOWLISTED',
       'BOUNDARY_SAFETY_MARGIN',
+      'ALTITUDE_POLICY_CHANGED_OR_INVALID',
+      'ALTITUDE_SAFETY_MARGIN',
+      'ADM_EVENT_PREDATES_ZONE_GENERATION',
       'ADM_EVENT_TYPE_CHANGED',
       'ADM_ACTOR_GUID_MISMATCH',
       'ADM_BINDING_GENERATION_MISMATCH',
       'EVENT_POSITION_OR_FUNCTION_MISMATCH',
       'ADM_TIME_IN_FUTURE',
     ]) {
-      expect(runtime).toContain(invariant);
+      expect(autoBanRuntime).toContain(invariant);
     }
-    expect(runtime).toContain('containsPositionWithMargin');
-    expect(runtime).toContain('AUTO_BAN_SAFETY_MARGIN_METERS = 10');
+    expect(autoBanRuntime).toContain('containsPositionWithMargin');
+    expect(autoBanRuntime).toContain('altitudeContainsWithMargin');
+    expect(autoBanRuntime).toContain('AUTO_BAN_SAFETY_MARGIN_METERS = 10');
+    expect(geometry).toContain('export function altitudeContainsWithMargin');
+  });
+
+  it('speichert den Hoehenmodus in Zone und Event-Snapshot fail-closed', () => {
+    expect(altitudeMigration).toContain('ADD COLUMN "altitudeEnabled" BOOLEAN NOT NULL DEFAULT FALSE');
+    expect(altitudeMigration).toContain('ADD COLUMN "zoneAltitudeSnapshot" JSONB');
+    expect(altitudeMigration).toContain('NEW."zoneAltitudeSnapshot" := jsonb_build_object(');
+    expect(altitudeMigration).toContain('ALTITUDE_REQUIRED_BY_ZONE');
+    expect(route).toContain('altitudeEnabled: data.altitudeEnabled');
+    expect(route).toContain('MIN_AUTO_BAN_ALTITUDE_BAND_METERS');
+    expect(editor).toContain('label="ADM-Höhenfilter"');
+    expect(editor).toContain('10 m vertikaler Sicherheitsrand');
   });
 
   it('schreibt den unveränderlichen Server-Generation-Fence vor dem Ban-Outbox-Enqueue', () => {
-    expect(migration).toContain('CREATE TABLE "RadarAutoBanBanFence"');
-    const fenceWrite = runtime.indexOf('await upsertRadarAutoBanFence(tx,');
-    const enqueue = runtime.indexOf('const queued = await enqueueServerBanAdd(', fenceWrite);
+    expect(autoBanMigration).toContain('CREATE TABLE "RadarAutoBanBanFence"');
+    const fenceWrite = autoBanRuntime.indexOf('await upsertRadarAutoBanFence(tx,');
+    const enqueue = autoBanRuntime.indexOf('const queued = await enqueueServerBanAdd(', fenceWrite);
     expect(fenceWrite).toBeGreaterThanOrEqual(0);
     expect(enqueue).toBeGreaterThan(fenceWrite);
     expect(fence).toContain('RADAR_FENCE_SERVICE_MISMATCH');
@@ -104,19 +140,19 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
   });
 
   it('verwendet ausschließlich den bestehenden gescoppten Ban-Registry/Outbox-Pfad', () => {
-    expect(runtime).toContain("import { addBan, isBanActive, type BanClient } from '../bans/banRegistry';");
-    expect(runtime).toContain("import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';");
-    expect(runtime).toContain('hashBanIdentifier');
-    expect(runtime).toContain('guildId: event.guildId, nitradoConnId: event.nitradoConnId');
-    expect(runtime).not.toContain('.addBan(');
-    expect(runtime).not.toContain('client.addBan');
+    expect(autoBanRuntime).toContain("import { addBan, isBanActive, type BanClient } from '../bans/banRegistry';");
+    expect(autoBanRuntime).toContain("import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';");
+    expect(autoBanRuntime).toContain('hashBanIdentifier');
+    expect(autoBanRuntime).toContain('guildId: event.guildId, nitradoConnId: event.nitradoConnId');
+    expect(autoBanRuntime).not.toContain('.addBan(');
+    expect(autoBanRuntime).not.toContain('client.addBan');
   });
 
   it('serialisiert Zonenänderungen gegen den Ban-Commit und zeigt Auto-Ban explizit als separaten Toggle', () => {
     expect(route).toContain('await lockRadarScope(tx, scope.guildId, scope.connId);');
     expect(route).toContain('autoBanAuthorizedBy');
     expect(editor).toContain('label="Automatischer Server-Ban"');
-    expect(editor).toContain('10-m-Sicherheitsrands');
+    expect(editor).toContain('Auto-Ban ist scharf. Jedes Speichern dieser Zone');
     expect(editor).toContain('autoBanEnabled: false');
   });
 });
