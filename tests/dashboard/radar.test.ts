@@ -52,7 +52,10 @@ const prismaMock: PrismaMock = {
       return radarConfigRow;
     }),
     update: jest.fn(async ({ data }: { data: Row }) => {
-      radarConfigRow = { ...(radarConfigRow ?? { id: 'config-1', guildId: GUILD_ID, nitradoConnId: CONNECTION_ID }), ...data };
+      radarConfigRow = {
+        ...(radarConfigRow ?? { id: 'config-1', guildId: GUILD_ID, nitradoConnId: CONNECTION_ID }),
+        ...data,
+      };
       return radarConfigRow;
     }),
   },
@@ -61,7 +64,9 @@ const prismaMock: PrismaMock = {
       sequence += 1;
       const id = `zone-${sequence}`;
       const row = {
-        id, ...data, version: 1,
+        id,
+        ...data,
+        version: 1,
         points: ((data.points as { create: Row[] }).create ?? []).map(point => ({ ...point })),
         functions: ((data.functions as { create: Row[] }).create ?? []).map(entry => ({ ...entry })),
         allowlist: ((data.allowlist as { create: Row[] }).create ?? []).map(entry => ({ ...entry })),
@@ -70,13 +75,15 @@ const prismaMock: PrismaMock = {
       return row;
     }),
     findMany: jest.fn(async ({ where }: { where: Row }) => [...zones.values()].filter(zone => (
-      zone.guildId === where.guildId && zone.nitradoConnId === where.nitradoConnId && (!where.map || zone.map === where.map)
+      zone.guildId === where.guildId
+      && zone.nitradoConnId === where.nitradoConnId
+      && (!where.map || zone.map === where.map)
     ))),
     findFirst: jest.fn(async ({ where }: { where: Row }) => [...zones.values()].find(zone => (
       zone.id === where.id
-        && zone.guildId === where.guildId
-        && zone.nitradoConnId === where.nitradoConnId
-        && (where.version === undefined || zone.version === where.version)
+      && zone.guildId === where.guildId
+      && zone.nitradoConnId === where.nitradoConnId
+      && (where.version === undefined || zone.version === where.version)
     )) ?? null),
     updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
       if (!where.id) {
@@ -91,7 +98,10 @@ const prismaMock: PrismaMock = {
         return { count };
       }
       const zone = zones.get(where.id as string);
-      if (!zone || zone.guildId !== where.guildId || zone.nitradoConnId !== where.nitradoConnId || zone.version !== where.version) return { count: 0 };
+      if (!zone
+        || zone.guildId !== where.guildId
+        || zone.nitradoConnId !== where.nitradoConnId
+        || zone.version !== where.version) return { count: 0 };
       const nextVersion = Number(zone.version) + 1;
       Object.assign(zone, data, { version: nextVersion });
       return { count: 1 };
@@ -112,14 +122,20 @@ const prismaMock: PrismaMock = {
 
 jest.mock('../../src/database/prisma', () => ({ __esModule: true, default: prismaMock }));
 jest.mock('../../src/dashboard/socket/emitter', () => ({ __esModule: true, emitGuildEvent: jest.fn() }));
-jest.mock('../../src/utils/discordChannel', () => ({ __esModule: true, validateBotChannelAccess: jest.fn().mockResolvedValue({ ok: true }) }));
+jest.mock('../../src/utils/discordChannel', () => ({
+  __esModule: true,
+  validateBotChannelAccess: jest.fn().mockResolvedValue({ ok: true }),
+}));
 jest.mock('../../src/dashboard/clientRegistry', () => ({
   __esModule: true,
   tryGetDashboardClient: () => ({
     guilds: {
       cache: new Map([[GUILD_ID, {
         id: GUILD_ID,
-        roles: { cache: new Map([[ROLE_ID, { id: ROLE_ID, managed: false }]]), fetch: jest.fn().mockResolvedValue(null) },
+        roles: {
+          cache: new Map([[ROLE_ID, { id: ROLE_ID, managed: false }]]),
+          fetch: jest.fn().mockResolvedValue(null),
+        },
       }]]),
     },
   }),
@@ -149,11 +165,19 @@ function app(): express.Express {
 const base = `/api/v2/guilds/${GUILD_ID}/radar`;
 function body(overrides: Row = {}): Row {
   return {
-    name: 'Nordtor', map: 'CHERNARUS', isActive: true, autoBanEnabled: false,
-    altitudeEnabled: false, minAltitudeMeters: null, maxAltitudeMeters: null,
-    geometry: { type: 'POLYGON', points: [{ x: 100, y: 100 }, { x: 400, y: 100 }, { x: 400, y: 400 }, { x: 100, y: 400 }] },
-    enabledFunctions: ['PLAYER_DETECTION'], allowlist: [{ source: 'MANUAL', gameId: 'abcdef1234567890' }],
-    channelId: CHANNEL_ID, rolePingEnabled: true, roleIds: [ROLE_ID], embedColor: '#dc2626',
+    name: 'Nordtor',
+    map: 'CHERNARUS',
+    isActive: true,
+    geometry: {
+      type: 'POLYGON',
+      points: [{ x: 100, y: 100 }, { x: 400, y: 100 }, { x: 400, y: 400 }, { x: 100, y: 400 }],
+    },
+    enabledFunctions: ['PLAYER_DETECTION'],
+    allowlist: [{ source: 'MANUAL', gameId: 'abcdef1234567890' }],
+    channelId: CHANNEL_ID,
+    rolePingEnabled: true,
+    roleIds: [ROLE_ID],
+    embedColor: '#dc2626',
     ...overrides,
   };
 }
@@ -168,7 +192,7 @@ beforeEach(() => {
 });
 
 describe('Radar-Router', () => {
-  it('liefert die serverseitig aufgeloeste Verbindung und erstellt ein geordnetes Polygon', async () => {
+  it('liefert die serverseitig aufgeloeste Verbindung und erstellt ein geordnetes X/Z-Polygon', async () => {
     const instance = app();
     const config = await request(instance).get(`${base}/config?slot=1`);
     expect(config.status).toBe(200);
@@ -177,8 +201,10 @@ describe('Radar-Router', () => {
     const created = await request(instance).post(`${base}/zones?slot=1`).send(body());
     expect(created.status).toBe(201);
     expect(created.body.zone.geometry).toEqual(body().geometry);
-    expect(created.body.zone.autoBanEnabled).toBe(false);
-    expect(created.body.zone.altitudeEnabled).toBe(false);
+    expect(created.body.zone).not.toHaveProperty('autoBanEnabled');
+    expect(created.body.zone).not.toHaveProperty('altitudeEnabled');
+    expect(zones.get(created.body.zone.id)?.autoBanEnabled).toBe(false);
+    expect(zones.get(created.body.zone.id)?.altitudeEnabled).toBe(false);
 
     const listed = await request(instance).get(`${base}/zones?slot=1`);
     expect(listed.status).toBe(200);
@@ -186,48 +212,70 @@ describe('Radar-Router', () => {
     expect(listed.body.zones[0].geometry.points).toEqual((body().geometry as { points: unknown[] }).points);
   });
 
-  it('rearmt eine scharfe Zone bei jedem Speichern statt alte ADM-Zeilen in die neue Generation zu uebernehmen', async () => {
+  it('leitet Auto-Ban ausschliesslich aus BAN-Toggles ab und rearmt bei jedem Speichern', async () => {
     const instance = app();
-    const created = await request(instance).post(`${base}/zones?slot=1`).send(body({ autoBanEnabled: true }));
+    const created = await request(instance).post(`${base}/zones?slot=1`).send(body({
+      enabledFunctions: ['PLAYER_DETECTION', 'BAN_BUILD'],
+    }));
     expect(created.status).toBe(201);
-    expect(created.body.zone.autoBanEnabled).toBe(true);
-    const firstArmedAt = zones.get(created.body.zone.id)?.autoBanEnabledAt as Date;
+    const id = created.body.zone.id as string;
+    expect(zones.get(id)?.autoBanEnabled).toBe(true);
+    const firstArmedAt = zones.get(id)?.autoBanEnabledAt as Date;
     expect(firstArmedAt).toBeInstanceOf(Date);
+    expect(zones.get(id)?.autoBanAuthorizedBy).toBe(ACTOR_ID);
 
-    const kept = await request(instance).put(`${base}/zones/${created.body.zone.id}?slot=1`).send(body({ version: 1, autoBanEnabled: true, name: 'Nordtor 2' }));
+    const kept = await request(instance).put(`${base}/zones/${id}?slot=1`).send(body({
+      version: 1,
+      name: 'Nordtor 2',
+      enabledFunctions: ['PLAYER_DETECTION', 'BAN_BUILD'],
+    }));
     expect(kept.status).toBe(200);
-    const secondArmedAt = zones.get(created.body.zone.id)?.autoBanEnabledAt as Date;
+    const secondArmedAt = zones.get(id)?.autoBanEnabledAt as Date;
     expect(secondArmedAt).toBeInstanceOf(Date);
     expect(secondArmedAt).not.toBe(firstArmedAt);
-    expect(zones.get(created.body.zone.id)?.autoBanAuthorizedBy).toBe(ACTOR_ID);
 
-    const disabled = await request(instance).put(`${base}/zones/${created.body.zone.id}?slot=1`).send(body({ version: 2, autoBanEnabled: false }));
+    const disabled = await request(instance).put(`${base}/zones/${id}?slot=1`).send(body({
+      version: 2,
+      enabledFunctions: ['PLAYER_DETECTION'],
+    }));
     expect(disabled.status).toBe(200);
-    expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toBeNull();
-
-    const rearmed = await request(instance).put(`${base}/zones/${created.body.zone.id}?slot=1`).send(body({ version: 3, autoBanEnabled: true }));
-    expect(rearmed.status).toBe(200);
-    expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toBeInstanceOf(Date);
+    expect(zones.get(id)?.autoBanEnabled).toBe(false);
+    expect(zones.get(id)?.autoBanEnabledAt).toBeNull();
   });
 
-  it('validiert Hoehenbaender und den vertikalen Auto-Ban-Sicherheitsrand', async () => {
+  it('ignoriert alte globale Auto-Ban-/Hoehenfelder statt daraus unsichtbare Policy zu erzeugen', async () => {
     const instance = app();
-    const invalid = await request(instance).post(`${base}/zones?slot=1`).send(body({
-      altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 110, autoBanEnabled: true,
-    }));
-    expect(invalid.status).toBe(400);
-
-    const valid = await request(instance).post(`${base}/zones?slot=1`).send(body({
-      altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 140, autoBanEnabled: true,
-    }));
-    expect(valid.status).toBe(201);
-    expect(valid.body.zone).toMatchObject({ altitudeEnabled: true, minAltitudeMeters: 100, maxAltitudeMeters: 140 });
+    const legacyPayload = body({
+      autoBanEnabled: true,
+      altitudeEnabled: true,
+      minAltitudeMeters: 100,
+      maxAltitudeMeters: 140,
+      enabledFunctions: ['PLAYER_DETECTION'],
+    });
+    const created = await request(instance).post(`${base}/zones?slot=1`).send(legacyPayload);
+    expect(created.status).toBe(201);
+    const row = zones.get(created.body.zone.id);
+    expect(row?.autoBanEnabled).toBe(false);
+    expect(row?.altitudeEnabled).toBe(false);
+    expect(row?.minAltitudeMeters).toBeNull();
+    expect(row?.maxAltitudeMeters).toBeNull();
   });
 
-  it('grenzt bei einem Wechsel der aktiven Karte alle Zonen neu ab und rearmt scharfe Zonen', async () => {
+  it('liefert die elf praezisen Funktionen und markiert nur Spieler-Erkennung als nicht-punitiv', async () => {
+    const response = await request(app()).get(`${base}/functions?slot=1`);
+    expect(response.status).toBe(200);
+    expect(response.body.functions).toHaveLength(11);
+    expect(response.body.functions.filter((entry: Row) => !entry.punitive).map((entry: Row) => entry.key))
+      .toEqual(['PLAYER_DETECTION']);
+    expect(response.body.functions.map((entry: Row) => entry.key)).toContain('BAN_EXPLOSION');
+  });
+
+  it('grenzt bei einem Wechsel der aktiven Karte alle Zonen neu ab und rearmt punitive Zonen', async () => {
     const instance = app();
     await request(instance).get(`${base}/config?slot=1`);
-    const created = await request(instance).post(`${base}/zones?slot=1`).send(body({ autoBanEnabled: true }));
+    const created = await request(instance).post(`${base}/zones?slot=1`).send(body({
+      enabledFunctions: ['PLAYER_DETECTION', 'BAN_HIT'],
+    }));
     const beforeVersion = zones.get(created.body.zone.id)?.version;
 
     const changed = await request(instance).put(`${base}/config?slot=1`).send({ activeMap: 'LIVONIA' });
@@ -236,14 +284,20 @@ describe('Radar-Router', () => {
     expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toBeInstanceOf(Date);
   });
 
-  it('lehnt fremde IDs, veraltete Versionen und ungueltige GUID- oder Rollenwerte ab', async () => {
+  it('lehnt fremde IDs, veraltete Versionen und ungueltige GUID-, Rollen- oder Funktionswerte ab', async () => {
     const instance = app();
-    const invalid = await request(instance).post(`${base}/zones?slot=1`).send(body({ allowlist: [{ source: 'MANUAL', gameId: 'unknown' }] }));
+    const invalid = await request(instance).post(`${base}/zones?slot=1`).send(body({
+      allowlist: [{ source: 'MANUAL', gameId: 'unknown' }],
+    }));
     expect(invalid.status).toBe(400);
-    const invalidRole = await request(instance).post(`${base}/zones?slot=1`).send(body({ roleIds: ['444444444444444444'] }));
+    const invalidRole = await request(instance).post(`${base}/zones?slot=1`).send(body({
+      roleIds: ['444444444444444444'],
+    }));
     expect(invalidRole.status).toBe(400);
-    const missingAutoBan = await request(instance).post(`${base}/zones?slot=1`).send({ ...body(), autoBanEnabled: undefined });
-    expect(missingAutoBan.status).toBe(400);
+    const invalidFunction = await request(instance).post(`${base}/zones?slot=1`).send(body({
+      enabledFunctions: ['PLAYER_DETECTION', 'UNKNOWN_BAN'],
+    }));
+    expect(invalidFunction.status).toBe(400);
 
     const created = await request(instance).post(`${base}/zones?slot=1`).send(body());
     expect(created.status).toBe(201);
