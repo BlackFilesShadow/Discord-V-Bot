@@ -1,8 +1,11 @@
 export type RadarMap = 'CHERNARUS' | 'LIVONIA' | 'SAKHAL';
 
 export interface DayzPosition {
+  /** Horizontal DayZ world coordinate X. */
   x: number;
+  /** Horizontal DayZ world coordinate Z. Kept as `y` internally for the existing 2D geometry API. */
   y: number;
+  /** ADM terrain/vertical component. Never exposed as a user-facing radar coordinate. */
   altitude: number | null;
 }
 
@@ -55,18 +58,32 @@ function finite(value: number): boolean {
   return Number.isFinite(value);
 }
 
-/**
- * DayZ console ADM positions are emitted as X, map-Y, altitude. Radar keeps
- * the first two values as the horizontal map coordinates and stores the third
- * value separately as altitude. Production examples such as
- * `4769.7, 9525.0, 340.4` make this distinction observable: 9525 is a valid
- * Chernarus map coordinate while 340.4 is the plausible terrain altitude.
- */
-export function parseAdmDayzPosition(raw: string | null | undefined): DayzPosition | null {
+function coordinateTriplet(raw: string | null | undefined): readonly [number, number, number] | null {
   if (!raw) return null;
   const values = raw.replace(/[<>]/g, '').split(',').map(part => Number(part.trim()));
   if (values.length !== 3 || values.some(value => !finite(value))) return null;
-  return { x: values[0], y: values[1], altitude: values[2] };
+  return [values[0], values[1], values[2]];
+}
+
+/**
+ * Normal DayZ console ADM positions are emitted as X, Z, altitude.
+ * Radar keeps X/Z as the only horizontal/user-facing coordinates and retains
+ * the third value solely as internal evidence for precise event matching.
+ */
+export function parseAdmDayzPosition(raw: string | null | undefined): DayzPosition | null {
+  const values = coordinateTriplet(raw);
+  return values ? { x: values[0], y: values[1], altitude: values[2] } : null;
+}
+
+/**
+ * TerritoryFlag action logs use the engine vector order X, altitude, Z for the
+ * `... on TerritoryFlag at <...>` target, unlike the player's X,Z,altitude
+ * vector in the same ADM line. This parser is deliberately separate so the
+ * two formats can never be silently interchanged.
+ */
+export function parseAdmTerritoryFlagPosition(raw: string | null | undefined): DayzPosition | null {
+  const values = coordinateTriplet(raw);
+  return values ? { x: values[0], y: values[2], altitude: values[1] } : null;
 }
 
 export function isPositionInsideMap(map: RadarMap, position: Pick<DayzPosition, 'x' | 'y'>): boolean {
