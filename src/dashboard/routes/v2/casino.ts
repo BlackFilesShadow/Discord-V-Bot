@@ -6,17 +6,37 @@
  * historischen Wert. Die API nimmt deshalb fuer diese Typen keine neue Win-%-
  * Konfiguration mehr an.
  */
+import { createHash } from 'crypto';
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import type { CasinoGameType } from '@prisma/client';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
+import {
+  CASINO_GAME_TYPES,
+  MAX_CASINO_BET,
+  assertCasinoEconomySafe,
+  casinoDefaults,
+  theoreticalCasinoRtpPct,
+} from '../../../modules/economy/casinoRules';
 
 export const casinoRouter = Router({ mergeParams: true });
 
-const VALID_TYPES = new Set<CasinoGameType>(['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK']);
-const MAX_CASINO_BET = 1_000_000_000_000_000n;
+const VALID_TYPES = new Set<CasinoGameType>(CASINO_GAME_TYPES);
+
+type RawDb = {
+  $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
+};
+
+interface CasinoStatsAggregate {
+  type: CasinoGameType;
+  rounds: bigint;
+  wins: bigint;
+  draws: bigint;
+  bet: bigint;
+  payout: bigint;
+}
 
 function storedOutcome(result: unknown, payout: bigint): 'win' | 'draw' | 'loss' {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
@@ -29,23 +49,43 @@ function storedOutcome(result: unknown, payout: bigint): 'win' | 'draw' | 'loss'
   return payout > 0n ? 'win' : 'loss';
 }
 
+function gamePayload(type: CasinoGameType, row: {
+  enabled: boolean;
+  winChancePct: number;
+  minBet: bigint;
+  maxBet: bigint;
+  payoutMult: number;
+} | null) {
+  const defaults = casinoDefaults(type);
+  const enabled = row?.enabled ?? defaults.enabled;
+  const winChancePct = row?.winChancePct ?? defaults.winChancePct;
+  const minBet = row?.minBet ?? defaults.minBet;
+  const maxBet = row?.maxBet ?? defaults.maxBet;
+  const payoutMult = row?.payoutMult ?? defaults.payoutMult;
+  const theoreticalRtpPct = theoreticalCasinoRtpPct(type, winChancePct, payoutMult);
+  return {
+    type,
+    enabled,
+    winChancePct: type === 'SLOT' ? winChancePct : null,
+    fixedOdds: type === 'COINFLIP' ? '50/50' : type === 'DICE' ? '1/6' : type === 'BLACKJACK' ? 'Kartenlogik' : null,
+    minBet: minBet.toString(),
+    maxBet: maxBet.toString(),
+    payoutMult,
+    theoreticalRtpPct: Number(theoreticalRtpPct.toFixed(2)),
+    houseEdgePct: Number((100 - theoreticalRtpPct).toFixed(2)),
+  };
+}
+
 casinoRouter.get('/games', requireGuildPermission('casino.view'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId!;
   const games = await prisma.casinoGame.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId },
   });
+  const byType = new Map(games.map(g => [g.type, g] as const));
   res.json({
     nitradoConnId: connId,
-    games: games.map(g => ({
-      type: g.type,
-      enabled: g.enabled,
-      winChancePct: g.type === 'SLOT' ? g.winChancePct : null,
-      fixedOdds: g.type === 'COINFLIP' ? '50/50' : g.type === 'DICE' ? '1/6' : g.type === 'BLACKJACK' ? 'Kartenlogik' : null,
-      minBet: g.minBet.toString(),
-      maxBet: g.maxBet.toString(),
-      payoutMult: g.payoutMult,
-    })),
+    games: CASINO_GAME_TYPES.map(type => gamePayload(type, byType.get(type) ?? null)),
   });
 });
 
@@ -92,70 +132,109 @@ casinoRouter.put('/games/:type', requireGuildPermission('casino.manage'), async 
 
   const current = await prisma.casinoGame.findUnique({
     where: { guildServerType: { guildId: scope.guildId, nitradoConnId: connId, type: t } },
-    select: { minBet: true, maxBet: true },
+    select: { enabled: true, winChancePct: true, minBet: true, maxBet: true, payoutMult: true },
   });
-  const effectiveMin = (data.minBet as bigint | undefined) ?? current?.minBet ?? 1n;
-  const effectiveMax = (data.maxBet as bigint | undefined) ?? current?.maxBet ?? 1_000n;
+  const defaults = casinoDefaults(t);
+  const effectiveEnabled = (data.enabled as boolean | undefined) ?? current?.enabled ?? defaults.enabled;
+  const effectiveWinChancePct = (data.winChancePct as number | undefined) ?? current?.winChancePct ?? defaults.winChancePct;
+  const effectivePayoutMult = (data.payoutMult as number | undefined) ?? current?.payoutMult ?? defaults.payoutMult;
+  const effectiveMin = (data.minBet as bigint | undefined) ?? current?.minBet ?? defaults.minBet;
+  const effectiveMax = (data.maxBet as bigint | undefined) ?? current?.maxBet ?? defaults.maxBet;
   if (effectiveMax < effectiveMin) {
     res.status(400).json({ error: 'maxBet muss groesser oder gleich minBet sein.' });
     return;
   }
+  if (effectiveEnabled) {
+    try {
+      assertCasinoEconomySafe(t, effectiveWinChancePct, effectivePayoutMult);
+    } catch (error) {
+      res.status(400).json({
+        error: error instanceof Error ? error.message : 'Unsichere Casino-Konfiguration.',
+        code: 'CASINO_RTP_UNSAFE',
+      });
+      return;
+    }
+  }
 
   const g = await prisma.casinoGame.upsert({
     where: { guildServerType: { guildId: scope.guildId, nitradoConnId: connId, type: t } },
-    create: { guildId: scope.guildId, nitradoConnId: connId, type: t, ...data },
+    create: {
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      type: t,
+      enabled: effectiveEnabled,
+      winChancePct: effectiveWinChancePct,
+      payoutMult: effectivePayoutMult,
+      minBet: effectiveMin,
+      maxBet: effectiveMax,
+    },
     update: data,
   });
   logAuditDb('CASINO_GAME_UPDATED', 'CASINO', {
     actorUserId: req.auth!.userId,
     guildId: scope.guildId,
-    details: { nitradoConnId: connId, type: t, fields: Object.keys(data) },
+    details: {
+      nitradoConnId: connId,
+      type: t,
+      fields: Object.keys(data),
+      before: current ? {
+        enabled: current.enabled,
+        winChancePct: t === 'SLOT' ? current.winChancePct : null,
+        payoutMult: current.payoutMult,
+        minBet: current.minBet.toString(),
+        maxBet: current.maxBet.toString(),
+      } : null,
+      after: {
+        enabled: g.enabled,
+        winChancePct: t === 'SLOT' ? g.winChancePct : null,
+        payoutMult: g.payoutMult,
+        minBet: g.minBet.toString(),
+        maxBet: g.maxBet.toString(),
+        theoreticalRtpPct: Number(theoreticalCasinoRtpPct(t, g.winChancePct, g.payoutMult).toFixed(2)),
+      },
+    },
   });
   emitGuildEvent(scope.guildId, {
     type: 'settings.changed',
     payload: { guildId: scope.guildId, slotId: connId },
   });
-  res.json({
-    nitradoConnId: connId,
-    type: g.type,
-    enabled: g.enabled,
-    winChancePct: g.type === 'SLOT' ? g.winChancePct : null,
-    fixedOdds: g.type === 'COINFLIP' ? '50/50' : g.type === 'DICE' ? '1/6' : g.type === 'BLACKJACK' ? 'Kartenlogik' : null,
-    minBet: g.minBet.toString(),
-    maxBet: g.maxBet.toString(),
-    payoutMult: g.payoutMult,
-  });
+  res.json({ nitradoConnId: connId, ...gamePayload(t, g) });
 });
 
 casinoRouter.get('/stats', requireGuildPermission('casino.view'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId!;
-  const rounds = await prisma.casinoRound.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId },
-    select: { bet: true, payout: true, result: true, game: { select: { type: true } } },
-    take: 100_000,
-  });
-  const buckets = new Map<string, { type: CasinoGameType; wins: number; draws: number; losses: number; bet: bigint; payout: bigint }>();
-  for (const r of rounds) {
-    const k = r.game.type;
-    const cur = buckets.get(k) ?? { type: r.game.type, wins: 0, draws: 0, losses: 0, bet: 0n, payout: 0n };
-    const outcome = storedOutcome(r.result, r.payout);
-    if (outcome === 'win') cur.wins++;
-    else if (outcome === 'draw') cur.draws++;
-    else cur.losses++;
-    cur.bet += r.bet;
-    cur.payout += r.payout;
-    buckets.set(k, cur);
-  }
+  const rows = await (prisma as unknown as RawDb).$queryRawUnsafe<CasinoStatsAggregate[]>(
+    `SELECT g."type"::text AS "type",
+            COUNT(*)::bigint AS "rounds",
+            COUNT(*) FILTER (WHERE r."result"->>'draw' = 'true')::bigint AS "draws",
+            COUNT(*) FILTER (
+              WHERE COALESCE(r."result"->>'draw', 'false') <> 'true'
+                AND CASE
+                      WHEN r."result" ? 'won' THEN r."result"->>'won' = 'true'
+                      ELSE r."payout" > 0
+                    END
+            )::bigint AS "wins",
+            COALESCE(SUM(r."bet"), 0)::bigint AS "bet",
+            COALESCE(SUM(r."payout"), 0)::bigint AS "payout"
+       FROM "CasinoRound" r
+       JOIN "CasinoGame" g
+         ON g."id" = r."gameId"
+        AND g."guildId" = r."guildId"
+        AND g."nitradoConnId" = r."nitradoConnId"
+      WHERE r."guildId" = $1 AND r."nitradoConnId" = $2
+      GROUP BY g."type"`,
+    String(scope.guildId), String(connId),
+  );
   res.json({
     nitradoConnId: connId,
-    stats: Array.from(buckets.values()).map(b => ({
-      type: b.type,
-      wins: b.wins,
-      draws: b.draws,
-      losses: b.losses,
-      bet: b.bet.toString(),
-      payout: b.payout.toString(),
+    stats: rows.map(row => ({
+      type: row.type,
+      wins: Number(row.wins),
+      draws: Number(row.draws),
+      losses: Number(row.rounds - row.wins - row.draws),
+      bet: row.bet.toString(),
+      payout: row.payout.toString(),
     })),
   });
 });
@@ -180,6 +259,7 @@ casinoRouter.get('/rounds', requireGuildPermission('casino.view'), async (req, r
       bet: r.bet.toString(),
       payout: r.payout.toString(),
       result: r.result,
+      serverSeedHash: createHash('sha256').update(r.serverSeed).digest('hex'),
       nonce: r.nonce.toString(),
       createdAt: r.createdAt,
     })),

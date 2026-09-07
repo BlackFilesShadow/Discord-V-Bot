@@ -53,7 +53,7 @@ export const SPEC_KEEP_COMMANDS = new Set<string>([
   'dice', 'factions', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info', 'link-panel',
   'force-link', 'force-unlink', 'confirm-action',
-  'pay', 'slot', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
+  'pay', 'slot', 'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
   'whitelist-antrag', 'whitelist-add', 'whitelist-remove',
   'perm-add', 'perm-remove', 'perms',
   'server-ban', 'server-unban',
