@@ -98,6 +98,7 @@ function flagRowToGameplayEvent(row: {
   actorName: string | null;
   actorPosition: string | null;
   flagType: string | null;
+  totemType: string | null;
   flagPosition: string | null;
 }): GameplayAdmEvent {
   return {
@@ -108,7 +109,7 @@ function flagRowToGameplayEvent(row: {
     actorGameId: row.actorGameId,
     actorName: row.actorName,
     targetGameId: null,
-    targetName: 'TerritoryFlag',
+    targetName: row.totemType,
     objectType: row.flagType,
     toolOrWeapon: null,
     distanceMeters: null,
@@ -160,6 +161,7 @@ async function scanFlagEvents(
       actorName: true,
       actorPosition: true,
       flagType: true,
+      totemType: true,
       flagPosition: true,
     },
   });
@@ -311,6 +313,7 @@ async function loadDeliveryEvent(config: GameplayFeedConfig, eventId: string): P
         actorName: true,
         actorPosition: true,
         flagType: true,
+        totemType: true,
         flagPosition: true,
       },
     });
