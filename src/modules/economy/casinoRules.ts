@@ -1,33 +1,21 @@
-import type { CasinoGameType } from '@prisma/client';
+import {
+  CASINO_GAME_KEYS,
+  casinoDefinition,
+  theoreticalCasinoRtpPct as registryRtp,
+  type CasinoGameConfig,
+  type CasinoGameKey,
+} from './casinoRegistry';
 
-export const CASINO_GAME_TYPES: readonly CasinoGameType[] = ['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK'];
+export const CASINO_GAME_TYPES: readonly CasinoGameKey[] = CASINO_GAME_KEYS;
 export const MAX_CASINO_BET = 1_000_000_000_000_000n;
-export const CASINO_ALGORITHM_VERSION = 'HMAC_SHA256_REJECTION_V2';
+export const CASINO_ALGORITHM_VERSION = 'HMAC_SHA256_REJECTION_V3_CONFIGURED_ODDS';
+export const LEGACY_CASINO_ALGORITHM_VERSION = 'HMAC_SHA256_REJECTION_V2';
 export const MAX_THEORETICAL_RTP_PCT = 100;
 
-export interface CasinoRuleDefaults {
-  enabled: boolean;
-  winChancePct: number;
-  payoutMult: number;
-  minBet: bigint;
-  maxBet: bigint;
-}
+export interface CasinoRuleDefaults extends CasinoGameConfig {}
 
-const DEFAULTS: Record<CasinoGameType, CasinoRuleDefaults> = {
-  SLOT: { enabled: false, winChancePct: 45, payoutMult: 2, minBet: 1n, maxBet: 10_000n },
-  COINFLIP: { enabled: false, winChancePct: 50, payoutMult: 1.9, minBet: 1n, maxBet: 10_000n },
-  DICE: { enabled: false, winChancePct: 17, payoutMult: 5.5, minBet: 1n, maxBet: 10_000n },
-  BLACKJACK: { enabled: false, winChancePct: 50, payoutMult: 2, minBet: 1n, maxBet: 10_000n },
-};
-
-// Exakte Zustandsraum-Auswertung der aktuellen vereinfachten Blackjack-Regel:
-// beide Seiten ziehen bis Score >= 17, Kartenwerte 1..13 gleichverteilt mit
-// Zuruecklegen; Player-Bust verliert auch dann, wenn der Dealer spaeter bustet.
-const BLACKJACK_WIN_PROBABILITY = 0.4077323365714893;
-const BLACKJACK_DRAW_PROBABILITY = 0.10524079516896465;
-
-export function casinoDefaults(type: CasinoGameType): CasinoRuleDefaults {
-  return { ...DEFAULTS[type] };
+export function casinoDefaults(type: CasinoGameKey): CasinoRuleDefaults {
+  return { ...casinoDefinition(type).defaults };
 }
 
 export function payoutMultiplierMilli(multiplier: number): number {
@@ -37,28 +25,21 @@ export function payoutMultiplierMilli(multiplier: number): number {
   return Math.round(multiplier * 1000);
 }
 
+/**
+ * V3 uses the configured win chance for every public game. Rule-based games may
+ * additionally refund a small conditional draw share; that share is part of the
+ * registry and therefore included in RTP instead of being hidden from admins.
+ */
 export function theoreticalCasinoRtpPct(
-  type: CasinoGameType,
+  type: CasinoGameKey,
   winChancePct: number,
   payoutMult: number,
 ): number {
-  if (!Number.isFinite(payoutMult) || payoutMult < 0) return Number.POSITIVE_INFINITY;
-  switch (type) {
-    case 'SLOT':
-      return (winChancePct / 100) * payoutMult * 100;
-    case 'COINFLIP':
-      return 0.5 * payoutMult * 100;
-    case 'DICE':
-      return (1 / 6) * payoutMult * 100;
-    case 'BLACKJACK':
-      return (BLACKJACK_WIN_PROBABILITY * payoutMult + BLACKJACK_DRAW_PROBABILITY) * 100;
-    default:
-      throw new Error('Unbekannter Casino-Game-Type.');
-  }
+  return registryRtp(type, winChancePct, payoutMult);
 }
 
 export function assertCasinoEconomySafe(
-  type: CasinoGameType,
+  type: CasinoGameKey,
   winChancePct: number,
   payoutMult: number,
 ): number {
@@ -68,3 +49,5 @@ export function assertCasinoEconomySafe(
   }
   return rtp;
 }
+
+export type { CasinoGameKey };
