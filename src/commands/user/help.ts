@@ -60,7 +60,8 @@ const CATEGORIES: readonly CategoryDefinition[] = [
       'balance', 'bank', 'pay', 'deposit', 'withdraw', 'transfer',
       'link', 'unlink', 'links', 'link-info', 'link-panel',
       'force-link', 'force-unlink', 'confirm-action',
-      'slot', 'coinflip', 'dice', 'blackjack', 'casino-stats',
+      'slot', 'coinflip', 'dice', 'blackjack', 'roulette', 'highlow', 'baccarat', 'wheel',
+      'casino-stats', 'casino-verify',
       'virtual-account', 'lottery', 'black-market',
     ]),
   },
@@ -131,7 +132,6 @@ function optionSuffix(options: JsonOption[] | undefined): string {
 
 function syntaxLines(commandName: string, options: JsonOption[]): string[] {
   const lines: string[] = [];
-
   for (const option of options) {
     if (option.type === 1) {
       lines.push(`/${commandName} ${option.name}${optionSuffix(option.options)}`);
@@ -144,7 +144,6 @@ function syntaxLines(commandName: string, options: JsonOption[]): string[] {
       }
     }
   }
-
   if (lines.length === 0) lines.push(`/${commandName}${optionSuffix(options)}`);
   return lines;
 }
@@ -158,7 +157,6 @@ function parameterLines(options: JsonOption[], prefix = ''): string[] {
       result.push(...parameterLines(option.options ?? [], scope));
       continue;
     }
-
     const scope = prefix ? `${prefix} · ${option.name}` : option.name;
     const requirement = option.required ? 'Pflicht' : 'optional';
     result.push(`\`${scope}\` · ${requirement} — ${option.description || 'Keine Beschreibung.'}`);
@@ -172,7 +170,6 @@ function accessText(command: Command | undefined, entry: CommandCatalogEntry): s
     : entry.audience === 'admin'
       ? '🛡️ Bot-Admin'
       : '🌐 Sichtbarer Nutzer-Command';
-
   if (!command?.permissions?.length) return access;
   const permissions = new PermissionsBitField(command.permissions).toArray();
   if (!permissions.length) return access;
@@ -196,26 +193,10 @@ function detailEmbed(
     .setTitle(`${definition.emoji} /${entry.name}`)
     .setDescription(`${entry.description || 'Keine Beschreibung vorhanden.'}\n\n${Brand.divider}`)
     .addFields(
-      {
-        name: '📁 Bereich',
-        value: `${definition.label}\n${definition.description}`,
-        inline: false,
-      },
-      {
-        name: '⌨️ Verwendung',
-        value: truncate(syntax, 1024),
-        inline: false,
-      },
-      {
-        name: '🧩 Parameter & Funktionen',
-        value: parameters ? truncate(parameters, 1024) : '_Keine zusaetzlichen Parameter._',
-        inline: false,
-      },
-      {
-        name: '🔐 Zugriff',
-        value: truncate(accessText(command, entry), 1024),
-        inline: false,
-      },
+      { name: '📁 Bereich', value: `${definition.label}\n${definition.description}`, inline: false },
+      { name: '⌨️ Verwendung', value: truncate(syntax, 1024), inline: false },
+      { name: '🧩 Parameter & Funktionen', value: parameters ? truncate(parameters, 1024) : '_Keine zusaetzlichen Parameter._', inline: false },
+      { name: '🔐 Zugriff', value: truncate(accessText(command, entry), 1024), inline: false },
       {
         name: '⏱️ Cooldown',
         value: entry.cooldownSeconds && entry.cooldownSeconds > 0
@@ -224,9 +205,7 @@ function detailEmbed(
         inline: false,
       },
     )
-    .setFooter({
-      text: `Funktion ${index + 1}/${total} in ${definition.label} · DEV & /ai nicht gelistet`,
-    });
+    .setFooter({ text: `Funktion ${index + 1}/${total} in ${definition.label} · DEV & /ai nicht gelistet` });
 }
 
 function emptyCategoryEmbed(category: Exclude<HelpCategory, 'overview'>): EmbedBuilder {
@@ -260,9 +239,6 @@ function commandSelect(
   entries: CommandCatalogEntry[],
   selectedIndex: number,
 ): ActionRowBuilder<StringSelectMenuBuilder> {
-  // Discord erlaubt maximal 25 Select-Optionen. Bei groesseren Kategorien
-  // folgt das Menue automatisch dem aktuellen 25er-Fenster; Vor/Zurueck
-  // navigiert trotzdem ueber die komplette Kategorie.
   const windowStart = Math.floor(selectedIndex / 25) * 25;
   const windowEntries = entries.slice(windowStart, windowStart + 25);
   const selected = entries[selectedIndex];
@@ -279,23 +255,9 @@ function commandSelect(
 
 function navigationButtons(index: number, total: number): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId('help_prev')
-      .setLabel('Zurueck')
-      .setEmoji('◀️')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(index <= 0),
-    new ButtonBuilder()
-      .setCustomId('help_home')
-      .setLabel('Katalog')
-      .setEmoji('📚')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('help_next')
-      .setLabel('Weiter')
-      .setEmoji('▶️')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(index >= total - 1),
+    new ButtonBuilder().setCustomId('help_prev').setLabel('Zurueck').setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(index <= 0),
+    new ButtonBuilder().setCustomId('help_home').setLabel('Katalog').setEmoji('📚').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('help_next').setLabel('Weiter').setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(index >= total - 1),
   );
 }
 
@@ -320,9 +282,6 @@ const helpCommand: Command = {
   execute: async (interaction: ChatInputCommandInteraction) => {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const client = interaction.client as ExtendedClient;
-
-    // Hersteller-Commands duerfen im Katalog auffindbar sein; die eigentliche
-    // Ausfuehrung bleibt unveraendert durch manufacturerOnly abgesichert.
     const visible = visibleCommandCatalog(client, {
       isAdmin: false,
       isDeveloper: false,
@@ -335,27 +294,15 @@ const helpCommand: Command = {
 
     const render = () => {
       if (category === 'overview') {
-        return {
-          embeds: [overviewEmbed(visible)],
-          components: [categorySelect(category)],
-        };
+        return { embeds: [overviewEmbed(visible)], components: [categorySelect(category)] };
       }
-
       if (entries.length === 0) {
-        return {
-          embeds: [emptyCategoryEmbed(category)],
-          components: [categorySelect(category)],
-        };
+        return { embeds: [emptyCategoryEmbed(category)], components: [categorySelect(category)] };
       }
-
       index = Math.min(Math.max(index, 0), entries.length - 1);
       return {
         embeds: [detailEmbed(client, entries[index], index, entries.length)],
-        components: [
-          categorySelect(category),
-          commandSelect(entries, index),
-          navigationButtons(index, entries.length),
-        ],
+        components: [categorySelect(category), commandSelect(entries, index), navigationButtons(index, entries.length)],
       };
     };
 
@@ -384,7 +331,6 @@ const helpCommand: Command = {
           index = 0;
         }
       }
-
       await component.update(render());
     });
 
