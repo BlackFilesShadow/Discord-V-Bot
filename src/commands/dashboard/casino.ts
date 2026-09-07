@@ -1,16 +1,19 @@
 /**
- * Casino V3 — acht servergescoppte Discord-Spiele mit einem gemeinsamen
- * Konfigurations-, Audit- und Buchungspfad.
+ * Casino V3 — eight server-scoped Discord games with one shared configuration,
+ * audit and booking path.
  *
- * V3 guarantees:
- * - configured win chance is an explicit rule for every game;
+ * Production invariants:
+ * - configured win chance is an explicit audited rule for every game;
  * - min/max/payout/cooldown come from the same scoped registry as dashboard UI;
- * - one immutable rule snapshot is written per round;
- * - account mutation is represented by one central EconomyLedgerEntry (NET),
- *   while EconomyTransaction keeps the familiar BET/PAYOUT audit rows;
- * - draw refunds are net-zero and no longer inflate lifetimeEarned/lifetimeSpent;
+ * - immutable rule snapshot + seed/nonce are stored with every round;
+ * - all balance changes go through the central EconomyLedger inside the same DB
+ *   transaction as CasinoRound and EconomyTransaction audit rows;
+ * - decided rounds preserve historic lifetime semantics (bet=spent,
+ *   payout=earned), while draw refunds stay lifetime-neutral;
  * - cooldown is serialized in PostgreSQL, not only in one Node process;
- * - V2 round verification remains supported for historic rounds.
+ * - Discord is acknowledged before any money mutation;
+ * - V2 verification stays available for historic rounds, malformed V3 audit
+ *   data fails closed instead of being mislabeled as legacy.
  */
 import {
   SlashCommandBuilder,
@@ -106,6 +109,11 @@ interface CasinoAuditSnapshot {
   serverSeedHash: string;
 }
 
+type AuditSnapshotParse =
+  | { kind: 'missing' }
+  | { kind: 'invalid' }
+  | { kind: 'valid'; snapshot: CasinoAuditSnapshot };
+
 class CasinoUserError extends Error {}
 
 type RoundOutcome = 'WON' | 'LOST' | 'DRAW';
@@ -139,17 +147,24 @@ async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<v
       error: e instanceof Error ? e.message : String(e),
     });
   }
-  await i.reply({
+  const payload = {
     embeds: [buildStatusEmbed({
-      status: 'ERROR',
+      status: 'ERROR' as const,
       title: 'Spiel nicht gestartet',
       description: 'Die Runde konnte nicht gestartet werden.',
       fields: [{ name: '📝 Grund', value: safeMessage }],
       footerText: 'V-Bot Casino',
     })],
     flags: MessageFlags.Ephemeral,
-    allowedMentions: { parse: [] },
-  });
+    allowedMentions: { parse: [] as string[] },
+  };
+
+  if (i.deferred || i.replied) {
+    try { await i.deleteReply(); } catch { /* best effort: deferred public placeholder */ }
+    await i.followUp(payload);
+    return;
+  }
+  await i.reply(payload);
 }
 
 function buildRoundEmbed(args: {
@@ -233,13 +248,7 @@ function outcomeOf(result: PlayResult): RoundOutcome {
   return result.won ? 'WON' : 'LOST';
 }
 
-function configuredOutcome(
-  type: CasinoGameKey,
-  clientSeed: string,
-  game: RuntimeGameConfig,
-  serverSeed: string,
-  nonce: bigint,
-): RoundOutcome {
+function configuredOutcome(type: CasinoGameKey, clientSeed: string, game: RuntimeGameConfig, serverSeed: string, nonce: bigint): RoundOutcome {
   const won = roll(serverSeed, `outcome:${type}:${clientSeed}`, nonce, 10_000) < game.winChancePct * 100;
   if (won) return 'WON';
   const drawPct = casinoDefinition(type).drawConditionalPct;
@@ -258,14 +267,25 @@ const SLOT_SYMBOLS = ['🍒', '🍋', '🔔', '⭐', '7️⃣', '💎'] as const
 const RED_NUMBERS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36] as const;
 const BLACK_NUMBERS = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35] as const;
 
-function resolveConfiguredGame(
-  type: CasinoGameKey,
-  bet: bigint,
-  clientSeed: string,
-  game: RuntimeGameConfig,
-  serverSeed: string,
-  nonce: bigint,
-): PlayResult {
+const BLACKJACK_SCENARIOS: Record<RoundOutcome, ReadonlyArray<{ player: string[]; dealer: string[]; ps: number; ds: number }>> = {
+  WON: [
+    { player: ['A♠', 'K♥'], dealer: ['10♣', '8♦'], ps: 21, ds: 18 },
+    { player: ['10♥', '10♠'], dealer: ['9♣', '8♦'], ps: 20, ds: 17 },
+    { player: ['9♠', 'Q♥'], dealer: ['10♦', '7♣'], ps: 19, ds: 17 },
+  ],
+  DRAW: [
+    { player: ['10♠', '8♥'], dealer: ['K♣', '8♦'], ps: 18, ds: 18 },
+    { player: ['9♥', '9♣'], dealer: ['10♠', '8♦'], ps: 18, ds: 18 },
+    { player: ['Q♠', '9♥'], dealer: ['K♣', '9♦'], ps: 19, ds: 19 },
+  ],
+  LOST: [
+    { player: ['K♠', '8♥', '7♣'], dealer: ['10♣', '8♦'], ps: 25, ds: 18 },
+    { player: ['10♠', '7♥'], dealer: ['K♣', '9♦'], ps: 17, ds: 19 },
+    { player: ['9♠', '8♥'], dealer: ['Q♣', '9♦'], ps: 17, ds: 19 },
+  ],
+};
+
+function resolveConfiguredGame(type: CasinoGameKey, bet: bigint, clientSeed: string, game: RuntimeGameConfig, serverSeed: string, nonce: bigint): PlayResult {
   const outcome = configuredOutcome(type, clientSeed, game, serverSeed, nonce);
   const won = outcome === 'WON';
   const draw = outcome === 'DRAW';
@@ -277,13 +297,11 @@ function resolveConfiguredGame(
     const c = won ? a : roll(serverSeed, 'slot:c', nonce, SLOT_SYMBOLS.length);
     return { won, draw: false, payout, details: { reels: [SLOT_SYMBOLS[a], SLOT_SYMBOLS[b], SLOT_SYMBOLS[c]] } };
   }
-
   if (type === 'COINFLIP') {
     if (clientSeed !== 'KOPF' && clientSeed !== 'ZAHL') throw new Error('Ungueltiger Coinflip-ClientSeed.');
     const flip = won ? clientSeed : clientSeed === 'KOPF' ? 'ZAHL' : 'KOPF';
     return { won, draw: false, payout, details: { flip, choice: clientSeed } };
   }
-
   if (type === 'DICE') {
     const tip = Number(clientSeed);
     if (!Number.isInteger(tip) || tip < 1 || tip > 6) throw new Error('Ungueltiger Dice-ClientSeed.');
@@ -291,20 +309,11 @@ function resolveConfiguredGame(
     const rolled = won ? tip : ((tip - 1 + missOffset) % 6) + 1;
     return { won, draw: false, payout, details: { rolled, tip } };
   }
-
   if (type === 'BLACKJACK') {
-    if (draw) {
-      return { won: false, draw: true, payout, details: { player: ['10♠', '8♥'], dealer: ['K♣', '8♦'], ps: 18, ds: 18 } };
-    }
-    if (won) {
-      return { won: true, draw: false, payout, details: { player: ['A♠', 'K♥'], dealer: ['10♣', '8♦'], ps: 21, ds: 18 } };
-    }
-    const bust = roll(serverSeed, 'blackjack:loss', nonce, 2) === 0;
-    return bust
-      ? { won: false, draw: false, payout, details: { player: ['K♠', '8♥', '7♣'], dealer: ['10♣', '8♦'], ps: 25, ds: 18 } }
-      : { won: false, draw: false, payout, details: { player: ['10♠', '7♥'], dealer: ['K♣', '9♦'], ps: 17, ds: 19 } };
+    const scenarios = BLACKJACK_SCENARIOS[outcome];
+    const details = scenarios[roll(serverSeed, `blackjack:visual:${outcome}`, nonce, scenarios.length)];
+    return { won, draw, payout, details };
   }
-
   if (type === 'ROULETTE') {
     if (clientSeed !== 'ROT' && clientSeed !== 'SCHWARZ') throw new Error('Ungueltiger Roulette-ClientSeed.');
     const winningColor = won ? clientSeed : clientSeed === 'ROT' ? 'SCHWARZ' : 'ROT';
@@ -312,16 +321,14 @@ function resolveConfiguredGame(
     const number = numbers[roll(serverSeed, `roulette:${winningColor}`, nonce, numbers.length)];
     return { won, draw: false, payout, details: { choice: clientSeed, color: winningColor, number } };
   }
-
   if (type === 'HIGHLOW') {
     if (clientSeed !== 'HOEHER' && clientSeed !== 'TIEFER') throw new Error('Ungueltiger High-Low-ClientSeed.');
-    const first = 5 + roll(serverSeed, 'highlow:first', nonce, 5); // 5..9 keeps both directions possible
+    const first = 5 + roll(serverSeed, 'highlow:first', nonce, 5);
     const shouldBeHigher = won ? clientSeed === 'HOEHER' : clientSeed !== 'HOEHER';
     const delta = 1 + roll(serverSeed, 'highlow:delta', nonce, 3);
     const second = shouldBeHigher ? first + delta : first - delta;
     return { won, draw: false, payout, details: { choice: clientSeed, first, second } };
   }
-
   if (type === 'BACCARAT') {
     if (clientSeed !== 'SPIELER' && clientSeed !== 'BANKER') throw new Error('Ungueltiger Baccarat-ClientSeed.');
     if (draw) {
@@ -331,26 +338,14 @@ function resolveConfiguredGame(
     const winner = won ? clientSeed : clientSeed === 'SPIELER' ? 'BANKER' : 'SPIELER';
     const high = 7 + roll(serverSeed, 'baccarat:high', nonce, 3);
     const low = roll(serverSeed, 'baccarat:low', nonce, Math.max(1, high));
-    return {
-      won,
-      draw: false,
-      payout,
-      details: {
-        choice: clientSeed,
-        playerScore: winner === 'SPIELER' ? high : low,
-        bankerScore: winner === 'BANKER' ? high : low,
-        winner,
-      },
-    };
+    return { won, draw: false, payout, details: {
+      choice: clientSeed,
+      playerScore: winner === 'SPIELER' ? high : low,
+      bankerScore: winner === 'BANKER' ? high : low,
+      winner,
+    } };
   }
-
-  // WHEEL
-  return {
-    won,
-    draw: false,
-    payout,
-    details: { segment: won ? `x${(game.payoutMultMilli / 1000).toFixed(2)}` : 'x0' },
-  };
+  return { won, draw: false, payout, details: { segment: won ? `x${(game.payoutMultMilli / 1000).toFixed(3)}` : 'x0' } };
 }
 
 /** Exact V2 replay for historic four-game snapshots. */
@@ -365,14 +360,7 @@ function blackjackScore(cards: number[]): number {
   return total;
 }
 
-function resolveLegacyV2Game(
-  type: CasinoGameKey,
-  bet: bigint,
-  clientSeed: string,
-  game: RuntimeGameConfig,
-  serverSeed: string,
-  nonce: bigint,
-): PlayResult {
+function resolveLegacyV2Game(type: CasinoGameKey, bet: bigint, clientSeed: string, game: RuntimeGameConfig, serverSeed: string, nonce: bigint): PlayResult {
   if (!LEGACY_TYPES.has(type)) throw new Error('V2 kennt diesen Spieltyp nicht.');
   if (type === 'SLOT') {
     const won = roll(serverSeed, clientSeed, nonce, 100) < game.winChancePct;
@@ -391,7 +379,6 @@ function resolveLegacyV2Game(
     const won = rolled === tip;
     return { won, draw: false, payout: won ? safePayout(bet, game.payoutMultMilli) : 0n, details: { rolled, tip } };
   }
-
   const drawCard = (k: number) => roll(serverSeed, `card:${k}`, nonce, 13) + 1;
   const player = [drawCard(0), drawCard(2)];
   const dealer = [drawCard(1), drawCard(3)];
@@ -408,33 +395,47 @@ function resolveLegacyV2Game(
   return { won, draw, payout, details: { player, dealer, ps, ds } };
 }
 
-function auditSnapshot(value: unknown): CasinoAuditSnapshot | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const audit = (value as Record<string, unknown>).audit;
-  if (!audit || typeof audit !== 'object' || Array.isArray(audit)) return null;
+function parseAuditSnapshot(value: unknown): AuditSnapshotParse {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'missing' };
+  const result = value as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(result, 'audit')) return { kind: 'missing' };
+  const audit = result.audit;
+  if (!audit || typeof audit !== 'object' || Array.isArray(audit)) return { kind: 'invalid' };
   const row = audit as Record<string, unknown>;
-  if (typeof row.type !== 'string' || !isCasinoGameKey(row.type)) return null;
-  if (typeof row.algorithmVersion !== 'string'
-    || (typeof row.winChancePct !== 'number' && row.winChancePct !== null)
-    || typeof row.payoutMultMilli !== 'number'
-    || typeof row.minBet !== 'string'
-    || typeof row.maxBet !== 'string'
-    || typeof row.serverSeedHash !== 'string') return null;
-  return {
+  if (typeof row.algorithmVersion !== 'string' || typeof row.type !== 'string' || !isCasinoGameKey(row.type)) return { kind: 'invalid' };
+  if (!Number.isInteger(row.payoutMultMilli) || (row.payoutMultMilli as number) < 1000 || (row.payoutMultMilli as number) > 100_000) return { kind: 'invalid' };
+  if (typeof row.minBet !== 'string' || typeof row.maxBet !== 'string') return { kind: 'invalid' };
+  if (typeof row.serverSeedHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.serverSeedHash)) return { kind: 'invalid' };
+  let minBet: bigint;
+  let maxBet: bigint;
+  try { minBet = BigInt(row.minBet); maxBet = BigInt(row.maxBet); }
+  catch { return { kind: 'invalid' }; }
+  if (minBet < 1n || maxBet < minBet || maxBet > MAX_CASINO_BET) return { kind: 'invalid' };
+
+  const isV3 = row.algorithmVersion === CASINO_ALGORITHM_VERSION;
+  const isV2 = row.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION;
+  if (!isV3 && !isV2) return { kind: 'invalid' };
+  if (isV3) {
+    if (!Number.isInteger(row.winChancePct) || (row.winChancePct as number) < 1 || (row.winChancePct as number) > 99) return { kind: 'invalid' };
+    if (!Number.isInteger(row.cooldownSeconds) || (row.cooldownSeconds as number) < 0 || (row.cooldownSeconds as number) > 3600) return { kind: 'invalid' };
+  } else if (row.winChancePct !== null && (!Number.isInteger(row.winChancePct) || (row.winChancePct as number) < 1 || (row.winChancePct as number) > 99)) {
+    return { kind: 'invalid' };
+  }
+
+  return { kind: 'valid', snapshot: {
     algorithmVersion: row.algorithmVersion,
     type: row.type,
-    winChancePct: row.winChancePct,
-    payoutMultMilli: row.payoutMultMilli,
+    winChancePct: row.winChancePct as number | null,
+    payoutMultMilli: row.payoutMultMilli as number,
     minBet: row.minBet,
     maxBet: row.maxBet,
     cooldownSeconds: typeof row.cooldownSeconds === 'number' ? row.cooldownSeconds : null,
     serverSeedHash: row.serverSeedHash,
-  };
+  } };
 }
 
 function isStoredDraw(value: unknown): boolean {
-  return !!value && typeof value === 'object' && !Array.isArray(value)
-    && (value as Record<string, unknown>).draw === true;
+  return !!value && typeof value === 'object' && !Array.isArray(value) && (value as Record<string, unknown>).draw === true;
 }
 
 function isStoredWin(value: unknown, payout: bigint): boolean {
@@ -443,6 +444,59 @@ function isStoredWin(value: unknown, payout: bigint): boolean {
     if (typeof won === 'boolean') return won;
   }
   return payout > 0n;
+}
+
+async function bookCasinoLedger(tx: LedgerTx, args: {
+  guildId: string;
+  nitradoConnId: string;
+  userDiscordId: string;
+  type: CasinoGameKey;
+  roundId: string;
+  bet: bigint;
+  result: PlayResult;
+}): Promise<void> {
+  if (args.result.draw) {
+    // Draw is a true refund: wallet and lifetime counters remain unchanged.
+    await bookLedgerEntryInTx(tx, {
+      idempotencyKey: `casino:round:${args.roundId}:draw`,
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      userDiscordId: args.userDiscordId,
+      walletDelta: 0n,
+      bankDelta: 0n,
+      type: 'CASINO_PAYOUT',
+      reason: `${args.type}:DRAW`,
+      sourceRef: args.roundId,
+    });
+    return;
+  }
+
+  // Preserve the original Economy lifetime semantics for decided rounds:
+  // the wager is spent, and an actual payout is earned.
+  await bookLedgerEntryInTx(tx, {
+    idempotencyKey: `casino:round:${args.roundId}:bet`,
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    userDiscordId: args.userDiscordId,
+    walletDelta: -args.bet,
+    bankDelta: 0n,
+    type: 'CASINO_BET',
+    reason: args.type,
+    sourceRef: args.roundId,
+  });
+  if (args.result.payout > 0n) {
+    await bookLedgerEntryInTx(tx, {
+      idempotencyKey: `casino:round:${args.roundId}:payout`,
+      guildId: args.guildId,
+      nitradoConnId: args.nitradoConnId,
+      userDiscordId: args.userDiscordId,
+      walletDelta: args.result.payout,
+      bankDelta: 0n,
+      type: 'CASINO_PAYOUT',
+      reason: args.type,
+      sourceRef: args.roundId,
+    });
+  }
 }
 
 async function playRound(args: {
@@ -463,10 +517,7 @@ async function playRound(args: {
   const serverSeed = randomBytes(32).toString('hex');
   const nonce = randomNonce();
   const roundId = randomUUID();
-  const runtimeGame = {
-    winChancePct: config.winChancePct,
-    payoutMultMilli: payoutMultiplierMilli(config.payoutMult),
-  };
+  const runtimeGame = { winChancePct: config.winChancePct, payoutMultMilli: payoutMultiplierMilli(config.payoutMult) };
   const result = resolveConfiguredGame(args.type, args.bet, args.clientSeed, runtimeGame, serverSeed, nonce);
   const anchorGameId = await ensureCasinoRoundAnchor(args.scope.guildId, nitradoConnId, args.type);
   const storedResult = {
@@ -491,13 +542,11 @@ async function playRound(args: {
     if (config.cooldownSeconds > 0) {
       const previous = await queryOne<{ createdAt: Date }>(
         db,
-        `SELECT r."createdAt"
-           FROM "CasinoRound" r
-           JOIN "CasinoGame" g ON g."id" = r."gameId"
-          WHERE r."guildId"=$1 AND r."nitradoConnId"=$2 AND r."userDiscordId"=$3
-            AND COALESCE(r."result"->'audit'->>'type', g."type"::text)=$4
-          ORDER BY r."createdAt" DESC
-          LIMIT 1`,
+        `SELECT r."createdAt" FROM "CasinoRound" r
+          JOIN "CasinoGame" g ON g."id" = r."gameId"
+         WHERE r."guildId"=$1 AND r."nitradoConnId"=$2 AND r."userDiscordId"=$3
+           AND COALESCE(r."result"->'audit'->>'type', g."type"::text)=$4
+         ORDER BY r."createdAt" DESC LIMIT 1`,
         String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId), args.type,
       );
       if (previous) {
@@ -508,29 +557,23 @@ async function playRound(args: {
 
     const account = await queryOne<{ walletBalance: bigint }>(
       db,
-      `SELECT "walletBalance"
-         FROM "EconomyAccount"
-        WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3
-        FOR UPDATE`,
+      `SELECT "walletBalance" FROM "EconomyAccount"
+        WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 FOR UPDATE`,
       String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId),
     );
     if (!account || account.walletBalance < args.bet) throw new CasinoUserError('Unzureichendes Guthaben.');
 
-    const net = result.payout - args.bet;
-    await bookLedgerEntryInTx(tx as unknown as LedgerTx, {
-      idempotencyKey: `casino:round:${roundId}`,
+    await bookCasinoLedger(tx as unknown as LedgerTx, {
       guildId: String(args.scope.guildId),
       nitradoConnId: String(nitradoConnId),
       userDiscordId: String(args.scope.actorDiscordId),
-      walletDelta: net,
-      bankDelta: 0n,
-      type: net < 0n ? 'CASINO_BET' : 'CASINO_PAYOUT',
-      reason: `${args.type}:${outcomeOf(result)}`,
-      sourceRef: roundId,
+      type: args.type,
+      roundId,
+      bet: args.bet,
+      result,
     });
 
-    // Transaction rows are audit/detail rows only. The ledger above is the
-    // single balance mutation source for this round.
+    // Detail transactions preserve the familiar gross bet/payout audit trail.
     await db.$executeRawUnsafe(
       'INSERT INTO "EconomyTransaction" ("id","guildId","nitradoConnId","userDiscordId","delta","type","reason","actorDiscordId","counterpartDiscordId","createdAt") VALUES ($1,$2,$3,$4,$5,$6::"EconomyTxType",$7,$8,NULL,CURRENT_TIMESTAMP)',
       randomUUID(), String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId),
@@ -559,196 +602,154 @@ async function playRound(args: {
 function embedDetails(type: CasinoGameKey, result: PlayResult): { name: string; value: string; inline?: boolean }[] {
   const d = result.details;
   switch (type) {
-    case 'SLOT':
-      return [{ name: '🎰 Walzen', value: (d.reels as string[]).join('  '), inline: false }];
-    case 'COINFLIP':
-      return [
-        { name: '🎯 Deine Wahl', value: d.choice === 'KOPF' ? 'Kopf' : 'Zahl', inline: true },
-        { name: '🪙 Ergebnis', value: d.flip === 'KOPF' ? 'Kopf' : 'Zahl', inline: true },
-      ];
-    case 'DICE':
-      return [
-        { name: '🎯 Dein Tipp', value: String(d.tip), inline: true },
-        { name: '🎲 Gewuerfelt', value: String(d.rolled), inline: true },
-      ];
-    case 'BLACKJACK':
-      return [
-        { name: '🧍 Deine Karten', value: (d.player as string[]).join('  '), inline: false },
-        { name: '📊 Dein Wert', value: String(d.ps), inline: true },
-        { name: '🎩 Dealer', value: (d.dealer as string[]).join('  '), inline: false },
-        { name: '📊 Dealer-Wert', value: String(d.ds), inline: true },
-      ];
-    case 'ROULETTE':
-      return [
-        { name: '🎯 Deine Farbe', value: d.choice === 'ROT' ? '🔴 Rot' : '⚫ Schwarz', inline: true },
-        { name: '🎡 Kugel', value: `${d.number} • ${d.color === 'ROT' ? '🔴 Rot' : '⚫ Schwarz'}`, inline: true },
-      ];
-    case 'HIGHLOW':
-      return [
-        { name: '🃏 Ausgangskarte', value: String(d.first), inline: true },
-        { name: '🎯 Dein Tipp', value: d.choice === 'HOEHER' ? 'Höher' : 'Tiefer', inline: true },
-        { name: '🃏 Naechste Karte', value: String(d.second), inline: true },
-      ];
-    case 'BACCARAT':
-      return [
-        { name: '🎯 Deine Wahl', value: d.choice === 'SPIELER' ? 'Spieler' : 'Banker', inline: true },
-        { name: '🧍 Spieler', value: String(d.playerScore), inline: true },
-        { name: '🏦 Banker', value: String(d.bankerScore), inline: true },
-        { name: '🏁 Ergebnis', value: String(d.winner), inline: false },
-      ];
-    case 'WHEEL':
-      return [{ name: '🎯 Feld', value: String(d.segment), inline: false }];
+    case 'SLOT': return [{ name: '🎰 Walzen', value: (d.reels as string[]).join('  '), inline: false }];
+    case 'COINFLIP': return [
+      { name: '🎯 Deine Wahl', value: d.choice === 'KOPF' ? 'Kopf' : 'Zahl', inline: true },
+      { name: '🪙 Ergebnis', value: d.flip === 'KOPF' ? 'Kopf' : 'Zahl', inline: true },
+    ];
+    case 'DICE': return [
+      { name: '🎯 Dein Tipp', value: String(d.tip), inline: true },
+      { name: '🎲 Gewuerfelt', value: String(d.rolled), inline: true },
+    ];
+    case 'BLACKJACK': return [
+      { name: '🧍 Deine Karten', value: (d.player as string[]).join('  '), inline: false },
+      { name: '📊 Dein Wert', value: String(d.ps), inline: true },
+      { name: '🎩 Dealer', value: (d.dealer as string[]).join('  '), inline: false },
+      { name: '📊 Dealer-Wert', value: String(d.ds), inline: true },
+    ];
+    case 'ROULETTE': return [
+      { name: '🎯 Deine Farbe', value: d.choice === 'ROT' ? '🔴 Rot' : '⚫ Schwarz', inline: true },
+      { name: '🎡 Kugel', value: `${d.number} • ${d.color === 'ROT' ? '🔴 Rot' : '⚫ Schwarz'}`, inline: true },
+    ];
+    case 'HIGHLOW': return [
+      { name: '🃏 Ausgangskarte', value: String(d.first), inline: true },
+      { name: '🎯 Dein Tipp', value: d.choice === 'HOEHER' ? 'Höher' : 'Tiefer', inline: true },
+      { name: '🃏 Naechste Karte', value: String(d.second), inline: true },
+    ];
+    case 'BACCARAT': return [
+      { name: '🎯 Deine Wahl', value: d.choice === 'SPIELER' ? 'Spieler' : 'Banker', inline: true },
+      { name: '🧍 Spieler', value: String(d.playerScore), inline: true },
+      { name: '🏦 Banker', value: String(d.bankerScore), inline: true },
+      { name: '🏁 Ergebnis', value: String(d.winner), inline: false },
+    ];
+    case 'WHEEL': return [{ name: '🎯 Feld', value: String(d.segment), inline: false }];
   }
 }
 
-async function executeGame(
-  i: ChatInputCommandInteraction,
-  scope: GuildScope,
-  type: CasinoGameKey,
-  clientSeed: string,
-): Promise<void> {
+async function executeGame(i: ChatInputCommandInteraction, scope: GuildScope, type: CasinoGameKey, clientSeed: string): Promise<void> {
   const bet = BigInt(i.options.getInteger('einsatz', true));
-  let out;
   try {
-    out = await playRound({ scope, type, bet, clientSeed });
+    await i.deferReply();
+    // Currency config is read before the financial transaction so a later
+    // presentation dependency can never fail only after money was committed.
+    const economyConfig = await getConfig(scope.guildId, scope.nitradoConnId!);
+    const out = await playRound({ scope, type, bet, clientSeed });
+
+    try {
+      emitGuildEvent(scope.guildId, {
+        type: 'casino.round',
+        payload: {
+          guildId: scope.guildId,
+          nitradoConnId: scope.nitradoConnId,
+          gameType: type,
+          payout: out.result.payout.toString(),
+          outcome: outcomeOf(out.result),
+        },
+      });
+    } catch (error) {
+      logger.warn('Casino websocket event failed after committed round', {
+        guildId: scope.guildId,
+        roundId: out.roundId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    await i.editReply({
+      embeds: [buildRoundEmbed({
+        i,
+        type,
+        outcome: outcomeOf(out.result),
+        bet,
+        payout: out.result.payout,
+        coin: economyConfig.emoji,
+        details: embedDetails(type, out.result),
+        roundId: out.roundId,
+        serverSeedHash: seedHash(out.serverSeed),
+        nonce: out.nonce,
+        winChancePct: out.config.winChancePct,
+      })],
+      allowedMentions: { parse: [] },
+    });
   } catch (e) {
     await statusFail(i, e);
-    return;
   }
-  const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
-  emitGuildEvent(scope.guildId, {
-    type: 'casino.round',
-    payload: {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      gameType: type,
-      payout: out.result.payout.toString(),
-      outcome: outcomeOf(out.result),
-    },
-  });
-  await i.reply({
-    embeds: [buildRoundEmbed({
-      i,
-      type,
-      outcome: outcomeOf(out.result),
-      bet,
-      payout: out.result.payout,
-      coin: cfg.emoji,
-      details: embedDetails(type, out.result),
-      roundId: out.roundId,
-      serverSeedHash: seedHash(out.serverSeed),
-      nonce: out.nonce,
-      winChancePct: out.config.winChancePct,
-    })],
-    allowedMentions: { parse: [] },
-  });
 }
 
 export const slotCommand: Command = {
   data: slotOption(betOption(new SlashCommandBuilder().setName('slot').setDescription('Slot-Maschine dieses Gameservers.'))),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'SLOT', 'slot')),
 };
-
 export const coinflipCommand: Command = {
-  data: slotOption(betOption(new SlashCommandBuilder()
-    .setName('coinflip')
-    .setDescription('Kopf oder Zahl mit der konfigurierten Server-Chance.')
-    .addStringOption(o => o.setName('seite').setDescription('Kopf oder Zahl').setRequired(true).addChoices(
-      { name: 'Kopf', value: 'KOPF' }, { name: 'Zahl', value: 'ZAHL' },
-    )) as SlashCommandBuilder)),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) =>
-    executeGame(i, scope, 'COINFLIP', i.options.getString('seite', true))),
+  data: slotOption(betOption(new SlashCommandBuilder().setName('coinflip').setDescription('Kopf oder Zahl mit der konfigurierten Server-Chance.')
+    .addStringOption(o => o.setName('seite').setDescription('Kopf oder Zahl').setRequired(true).addChoices({ name: 'Kopf', value: 'KOPF' }, { name: 'Zahl', value: 'ZAHL' })) as SlashCommandBuilder)),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'COINFLIP', i.options.getString('seite', true))),
 };
-
 export const diceCommand: Command = {
-  data: slotOption(betOption(new SlashCommandBuilder()
-    .setName('dice')
-    .setDescription('Wuerfelspiel: Tippe eine Zahl von 1 bis 6.')
+  data: slotOption(betOption(new SlashCommandBuilder().setName('dice').setDescription('Wuerfelspiel: Tippe eine Zahl von 1 bis 6.')
     .addIntegerOption(o => o.setName('zahl').setDescription('Dein Tipp').setRequired(true).setMinValue(1).setMaxValue(6)) as SlashCommandBuilder)),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) =>
-    executeGame(i, scope, 'DICE', String(i.options.getInteger('zahl', true)))),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'DICE', String(i.options.getInteger('zahl', true)))),
 };
-
 export const blackjackCommand: Command = {
   data: slotOption(betOption(new SlashCommandBuilder().setName('blackjack').setDescription('Automatische Blackjack-Runde.'))),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'BLACKJACK', 'blackjack')),
 };
-
 export const rouletteCommand: Command = {
-  data: slotOption(betOption(new SlashCommandBuilder()
-    .setName('roulette')
-    .setDescription('Roulette: Setze auf Rot oder Schwarz.')
-    .addStringOption(o => o.setName('farbe').setDescription('Deine Farbe').setRequired(true).addChoices(
-      { name: 'Rot', value: 'ROT' }, { name: 'Schwarz', value: 'SCHWARZ' },
-    )) as SlashCommandBuilder)),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) =>
-    executeGame(i, scope, 'ROULETTE', i.options.getString('farbe', true))),
+  data: slotOption(betOption(new SlashCommandBuilder().setName('roulette').setDescription('Roulette: Setze auf Rot oder Schwarz.')
+    .addStringOption(o => o.setName('farbe').setDescription('Deine Farbe').setRequired(true).addChoices({ name: 'Rot', value: 'ROT' }, { name: 'Schwarz', value: 'SCHWARZ' })) as SlashCommandBuilder)),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'ROULETTE', i.options.getString('farbe', true))),
 };
-
 export const highLowCommand: Command = {
-  data: slotOption(betOption(new SlashCommandBuilder()
-    .setName('highlow')
-    .setDescription('High-Low: Wird die naechste Karte hoeher oder tiefer?')
-    .addStringOption(o => o.setName('wahl').setDescription('Hoeher oder tiefer').setRequired(true).addChoices(
-      { name: 'Höher', value: 'HOEHER' }, { name: 'Tiefer', value: 'TIEFER' },
-    )) as SlashCommandBuilder)),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) =>
-    executeGame(i, scope, 'HIGHLOW', i.options.getString('wahl', true))),
+  data: slotOption(betOption(new SlashCommandBuilder().setName('highlow').setDescription('High-Low: Wird die naechste Karte hoeher oder tiefer?')
+    .addStringOption(o => o.setName('wahl').setDescription('Hoeher oder tiefer').setRequired(true).addChoices({ name: 'Höher', value: 'HOEHER' }, { name: 'Tiefer', value: 'TIEFER' })) as SlashCommandBuilder)),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'HIGHLOW', i.options.getString('wahl', true))),
 };
-
 export const baccaratCommand: Command = {
-  data: slotOption(betOption(new SlashCommandBuilder()
-    .setName('baccarat')
-    .setDescription('Baccarat: Setze auf Spieler oder Banker.')
-    .addStringOption(o => o.setName('seite').setDescription('Spieler oder Banker').setRequired(true).addChoices(
-      { name: 'Spieler', value: 'SPIELER' }, { name: 'Banker', value: 'BANKER' },
-    )) as SlashCommandBuilder)),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) =>
-    executeGame(i, scope, 'BACCARAT', i.options.getString('seite', true))),
+  data: slotOption(betOption(new SlashCommandBuilder().setName('baccarat').setDescription('Baccarat: Setze auf Spieler oder Banker.')
+    .addStringOption(o => o.setName('seite').setDescription('Spieler oder Banker').setRequired(true).addChoices({ name: 'Spieler', value: 'SPIELER' }, { name: 'Banker', value: 'BANKER' })) as SlashCommandBuilder)),
+  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'BACCARAT', i.options.getString('seite', true))),
 };
-
 export const wheelCommand: Command = {
   data: slotOption(betOption(new SlashCommandBuilder().setName('wheel').setDescription('Dreht das Casino-Gluecksrad.'))),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => executeGame(i, scope, 'WHEEL', 'wheel')),
 };
 
 export const casinoStatsCommand: Command = {
-  data: slotOption(new SlashCommandBuilder()
-    .setName('casino-stats')
-    .setDescription('Zeigt Casino-Statistik fuer dich oder einen anderen User.')
+  data: slotOption(new SlashCommandBuilder().setName('casino-stats').setDescription('Zeigt Casino-Statistik fuer dich oder einen anderen User.')
     .addUserOption(o => o.setName('user').setDescription('Optional anderer User').setRequired(false)) as SlashCommandBuilder),
   cooldown: 3,
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const target = i.options.getUser('user') ?? i.user;
     const targetId: UserDiscordId = asUserDiscordId(target.id);
+    await i.deferReply({ flags: target.id === i.user.id ? MessageFlags.Ephemeral : undefined });
     if (!scope.nitradoConnId) throw new Error('Kein Gameserver-Scope fuer Casino aufgeloest.');
     await assertEconomyScopeReady(scope.guildId, scope.nitradoConnId);
     const row = await queryOne<CasinoUserStatsRow>(
       prisma as unknown as RawDb,
       `SELECT COUNT(*)::bigint AS "rounds",
               COUNT(*) FILTER (WHERE "result"->>'draw' = 'true')::bigint AS "draws",
-              COUNT(*) FILTER (
-                WHERE COALESCE("result"->>'draw', 'false') <> 'true'
-                  AND CASE WHEN "result" ? 'won' THEN "result"->>'won' = 'true' ELSE "payout" > 0 END
-              )::bigint AS "wins",
-              COALESCE(SUM("bet"), 0)::bigint AS "bet",
-              COALESCE(SUM("payout"), 0)::bigint AS "payout"
-         FROM "CasinoRound"
-        WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3`,
+              COUNT(*) FILTER (WHERE COALESCE("result"->>'draw','false') <> 'true'
+                AND CASE WHEN "result" ? 'won' THEN "result"->>'won'='true' ELSE "payout">0 END)::bigint AS "wins",
+              COALESCE(SUM("bet"),0)::bigint AS "bet", COALESCE(SUM("payout"),0)::bigint AS "payout"
+         FROM "CasinoRound" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3`,
       String(scope.guildId), String(scope.nitradoConnId), String(targetId),
     );
     const rounds = row?.rounds ?? 0n;
     if (rounds === 0n) {
-      await i.reply({
-        embeds: [buildStatusEmbed({
-          status: 'INFO',
-          title: 'Casino-Statistik',
-          description: `Fuer ${target.username} liegt noch keine Casino-Aktivitaet vor.`,
-          footerText: 'V-Bot Casino',
-        })],
-        flags: MessageFlags.Ephemeral,
-        allowedMentions: { parse: [] },
-      });
+      await i.editReply({ embeds: [buildStatusEmbed({
+        status: 'INFO', title: 'Casino-Statistik',
+        description: `Fuer ${target.username} liegt noch keine Casino-Aktivitaet vor.`,
+        footerText: 'V-Bot Casino',
+      })], allowedMentions: { parse: [] } });
       return;
     }
     const wins = row?.wins ?? 0n;
@@ -759,8 +760,6 @@ export const casinoStatsCommand: Command = {
     const payout = row?.payout ?? 0n;
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const net = payout - bet;
-    const netStr = (net >= 0n ? '+' : '') + fmt(net);
-    // Draws are deliberately excluded from the win-rate denominator.
     const winRate = decided > 0n ? Number((wins * 10_000n) / decided) / 100 : 0;
     const e = vEmbed(net >= 0n ? Colors.Success : Colors.Error)
       .setAuthor({ name: target.username, iconURL: target.displayAvatarURL() })
@@ -773,107 +772,90 @@ export const casinoStatsCommand: Command = {
         { name: '🏆 Win-Rate (entschieden)', value: `${winRate.toFixed(2)}%`, inline: false },
         { name: '💰 Einsatz gesamt', value: `${fmt(bet)} ${cfg.emoji}`, inline: false },
         { name: '🏆 Auszahlung gesamt', value: `${fmt(payout)} ${cfg.emoji}`, inline: false },
-        { name: '📊 Netto', value: `${netStr} ${cfg.emoji}`, inline: false },
-      )
-      .setFooter({ text: 'V-Bot Casino' })
-      .setTimestamp();
-    await i.reply({ embeds: [e], flags: target.id === i.user.id ? MessageFlags.Ephemeral : undefined, allowedMentions: { parse: [] } });
+        { name: '📊 Netto', value: `${net >= 0n ? '+' : ''}${fmt(net)} ${cfg.emoji}`, inline: false },
+      ).setFooter({ text: 'V-Bot Casino' }).setTimestamp();
+    await i.editReply({ embeds: [e], allowedMentions: { parse: [] } });
     logAudit('CASINO_STATS', 'CASINO', {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      target: target.id,
+      guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, target: target.id,
       rounds: rounds.toString(), wins: wins.toString(), draws: draws.toString(), losses: losses.toString(),
     });
   }),
 };
 
 export const casinoVerifyCommand: Command = {
-  data: slotOption(new SlashCommandBuilder()
-    .setName('casino-verify')
+  data: slotOption(new SlashCommandBuilder().setName('casino-verify')
     .setDescription('Prueft Seed, Nonce, Regel-Snapshot und Auszahlung einer eigenen Casino-Runde.')
     .addStringOption(o => o.setName('runde').setDescription('Runden-ID aus dem Casino-Embed').setRequired(true).setMinLength(1).setMaxLength(128)) as SlashCommandBuilder),
   cooldown: 3,
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
+    await i.deferReply({ flags: MessageFlags.Ephemeral });
     if (!scope.nitradoConnId) throw new Error('Kein Gameserver-Scope fuer Casino aufgeloest.');
     await assertEconomyScopeReady(scope.guildId, scope.nitradoConnId);
     const roundId = i.options.getString('runde', true).trim();
     const round = await queryOne<CasinoVerifyDbRow>(
       prisma as unknown as RawDb,
-      `SELECT "id", "bet", "payout", "result", "serverSeed", "clientSeed", "nonce", "createdAt"
-         FROM "CasinoRound"
-        WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "userDiscordId"=$4
-        LIMIT 1`,
+      `SELECT "id","bet","payout","result","serverSeed","clientSeed","nonce","createdAt"
+         FROM "CasinoRound" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "userDiscordId"=$4 LIMIT 1`,
       roundId, String(scope.guildId), String(scope.nitradoConnId), String(scope.actorDiscordId),
     );
     if (!round) {
-      await i.reply({
-        embeds: [buildStatusEmbed({
-          status: 'ERROR', title: 'Runde nicht gefunden',
-          description: 'Die Runde existiert in diesem Gameserver-Slot nicht oder gehoert nicht dir.',
-          footerText: 'V-Bot Casino Audit',
-        })],
-        flags: MessageFlags.Ephemeral,
-        allowedMentions: { parse: [] },
-      });
+      await i.editReply({ embeds: [buildStatusEmbed({
+        status: 'ERROR', title: 'Runde nicht gefunden',
+        description: 'Die Runde existiert in diesem Gameserver-Slot nicht oder gehoert nicht dir.', footerText: 'V-Bot Casino Audit',
+      })], allowedMentions: { parse: [] } });
       return;
     }
 
-    const snapshot = auditSnapshot(round.result);
-    if (!snapshot) {
-      await i.reply({
-        embeds: [buildStatusEmbed({
-          status: 'INFO', title: '⚠️ Legacy-Runde',
-          description: 'Diese Runde besitzt noch keinen vollstaendigen unveraenderlichen Regel-Snapshot und kann deshalb nicht vollstaendig nachgerechnet werden.',
-          fields: [
-            { name: 'Runde', value: `\`${round.id}\`` },
-            { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` },
-          ],
-          footerText: 'V-Bot Casino Audit',
-        })],
-        flags: MessageFlags.Ephemeral,
-        allowedMentions: { parse: [] },
-      });
+    const parsed = parseAuditSnapshot(round.result);
+    if (parsed.kind === 'missing') {
+      await i.editReply({ embeds: [buildStatusEmbed({
+        status: 'INFO', title: '⚠️ Legacy-Runde',
+        description: 'Diese Runde besitzt noch keinen vollstaendigen Regel-Snapshot und kann deshalb nicht vollstaendig nachgerechnet werden.',
+        fields: [{ name: 'Runde', value: `\`${round.id}\`` }, { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` }],
+        footerText: 'V-Bot Casino Audit',
+      })], allowedMentions: { parse: [] } });
       return;
     }
-
+    if (parsed.kind === 'invalid') {
+      await i.editReply({ embeds: [buildStatusEmbed({
+        status: 'ERROR', title: '❌ Audit-Snapshot ungueltig',
+        description: 'Die Runde enthaelt Audit-Daten, aber der Snapshot ist strukturell ungueltig oder wurde veraendert.',
+        footerText: 'V-Bot Casino Audit',
+      })], allowedMentions: { parse: [] } });
+      return;
+    }
+    const snapshot = parsed.snapshot;
     const clientSeed = round.clientSeed ?? (snapshot.type === 'SLOT' ? 'slot' : snapshot.type === 'BLACKJACK' ? 'blackjack' : snapshot.type === 'WHEEL' ? 'wheel' : '');
     let replay: PlayResult;
     try {
-      const runtime = {
-        winChancePct: snapshot.winChancePct ?? 0,
-        payoutMultMilli: snapshot.payoutMultMilli,
-      };
+      const runtime = { winChancePct: snapshot.winChancePct ?? 0, payoutMultMilli: snapshot.payoutMultMilli };
       replay = snapshot.algorithmVersion === CASINO_ALGORITHM_VERSION
         ? resolveConfiguredGame(snapshot.type, round.bet, clientSeed, runtime, round.serverSeed, round.nonce)
-        : snapshot.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION
-          ? resolveLegacyV2Game(snapshot.type, round.bet, clientSeed, runtime, round.serverSeed, round.nonce)
-          : (() => { throw new Error('Unbekannte Casino-Algorithmusversion.'); })();
+        : resolveLegacyV2Game(snapshot.type, round.bet, clientSeed, runtime, round.serverSeed, round.nonce);
     } catch (error) {
       logger.error('Casino verify replay failed', { guildId: scope.guildId, roundId: round.id, error: error instanceof Error ? error.message : String(error) });
-      await i.reply({
-        embeds: [buildStatusEmbed({
-          status: 'ERROR', title: 'Audit fehlgeschlagen',
-          description: 'Die gespeicherte Runde konnte mit ihrem Audit-Snapshot nicht reproduziert werden.',
-          footerText: 'V-Bot Casino Audit',
-        })],
-        flags: MessageFlags.Ephemeral,
-        allowedMentions: { parse: [] },
-      });
+      await i.editReply({ embeds: [buildStatusEmbed({
+        status: 'ERROR', title: 'Audit fehlgeschlagen',
+        description: 'Die gespeicherte Runde konnte mit ihrem Audit-Snapshot nicht reproduziert werden.', footerText: 'V-Bot Casino Audit',
+      })], allowedMentions: { parse: [] } });
       return;
     }
 
+    const min = BigInt(snapshot.minBet);
+    const max = BigInt(snapshot.maxBet);
     const storedDraw = isStoredDraw(round.result);
     const storedWin = isStoredWin(round.result, round.payout);
     const hashMatches = seedHashFull(round.serverSeed) === snapshot.serverSeedHash;
     const payoutMatches = replay.payout === round.payout;
     const outcomeMatches = replay.draw === storedDraw && replay.won === storedWin;
-    const verified = hashMatches && payoutMatches && outcomeMatches;
+    const betBoundsMatch = round.bet >= min && round.bet <= max;
+    const verified = hashMatches && payoutMatches && outcomeMatches && betBoundsMatch;
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const def = casinoDefinition(snapshot.type);
     const embed = vEmbed(verified ? Colors.Success : Colors.Error)
       .setTitle(verified ? '✅ Casino-Runde verifiziert' : '❌ Casino-Runde NICHT verifiziert')
       .setDescription(verified
-        ? 'Seed, Nonce, Regel-Snapshot, Outcome und Auszahlung sind reproduzierbar.'
+        ? 'Seed, Nonce, Regel-Snapshot, Einsatzgrenzen, Outcome und Auszahlung sind reproduzierbar.'
         : 'Mindestens ein gespeicherter Audit-Wert stimmt nicht mit der reproduzierten Runde ueberein.')
       .addFields(
         { name: '🎲 Spiel', value: `${def.emoji} ${def.label}`, inline: true },
@@ -886,17 +868,12 @@ export const casinoVerifyCommand: Command = {
         { name: '#️⃣ Nonce', value: round.nonce.toString(), inline: false },
         { name: '🔐 SHA-256', value: `\`${seedHashFull(round.serverSeed)}\``, inline: false },
         { name: '⚙️ Snapshot', value: `Payout x${(snapshot.payoutMultMilli / 1000).toFixed(3)} • Min ${snapshot.minBet} • Max ${snapshot.maxBet}${snapshot.cooldownSeconds !== null ? ` • Cooldown ${snapshot.cooldownSeconds}s` : ''}`, inline: false },
-      )
-      .setFooter({ text: `V-Bot Casino Audit • Runde ${round.id}` })
-      .setTimestamp(round.createdAt);
-    await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+      ).setFooter({ text: `V-Bot Casino Audit • Runde ${round.id}` }).setTimestamp(round.createdAt);
+    await i.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
     logAudit('CASINO_VERIFY', 'CASINO', {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      roundId: round.id,
-      type: snapshot.type,
-      algorithmVersion: snapshot.algorithmVersion,
-      verified, hashMatches, payoutMatches, outcomeMatches,
+      guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, roundId: round.id,
+      type: snapshot.type, algorithmVersion: snapshot.algorithmVersion,
+      verified, hashMatches, payoutMatches, outcomeMatches, betBoundsMatch,
     });
   }),
 };
