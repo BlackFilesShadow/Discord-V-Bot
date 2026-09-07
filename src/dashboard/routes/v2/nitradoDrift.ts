@@ -22,7 +22,7 @@ import {
   enqueueServerBanAdd,
   type BanOutboxClient,
 } from '../../../modules/bans/banOutbox';
-import { hashBanIdentifier, matchesBanIdentifier } from '../../../modules/bans/banTarget';
+import { matchesBanIdentifier } from '../../../modules/bans/banTarget';
 import { notifyNitradoBanDrift, notifyNitradoWhitelistDrift } from '../../../modules/nitrado/driftDiscord';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
@@ -30,9 +30,14 @@ import type { GuildScope, NitradoConnId } from '../../../types/scope';
 export const nitradoDriftRouter = Router({ mergeParams: true });
 
 type DriftDecision = 'ACCEPT_NITRADO' | 'RESTORE_VBOT';
+const DRIFT_CONFIRM_DELAY_MS = 350;
 
 function norm(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function parseDecision(value: unknown): DriftDecision | null {
@@ -82,16 +87,39 @@ function safeDecryptIdentifier(identifierEnc: string, identityHash: string): str
   }
 }
 
+function banPresentRemotely(remoteIdentifiers: string[], identityHash: string, storedIdentifier: string | null): boolean {
+  if (storedIdentifier) {
+    const expected = norm(storedIdentifier);
+    return remoteIdentifiers.some(identifier => norm(identifier) === expected);
+  }
+  return remoteIdentifiers.some(identifier =>
+    matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey),
+  );
+}
+
 nitradoDriftRouter.get('/whitelist', requireGuildPermission('whitelist.manage'), async (req, res) => {
   const scope = req.guildScope!;
   const resolved = await readBinding(scope, req.query.slot, res);
   if (!resolved) return;
   const { connId, binding } = resolved;
 
+  // Eine deaktivierte V-Bot-Whitelist hat keinen aktiven Sync-Sollzustand. Alte
+  // SYNCED-Historie darf deshalb keinen globalen Drift-Banner erzeugen.
+  const settings = await prisma.serverSettings.findUnique({
+    where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
+    select: { whitelistActive: true },
+  });
+  if (!settings?.whitelistActive) {
+    res.json({ observedAt: new Date().toISOString(), items: [] });
+    return;
+  }
+
   let remoteNames: string[];
+  let api: NitradoClient;
   try {
     const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
-    remoteNames = (await new NitradoClient(token).getWhitelist(binding.nitradoServerId)).map(row => row.identifier);
+    api = new NitradoClient(token);
+    remoteNames = (await api.getWhitelist(binding.nitradoServerId)).map(row => row.identifier);
     await withFreshAdmBinding(binding, async () => undefined);
   } catch (error) {
     if (isAdmBindingFenceError(error)) {
@@ -106,27 +134,57 @@ nitradoDriftRouter.get('/whitelist', requireGuildPermission('whitelist.manage'),
   const remote = new Set(remoteNames.map(norm));
   const local = await prisma.whitelistEntry.findMany({
     where: { guildId: scope.guildId, nitradoConnId: connId, syncState: 'SYNCED' },
-    select: { gameId: true, source: true, approvedAt: true, lastSyncedAt: true },
+    select: { id: true, gameId: true, source: true, approvedAt: true, lastSyncedAt: true },
     orderBy: [{ approvedAt: 'desc' }, { gameId: 'asc' }],
     take: 1000,
   });
 
-  const items = local
-    .filter(row => !remote.has(norm(row.gameId)))
-    .map(row => ({
-      kind: 'WHITELIST' as const,
-      gameId: row.gameId,
-      source: row.source,
-      approvedAt: row.approvedAt,
-      lastConfirmedRemoteAt: row.lastSyncedAt,
-      state: 'REMOTE_MISSING' as const,
-      canRestore: true,
-    }));
+  const firstMissing = local.filter(row => !remote.has(norm(row.gameId)));
+  let confirmedMissing = firstMissing;
+  if (firstMissing.length > 0) {
+    try {
+      await delay(DRIFT_CONFIRM_DELAY_MS);
+      const secondRemote = new Set(
+        (await api!.getWhitelist(binding.nitradoServerId)).map(row => norm(row.identifier)),
+      );
+      await withFreshAdmBinding(binding, async () => undefined);
+      const stillSynced = await prisma.whitelistEntry.findMany({
+        where: {
+          id: { in: firstMissing.map(row => row.id) },
+          guildId: scope.guildId,
+          nitradoConnId: connId,
+          syncState: 'SYNCED',
+        },
+        select: { id: true },
+      });
+      const stillSyncedIds = new Set(stillSynced.map(row => row.id));
+      confirmedMissing = firstMissing.filter(row =>
+        stillSyncedIds.has(row.id) && !secondRemote.has(norm(row.gameId)),
+      );
+    } catch (error) {
+      if (isAdmBindingFenceError(error)) {
+        res.status(409).json({ error: 'Nitrado-Zuordnung hat sich waehrend der Drift-Bestaetigung geaendert. Bitte erneut laden.' });
+        return;
+      }
+      logger.warn(`Whitelist-Drift-Bestaetigung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`);
+      res.status(502).json({ error: 'Whitelist-Abweichung konnte nicht stabil bestaetigt werden.' });
+      return;
+    }
+  }
 
-  // Das Dashboard hat den frischen Remote-Read bereits erbracht. Deshalb wird
-  // die deduplizierte Discord-Entscheidung sofort erzeugt, statt erst auf den
-  // naechsten Whitelist-Cron warten zu muessen. Ein Versandfehler darf die
-  // sichtbare Drift-Antwort weder verdecken noch die lokale Wahrheit aendern.
+  const items = confirmedMissing.map(row => ({
+    kind: 'WHITELIST' as const,
+    gameId: row.gameId,
+    source: row.source,
+    approvedAt: row.approvedAt,
+    lastConfirmedRemoteAt: row.lastSyncedAt,
+    state: 'REMOTE_MISSING' as const,
+    canRestore: true,
+  }));
+
+  // Nur zweifach bestaetigte Remote-Abwesenheit darf als manuelle Abweichung
+  // publiziert werden. Ein einzelner Nitrado-Snapshot erzeugt weder Banner noch
+  // Discord-Entscheidung.
   const client = tryGetDashboardClient();
   if (client) {
     await Promise.all(items.map(item => notifyNitradoWhitelistDrift(client, {
@@ -168,8 +226,13 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
   try {
     const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
       const row = await tx.whitelistEntry.findFirst({
-        where: { guildId: scope.guildId, nitradoConnId: connId, gameId, syncState: 'SYNCED' },
-        select: { id: true },
+        where: {
+          guildId: scope.guildId,
+          nitradoConnId: connId,
+          gameId: { equals: gameId, mode: 'insensitive' },
+          syncState: 'SYNCED',
+        },
+        select: { id: true, gameId: true },
       });
       if (!row) return { resolved: false, queued: false };
 
@@ -181,7 +244,7 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
           where: {
             guildId: scope.guildId,
             nitradoConnId: connId,
-            gameId,
+            gameId: { equals: row.gameId, mode: 'insensitive' },
             status: { in: ['PENDING', 'APPROVED'] },
           },
           data: { status: 'CANCELLED' },
@@ -196,7 +259,7 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
       const queued = await enqueueWhitelistAdd(
         tx as unknown as WhitelistOutboxClient,
         { guildId: scope.guildId, nitradoConnId: connId },
-        gameId,
+        row.gameId,
       );
       return { resolved: true, queued };
     }));
@@ -230,9 +293,11 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
   const now = new Date();
 
   let remoteIdentifiers: string[];
+  let api: NitradoClient;
   try {
     const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
-    remoteIdentifiers = (await new NitradoClient(token).getBanlist(binding.nitradoServerId)).map(row => row.identifier);
+    api = new NitradoClient(token);
+    remoteIdentifiers = (await api.getBanlist(binding.nitradoServerId)).map(row => row.identifier);
     await withFreshAdmBinding(binding, async () => undefined);
   } catch (error) {
     if (isAdmBindingFenceError(error)) {
@@ -243,11 +308,6 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
     res.status(502).json({ error: 'Banliste konnte nicht frisch von Nitrado gelesen werden.' });
     return;
   }
-
-  const remoteHashes = new Set(remoteIdentifiers
-    .map(identifier => identifier.trim())
-    .filter(Boolean)
-    .map(identifier => hashBanIdentifier(identifier, config.security.encryptionKey)));
 
   const local = await prisma.serverBanEntry.findMany({
     where: {
@@ -261,18 +321,56 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
     orderBy: { bannedAt: 'desc' },
     take: 500,
   });
-  const missing = local.filter(row => !remoteHashes.has(row.identityHash));
-  const identities = missing.length > 0
+  const identities = local.length > 0
     ? await prisma.serverBanRemoteIdentity.findMany({
-        where: { banId: { in: missing.map(row => row.id) } },
+        where: { banId: { in: local.map(row => row.id) } },
         select: { banId: true, identifierEnc: true },
       })
     : [];
   const identityByBan = new Map(identities.map(row => [row.banId, row.identifierEnc]));
+  const storedIdentifierByBan = new Map(local.map(row => {
+    const enc = identityByBan.get(row.id);
+    return [row.id, enc ? safeDecryptIdentifier(enc, row.identityHash) : null] as const;
+  }));
 
-  const items = missing.map(row => {
-    const identifierEnc = identityByBan.get(row.id);
-    const identifier = identifierEnc ? safeDecryptIdentifier(identifierEnc, row.identityHash) : null;
+  const firstMissing = local.filter(row =>
+    !banPresentRemotely(remoteIdentifiers, row.identityHash, storedIdentifierByBan.get(row.id) ?? null),
+  );
+  let confirmedMissing = firstMissing;
+  if (firstMissing.length > 0) {
+    try {
+      await delay(DRIFT_CONFIRM_DELAY_MS);
+      const secondRemote = (await api!.getBanlist(binding.nitradoServerId)).map(row => row.identifier);
+      await withFreshAdmBinding(binding, async () => undefined);
+      const stillActive = await prisma.serverBanEntry.findMany({
+        where: {
+          id: { in: firstMissing.map(row => row.id) },
+          guildId: scope.guildId,
+          nitradoConnId: connId,
+          active: true,
+          appliedRemotely: true,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        select: { id: true },
+      });
+      const stillActiveIds = new Set(stillActive.map(row => row.id));
+      confirmedMissing = firstMissing.filter(row =>
+        stillActiveIds.has(row.id)
+        && !banPresentRemotely(secondRemote, row.identityHash, storedIdentifierByBan.get(row.id) ?? null),
+      );
+    } catch (error) {
+      if (isAdmBindingFenceError(error)) {
+        res.status(409).json({ error: 'Nitrado-Zuordnung hat sich waehrend der Drift-Bestaetigung geaendert. Bitte erneut laden.' });
+        return;
+      }
+      logger.warn(`Ban-Drift-Bestaetigung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`);
+      res.status(502).json({ error: 'Ban-Abweichung konnte nicht stabil bestaetigt werden.' });
+      return;
+    }
+  }
+
+  const items = confirmedMissing.map(row => {
+    const identifier = storedIdentifierByBan.get(row.id) ?? null;
     return {
       kind: 'BAN' as const,
       banId: row.id,
@@ -327,6 +425,12 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
     return;
   }
 
+  const identity = await prisma.serverBanRemoteIdentity.findUnique({
+    where: { banId },
+    select: { identifierEnc: true },
+  });
+  const storedIdentifier = identity ? safeDecryptIdentifier(identity.identifierEnc, local.identityHash) : null;
+
   let remoteIdentifiers: string[];
   try {
     const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
@@ -336,15 +440,14 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
     res.status(502).json({ error: 'Banliste konnte nicht frisch von Nitrado gelesen werden.' });
     return;
   }
-  if (remoteIdentifiers.some(identifier => matchesBanIdentifier(identifier, local.identityHash, config.security.encryptionKey))) {
+  if (banPresentRemotely(remoteIdentifiers, local.identityHash, storedIdentifier)) {
     res.status(409).json({ error: 'Die Abweichung besteht nicht mehr: Der Ban ist wieder auf Nitrado vorhanden.' });
     return;
   }
 
   let restoreIdentifier: string | null = null;
   if (decision === 'RESTORE_VBOT') {
-    const identity = await prisma.serverBanRemoteIdentity.findUnique({ where: { banId }, select: { identifierEnc: true } });
-    restoreIdentifier = identity ? safeDecryptIdentifier(identity.identifierEnc, local.identityHash) : null;
+    restoreIdentifier = storedIdentifier;
     if (!restoreIdentifier) {
       res.status(409).json({ error: 'Der verschluesselte Gameserver-Identifier fehlt oder ist ungueltig. Automatische Wiederherstellung ist nicht sicher moeglich.' });
       return;
