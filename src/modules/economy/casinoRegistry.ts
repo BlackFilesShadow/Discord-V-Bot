@@ -1,14 +1,13 @@
-import type { CasinoGameType, Prisma } from '@prisma/client';
+import type { CasinoGameType } from '@prisma/client';
 import prisma from '../../database/prisma';
 
 /**
  * Casino V3 registry.
  *
- * The public game identity is intentionally independent from Prisma's legacy
- * four-value CasinoGameType enum. Existing CasinoGame rows remain stable FK
- * anchors for CasinoRound, while the immutable round snapshot stores the real
- * V3 game key. This lets new games ship without rewriting historic rows or
- * forcing a PostgreSQL enum rewrite solely for presentation/config identity.
+ * Public game identity is intentionally independent from Prisma's historic
+ * four-value CasinoGameType enum. CasinoGameConfigV3 is the server-scoped V3
+ * source of truth; legacy CasinoGame rows remain stable CasinoRound FK anchors
+ * and compatibility mirrors for the original four games.
  */
 export const CASINO_GAME_KEYS = [
   'SLOT',
@@ -113,44 +112,10 @@ export function casinoDefinitions(): CasinoGameDefinition[] {
   return CASINO_GAME_KEYS.map(casinoDefinition);
 }
 
-export function casinoConfigKey(guildId: string, nitradoConnId: string, type: CasinoGameKey): string {
-  return `casino.v3:${guildId}:${nitradoConnId}:${type}`;
-}
-
-function finiteNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function parseStoredConfig(type: CasinoGameKey, value: unknown): CasinoGameConfig | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const row = value as Record<string, unknown>;
-  const win = finiteNumber(row.winChancePct);
-  const payout = finiteNumber(row.payoutMult);
-  const cooldown = finiteNumber(row.cooldownSeconds);
-  if (typeof row.enabled !== 'boolean' || win === null || payout === null || cooldown === null) return null;
-  if (typeof row.minBet !== 'string' || typeof row.maxBet !== 'string') return null;
-  let minBet: bigint;
-  let maxBet: bigint;
-  try {
-    minBet = BigInt(row.minBet);
-    maxBet = BigInt(row.maxBet);
-  } catch {
-    return null;
-  }
-  const config: CasinoGameConfig = {
-    enabled: row.enabled,
-    winChancePct: win,
-    payoutMult: payout,
-    minBet,
-    maxBet,
-    cooldownSeconds: cooldown,
-  };
-  try {
-    validateCasinoConfig(type, config);
-  } catch {
-    return null;
-  }
-  return config;
+/** Runtime payouts are stored as milli-multipliers; config uses the exact same precision. */
+export function normalizeCasinoPayoutMultiplier(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  return Math.round(value * 1000) / 1000;
 }
 
 export function theoreticalCasinoRtpPct(type: CasinoGameKey, winChancePct: number, payoutMult: number): number {
@@ -158,14 +123,16 @@ export function theoreticalCasinoRtpPct(type: CasinoGameKey, winChancePct: numbe
   const win = winChancePct / 100;
   const nonWin = 1 - win;
   const conditionalDraw = def.drawConditionalPct / 100;
-  return (win * payoutMult + nonWin * conditionalDraw) * 100;
+  const normalizedPayout = normalizeCasinoPayoutMultiplier(payoutMult);
+  return (win * normalizedPayout + nonWin * conditionalDraw) * 100;
 }
 
 export function validateCasinoConfig(type: CasinoGameKey, config: CasinoGameConfig): CasinoGameConfig {
   if (!Number.isInteger(config.winChancePct) || config.winChancePct < 1 || config.winChancePct > 99) {
     throw new Error('Gewinnchance muss eine ganze Zahl von 1 bis 99 Prozent sein.');
   }
-  if (!Number.isFinite(config.payoutMult) || config.payoutMult < 1 || config.payoutMult > 100) {
+  const payoutMult = normalizeCasinoPayoutMultiplier(config.payoutMult);
+  if (!Number.isFinite(payoutMult) || payoutMult < 1 || payoutMult > 100) {
     throw new Error('Auszahlung muss zwischen x1 und x100 liegen.');
   }
   if (config.minBet < 1n || config.minBet > MAX_CONFIG_BET) throw new Error('Mindesteinsatz ist ungueltig.');
@@ -173,11 +140,34 @@ export function validateCasinoConfig(type: CasinoGameKey, config: CasinoGameConf
   if (!Number.isInteger(config.cooldownSeconds) || config.cooldownSeconds < 0 || config.cooldownSeconds > 3_600) {
     throw new Error('Cooldown muss zwischen 0 und 3600 Sekunden liegen.');
   }
-  const rtp = theoreticalCasinoRtpPct(type, config.winChancePct, config.payoutMult);
+  const normalized = { ...config, payoutMult };
+  const rtp = theoreticalCasinoRtpPct(type, normalized.winChancePct, normalized.payoutMult);
   if (!Number.isFinite(rtp) || rtp > 100 + 1e-9) {
     throw new Error(`Theoretischer RTP ${rtp.toFixed(2)}% ueberschreitet das Sicherheitslimit von 100%.`);
   }
-  return { ...config };
+  return normalized;
+}
+
+function configFromStoredRow(type: CasinoGameKey, row: {
+  enabled: boolean;
+  winChancePct: number;
+  payoutMult: number;
+  minBet: bigint;
+  maxBet: bigint;
+  cooldownSeconds: number;
+}): CasinoGameConfig | null {
+  try {
+    return validateCasinoConfig(type, {
+      enabled: row.enabled,
+      winChancePct: row.winChancePct,
+      payoutMult: row.payoutMult,
+      minBet: row.minBet,
+      maxBet: row.maxBet,
+      cooldownSeconds: row.cooldownSeconds,
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function legacyFallback(guildId: string, nitradoConnId: string, type: CasinoGameKey): Promise<CasinoGameConfig | null> {
@@ -190,8 +180,8 @@ async function legacyFallback(guildId: string, nitradoConnId: string, type: Casi
   const defaults = DEFINITIONS[type].defaults;
   const candidate: CasinoGameConfig = {
     enabled: legacy.enabled,
-    // Only SLOT used this field as an actual probability before V3. The fixed-rule
-    // games start from their safe V3 probability instead of inheriting dead data.
+    // Before V3 only SLOT treated winChancePct as actual probability. Fixed-rule
+    // legacy games start with their safe V3 defaults instead of inheriting dead data.
     winChancePct: type === 'SLOT' ? legacy.winChancePct : defaults.winChancePct,
     payoutMult: legacy.payoutMult,
     minBet: legacy.minBet,
@@ -210,16 +200,26 @@ export async function getCasinoGameConfig(
   nitradoConnId: string,
   type: CasinoGameKey,
 ): Promise<CasinoGameConfig> {
-  const row = await prisma.botConfig.findUnique({
-    where: { key: casinoConfigKey(guildId, nitradoConnId, type) },
-    select: { value: true },
+  const row = await prisma.casinoGameConfigV3.findUnique({
+    where: { guildServerType: { guildId, nitradoConnId, type } },
+    select: {
+      enabled: true,
+      winChancePct: true,
+      payoutMult: true,
+      minBet: true,
+      maxBet: true,
+      cooldownSeconds: true,
+    },
   });
-  const stored = parseStoredConfig(type, row?.value);
+  const stored = row ? configFromStoredRow(type, row) : null;
   if (stored) return stored;
   return (await legacyFallback(guildId, nitradoConnId, type)) ?? { ...DEFINITIONS[type].defaults };
 }
 
-export async function listCasinoGameConfigs(guildId: string, nitradoConnId: string): Promise<Array<CasinoGameDefinition & { config: CasinoGameConfig }>> {
+export async function listCasinoGameConfigs(
+  guildId: string,
+  nitradoConnId: string,
+): Promise<Array<CasinoGameDefinition & { config: CasinoGameConfig }>> {
   return Promise.all(CASINO_GAME_KEYS.map(async type => ({
     ...casinoDefinition(type),
     config: await getCasinoGameConfig(guildId, nitradoConnId, type),
@@ -233,39 +233,20 @@ export async function saveCasinoGameConfig(
   config: CasinoGameConfig,
 ): Promise<CasinoGameConfig> {
   const valid = validateCasinoConfig(type, config);
-  const json: Prisma.InputJsonObject = {
-    version: 3,
-    enabled: valid.enabled,
-    winChancePct: valid.winChancePct,
-    payoutMult: valid.payoutMult,
-    minBet: valid.minBet.toString(),
-    maxBet: valid.maxBet.toString(),
-    cooldownSeconds: valid.cooldownSeconds,
-  };
-  await prisma.botConfig.upsert({
-    where: { key: casinoConfigKey(guildId, nitradoConnId, type) },
-    create: {
-      key: casinoConfigKey(guildId, nitradoConnId, type),
-      value: json,
-      category: 'casino-v3',
-      description: `Casino V3 ${type} fuer ${guildId}/${nitradoConnId}`,
-    },
-    update: { value: json, category: 'casino-v3' },
-  });
 
-  // Keep the four legacy rows coherent for old reports/tools. They are no longer
-  // the V3 source of truth, but preserving these values avoids split-brain reads
-  // while the remaining dashboard/report paths are migrated.
-  if (type === 'SLOT' || type === 'COINFLIP' || type === 'DICE' || type === 'BLACKJACK') {
-    await prisma.casinoGame.upsert({
+  await prisma.$transaction(async tx => {
+    await tx.casinoGameConfigV3.upsert({
       where: { guildServerType: { guildId, nitradoConnId, type } },
       create: {
-        guildId, nitradoConnId, type,
+        guildId,
+        nitradoConnId,
+        type,
         enabled: valid.enabled,
         winChancePct: valid.winChancePct,
         payoutMult: valid.payoutMult,
         minBet: valid.minBet,
         maxBet: valid.maxBet,
+        cooldownSeconds: valid.cooldownSeconds,
       },
       update: {
         enabled: valid.enabled,
@@ -273,16 +254,42 @@ export async function saveCasinoGameConfig(
         payoutMult: valid.payoutMult,
         minBet: valid.minBet,
         maxBet: valid.maxBet,
+        cooldownSeconds: valid.cooldownSeconds,
       },
     });
-  }
+
+    // Keep the original four rows coherent for legacy reports/tools. Both writes
+    // commit atomically so there is no transient split-brain configuration.
+    if (type === 'SLOT' || type === 'COINFLIP' || type === 'DICE' || type === 'BLACKJACK') {
+      await tx.casinoGame.upsert({
+        where: { guildServerType: { guildId, nitradoConnId, type } },
+        create: {
+          guildId,
+          nitradoConnId,
+          type,
+          enabled: valid.enabled,
+          winChancePct: valid.winChancePct,
+          payoutMult: valid.payoutMult,
+          minBet: valid.minBet,
+          maxBet: valid.maxBet,
+        },
+        update: {
+          enabled: valid.enabled,
+          winChancePct: valid.winChancePct,
+          payoutMult: valid.payoutMult,
+          minBet: valid.minBet,
+          maxBet: valid.maxBet,
+        },
+      });
+    }
+  });
   return valid;
 }
 
 /**
  * CasinoRound still references the historic CasinoGame table. New logical games
- * use a stable legacy anchor while the immutable result.audit.type carries the
- * real V3 identity. Existing rounds/FKs remain untouched.
+ * use a stable legacy anchor while immutable result.audit.type carries the V3
+ * identity. Existing round rows and foreign keys therefore remain untouched.
  */
 export async function ensureCasinoRoundAnchor(guildId: string, nitradoConnId: string, type: CasinoGameKey): Promise<string> {
   const anchorType = DEFINITIONS[type].anchorType;
