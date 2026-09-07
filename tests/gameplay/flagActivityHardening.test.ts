@@ -29,15 +29,16 @@ describe('ADM flag hardening', () => {
     }
   });
 
-  test('keeps player and flag X/Y/Z coordinates separate for a real DayZ action', () => {
+  test('keeps player/flag coordinates and the exact dynamic totem classname separate', () => {
     const event = parseAdmLine(
-      '15:47:12 | Player "JtReaper" (id=player-1 pos=<9713.25, 167.81, 13149.40>) has lowered Flag_RSTA on TerritoryFlag at <9714.855469, 168.180801, 13150.735352>',
+      '15:47:12 | Player "JtReaper" (id=player-1 pos=<9713.25, 167.81, 13149.40>) has lowered Flag_RSTA on StaticFlagPole at <9714.855469, 168.180801, 13150.735352>',
       newDateContext(new Date(Date.UTC(2026, 7, 31))),
     );
     expect(event).toMatchObject({
       eventType: 'FLAG_LOWERED',
       actorGameId: 'player-1',
       actorPosition: '9713.25, 167.81, 13149.40',
+      targetName: 'StaticFlagPole',
       targetPosition: '9714.855469, 168.180801, 13150.735352',
       objectType: 'Flag_RSTA',
       parseStatus: 'OK',
@@ -60,10 +61,10 @@ describe('ADM flag hardening', () => {
     expect(shouldRestartReusedAdmFile({ name: 'DayZServer.ADM', path: '/DayZServer.ADM', size: 4096, modified_at: 100 }, cursor)).toBe(false);
   });
 
-  test('LOWERED persistence shares the raw/canonical event key and cursor is not advanced if canonical persistence fails', async () => {
+  test('LOWERED persistence shares the raw/canonical event key, preserves totem class and fences cursor on failure', async () => {
     const input = [
       'AdminLog started on 2026-08-31',
-      '12:42:51 | Player "Survivor" (id=game-a pos=<1, 2, 3>) has lowered Flag_Base on TerritoryFlag at <4, 5, 6>',
+      '12:42:51 | Player "Survivor" (id=game-a pos=<1, 2, 3>) has lowered Flag_Base on StaticFlagPole at <4, 5, 6>',
       '',
     ].join('\n');
     const result = ingestFullFile(input, 0, { fileName: 'DayZServer.ADM' });
@@ -81,6 +82,7 @@ describe('ADM flag hardening', () => {
     }, result, null);
     expect(flagRows).toHaveLength(1);
     expect(flagRows[0].action).toBe('LOWERED');
+    expect(flagRows[0].totemType).toBe('StaticFlagPole');
     expect(flagRows[0].eventKey).toBe(admRows[0].eventKey);
     expect(cursorWrites).toBe(1);
 
