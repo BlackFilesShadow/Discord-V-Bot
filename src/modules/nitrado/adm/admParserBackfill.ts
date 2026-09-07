@@ -224,7 +224,7 @@ export async function runAdmParserBackfill(
         },
         data: {
           lastCheckedAt: now,
-          completedAt: state.completedAt ?? now,
+          completedAt: reparsedCount > 0 ? now : state.completedAt ?? now,
         },
       });
       return {
