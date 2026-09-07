@@ -96,6 +96,8 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
 
   // Erst lokale, exakt gescoppte Kandidaten feststellen. Connections ohne
   // bot-eigene Ban-Zeilen verursachen dadurch keinen unnoetigen Nitrado-Read.
+  // Unbekannte Remote-Bans werden nie importiert oder als bot-eigene Wahrheit
+  // interpretiert; nur bereits vorhandene lokale Ban-Zeilen werden verglichen.
   const local = await prisma.serverBanEntry.findMany({
     where: {
       guildId: conn.guildId,
@@ -154,6 +156,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
   let missingRepairSecrets = 0;
   let manualRemoteMissing = 0;
   let radarFenceRejected = 0;
+  let repairedWhitelistMirrors = 0;
 
   for (const ban of local) {
     const fenceDecision = await inspectRadarAutoBanFenceForRemoteAdd(
@@ -186,6 +189,38 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     const locallyActive = isBanActive(ban, now);
     const storedIdentityEnc = identityByBan.get(ban.id) ?? null;
     const storedIdentifier = storedIdentifierByBan.get(ban.id) ?? null;
+
+    // Bestands-Selbstheilung fuer den alten Case-Bug: Ein aktiver Ban und ein
+    // gleichzeitig noch LOCAL_ONLY/SYNCED gefuehrter Whitelist-Eintrag koennen
+    // fachlich nicht beide wahr sein. Wenn der verschluesselte Original-
+    // Identifier kryptografisch zum Ban gehoert, wird der lokale Whitelist-
+    // Spiegel case-insensitiv auf PENDING_REMOVE gesetzt. Der normale
+    // Whitelist-Reconciler bestaetigt/finalisiert danach gegen Nitrado; hier
+    // findet kein direkter Remote-Whitelist-Write statt.
+    if (locallyActive && storedIdentifier) {
+      const repaired = await prisma.whitelistEntry.updateMany({
+        where: {
+          guildId: conn.guildId,
+          nitradoConnId: conn.id,
+          gameId: { equals: storedIdentifier, mode: 'insensitive' },
+          syncState: { in: ['LOCAL_ONLY', 'SYNCED'] },
+        },
+        data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
+      });
+      if (repaired.count > 0) {
+        repairedWhitelistMirrors += repaired.count;
+        await prisma.whitelistRequest.updateMany({
+          where: {
+            guildId: conn.guildId,
+            nitradoConnId: conn.id,
+            gameId: { equals: storedIdentifier, mode: 'insensitive' },
+            status: { in: ['PENDING', 'APPROVED'] },
+          },
+          data: { status: 'CANCELLED' },
+        });
+      }
+    }
+
     const remoteIdentifier = findRemoteIdentifier(remoteRows, ban, storedIdentifier);
 
     if (locallyActive) {
@@ -334,6 +369,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     || missingRepairSecrets > 0
     || manualRemoteMissing > 0
     || radarFenceRejected > 0
+    || repairedWhitelistMirrors > 0
   ) {
     logAudit('SERVER_BAN_RECONCILED', 'NITRADO', {
       guildId: conn.guildId,
@@ -346,6 +382,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       missingRepairSecrets,
       manualRemoteMissingObserved: manualRemoteMissing,
       radarFenceRejected,
+      repairedWhitelistMirrors,
       remoteRows: remoteRows.length,
       localRows: local.length,
     });
@@ -418,4 +455,10 @@ export function startBanReconciliationCron(client?: Client): void {
   timer = setInterval(() => { void runBanReconciliationOnce(new Date(), client); }, RECONCILE_INTERVAL_MS);
   timer.unref?.();
   void runBanReconciliationOnce(new Date(), client);
+}
+
+export function stopBanReconciliationCron(): void {
+  if (!timer) return;
+  clearInterval(timer);
+  timer = null;
 }
