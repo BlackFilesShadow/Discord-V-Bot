@@ -52,6 +52,8 @@ export function theoreticalCasinoRtpPct(
       return (1 / 6) * payoutMult * 100;
     case 'BLACKJACK':
       return (BLACKJACK_WIN_PROBABILITY * payoutMult + BLACKJACK_DRAW_PROBABILITY) * 100;
+    default:
+      throw new Error('Unbekannter Casino-Game-Type.');
   }
 }
 
