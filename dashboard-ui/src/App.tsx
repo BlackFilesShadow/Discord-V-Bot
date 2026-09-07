@@ -68,7 +68,7 @@ const DEV_PAGES: Record<string, ComponentType> = {
 };
 
 const Server = lazyPage(() => import('./pages/Server'));
-const ServerSlot = lazyPage(() => import('./pages/ServerSlot'));
+const ServerSlot = lazyPage(() => import('./pages/ServerSlotV3'));
 const Dev = lazyPage(() => import('./pages/Dev'));
 const BotAdmin = lazyPage(() => import('./pages/BotAdmin'));
 const CommandCenter = lazyPage(() => import('./pages/dev/CommandCenter'));
