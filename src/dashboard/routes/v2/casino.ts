@@ -80,6 +80,7 @@ function gamePayload(type: CasinoGameKey, config: CasinoGameConfig) {
     minBet: config.minBet.toString(),
     maxBet: config.maxBet.toString(),
     cooldownSeconds: config.cooldownSeconds,
+    drawConditionalPct: def.drawConditionalPct,
     theoreticalRtpPct: Number(theoreticalRtpPct.toFixed(2)),
     houseEdgePct: Number((100 - theoreticalRtpPct).toFixed(2)),
   };
