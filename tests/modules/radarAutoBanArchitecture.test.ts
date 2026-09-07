@@ -87,7 +87,7 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
     expect(catalog).toContain('event.targetGameId === event.actorGameId');
     expect(catalog).toContain('isExplosiveRadarEvent(event) ? [] : attackingPlayerPosition(event)');
     expect(catalog).toContain('isExplosiveRadarEvent(event) ? attackingPlayerPosition(event) : []');
-    expect(autoBanRuntime).toContain('if (!event.targetGameId');
+    expect(catalog).toContain('if (!event.targetGameId');
   });
 
   it('loest Disconnect nur ueber frische, gleiche Session/Binding-Positions-Evidenz und niemals ueber Schaetzung', () => {
