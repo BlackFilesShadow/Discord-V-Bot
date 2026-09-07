@@ -193,6 +193,7 @@ export async function persistAdmEvents(
       actorName: event.actorName,
       actorPosition: event.actorPosition,
       flagType: event.objectType,
+      totemType: event.targetName,
       flagPosition: event.targetPosition,
       rawLine: event.rawLine,
     }));
