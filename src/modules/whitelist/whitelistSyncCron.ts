@@ -19,8 +19,8 @@
  *   aktive Spiegel wird niemals automatisch entfernt; ein Admin entscheidet
  *   explizit ueber die weitere Behandlung. LOCAL_ONLY wird ebenfalls nie
  *   verworfen.
- * - PENDING_REMOVE bleibt lokal erhalten, bis ein frischer Remote-Read die
- *   Entfernung bestaetigt. Erst dann wird der lokale Spiegel final geloescht.
+ * - PENDING_REMOVE bleibt lokal erhalten, bis zwei stabile Remote-Reads die
+ *   Entfernung bestaetigen. Erst dann wird der lokale Spiegel final geloescht.
  * - Remote-only Eintraege sind Fremdwahrheit und werden vom Hintergrund-Cron
  *   niemals automatisch geloescht. Ein destruktiver Push bleibt eine explizite
  *   Admin-Aktion ueber die vorhandenen Command-/Dashboard-Pfade.
@@ -42,6 +42,7 @@ import { clearNitradoDriftNotice, notifyNitradoWhitelistDrift } from '../nitrado
 import type { Client } from 'discord.js';
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const REMOTE_ABSENCE_CONFIRM_DELAY_MS = 350;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
@@ -62,6 +63,10 @@ function normGameId(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function payloadGameId(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
   const value = (payload as Record<string, unknown>).gameId;
@@ -70,6 +75,15 @@ function payloadGameId(payload: unknown): string | null {
 
 function jobKey(operation: string, gameId: string): string {
   return `${operation}:${normGameId(gameId)}`;
+}
+
+function mergeRemoteNames(first: string[], second: string[]): string[] {
+  const byNorm = new Map<string, string>();
+  for (const value of [...first, ...second]) {
+    const normalized = normGameId(value);
+    if (normalized && !byNorm.has(normalized)) byNorm.set(normalized, value);
+  }
+  return [...byNorm.values()];
 }
 
 /**
@@ -82,13 +96,25 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection, client?:
   const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
   const api = new NitradoClient(token);
   const remoteEntries = await api.getWhitelist(conn.nitradoServerId);
-  const remoteNames = remoteEntries.map((e) => e.identifier);
-  const remoteNorm = new Set(remoteNames.map(normGameId));
+  let remoteNames = remoteEntries.map((e) => e.identifier);
+  let remoteNorm = new Set(remoteNames.map(normGameId));
 
   const local = await prisma.whitelistEntry.findMany({
     where: { guildId: conn.guildId, nitradoConnId: conn.id },
     select: { id: true, gameId: true, syncState: true },
   }) as LocalWhitelistEntry[];
+
+  // Ein einzelner Nitrado-Snapshot darf niemals eine Abwesenheit bestaetigen.
+  // Sobald irgendein lokaler Soll-/Spiegeleintrag im ersten Read fehlt, wird
+  // unter demselben Connection-Lock erneut gelesen. Fuer die Reconciliation
+  // gilt konservativ die Vereinigungsmenge: Abwesenheit gilt nur, wenn beide Reads fehlen.
+  if (local.some(entry => !remoteNorm.has(normGameId(entry.gameId)))) {
+    await delay(REMOTE_ABSENCE_CONFIRM_DELAY_MS);
+    const secondRemoteEntries = await api.getWhitelist(conn.nitradoServerId);
+    const secondRemoteNames = secondRemoteEntries.map((e) => e.identifier);
+    remoteNames = mergeRemoteNames(remoteNames, secondRemoteNames);
+    remoteNorm = new Set(remoteNames.map(normGameId));
+  }
 
   const desiredLocal = local.filter((entry) => entry.syncState !== 'PENDING_REMOVE');
   const localNames = desiredLocal.map((e) => e.gameId);
@@ -105,8 +131,9 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection, client?:
   const pendingRemoveRemote = new Map<string, string>();
 
   // PENDING_REMOVE ist eine lokale Absicht und darf niemals wieder zu
-  // LOCAL_ONLY/SYNCED umgeschrieben werden. Sobald der Name remote wirklich
-  // fehlt, ist die Entfernung bestaetigt und der lokale Spiegel darf weg.
+  // LOCAL_ONLY/SYNCED umgeschrieben werden. Sobald der Name remote in beiden
+  // stabilen Reads wirklich fehlt, ist die Entfernung bestaetigt und der lokale
+  // Spiegel darf weg.
   //
   // Fuer normale Eintraege gilt bewusst asymmetrisch:
   // - remote vorhanden -> SYNCED (frisch bestaetigt)
