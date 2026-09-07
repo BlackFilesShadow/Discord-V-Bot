@@ -13,7 +13,7 @@ export interface PlayerPresenceEvent {
 export interface PlayerPositionEvent {
   id: string;
   actorGameId: string | null;
-  actorName: string | null;
+  actorName?: string | null;
   actorPosition: string | null;
   sourceByteStart: bigint;
 }
