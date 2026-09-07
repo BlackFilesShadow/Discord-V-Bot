@@ -10,6 +10,10 @@ The reference used for the vanilla action contract is the current `BohemiaIntera
 
 | Vanilla ADM producer / action | Typical ADM wording | V-Bot event | Feed |
 | --- | --- | --- | --- |
+| `PluginAdminLog.PlayerKilled` with a second player identity | `killed by Player ...` / player identity + weapon | `PLAYER_KILLED` | Deathfeed / PVP |
+| `PluginAdminLog.Suicide` | `committed suicide` | `PLAYER_SUICIDE` | Deathfeed / Suicide |
+| `PluginAdminLog.PlayerKilled` animal/infected branch | `killed by Animal_*` / `killed by ZmbM_*` / `ZmbF_*` | `NPC_KILL` | Deathfeed / Wild |
+| engine vehicle evidence | `hit by [vehicle] ... at speed ...` on a DEAD player | `VEHICLE_DEATH` | Deathfeed / Vehicle |
 | `PluginAdminLog.OnPlacementComplete` | `placed ...` | `PLACEMENT` | Placement |
 | `ActionBuildPart` | `Built <part> on <object> with <tool>` | `BUILD` | Baufeed / Build |
 | `ShelterSite` build completion | `built <ShelterType> with Hands` | `BUILD` | Baufeed / Build |
@@ -26,7 +30,31 @@ The reference used for the vanilla action contract is the current `BohemiaIntera
 
 `packed` and `folded` are deliberately `DISMANTLE`: vanilla DayZ actually removes/deconstructs the deployed structure in those actions. A shelter pack calls `Deconstruct()`, a tent pack calls `Pack(true)`, and folding a basebuilding object calls `DestroyConstruction()` while returning its kit.
 
-## Actions deliberately not forced into an existing category
+## Deathfeed: exact cause isolation
+
+Vanilla `PluginAdminLog.PlayerKilled()` does **not** use one uniform non-player cause format:
+
+- player-caused kills contain a second player identity and can safely become `PVP`;
+- animals/infected are written through `source.GetType()`, producing vanilla class families such as `Animal_*`, `ZmbM_*` and `ZmbF_*`;
+- explosive/other object causes can use the same English `killed by ...` wording but provide a display name instead of a player or wild-source identity.
+
+Therefore V-Bot must never treat every non-player `killed by ...` line as Wild/NPC. Only the explicit vanilla animal/infected classname families are admitted to `NPC_KILL`. An explosion, mine, unknown object or ambiguous display-name cause stays `PLAYER_DIED` raw evidence and is **not** emitted as PVP, NPC, Vehicle or Suicide.
+
+The following explicit vanilla raw-death states are also retained without inventing a visible category:
+
+- `died` / stats death
+- `drowned`
+- `has drowned while unconscious`
+- `bled out`
+- `is choosing to respawn`
+- `is disconnecting while being unconscious`
+- `is disconnecting while being restrained`
+
+`PLAYER_DIED` intentionally has no visible Deathfeed category. This avoids duplicate or misleading posts when DayZ emits a specific supported event plus a later generic death line.
+
+All visible Deathfeed parsing requires a canonical DayZ player prefix with identity and position. Chat/report text that happens to contain `killed by`, `committed suicide`, `hit by` or connect/disconnect wording cannot become a gameplay feed event.
+
+## Actions deliberately not forced into an existing build category
 
 The following vanilla admin-log actions are **not** silently relabelled as Build, Placement, Dismantle or Destroy:
 
@@ -43,6 +71,16 @@ Build/placement classification requires the canonical DayZ player-action prefix 
 
 Flag actions are likewise accepted only in the canonical `TotemFlagChange` shape with valid actor and totem coordinates. The totem classname is not hard-coded to `TerritoryFlag`; derived vanilla classes such as `StaticFlagPole` are valid because DayZ logs `totem.ClassName()`.
 
+The five UI feed families remain semantically isolated:
+
+- Deathfeed: `PVP`, `SUICIDE`, `NPC`, `VEHICLE`
+- Baufeed: `BUILD`, `DISMANTLE`, `DESTROY`
+- Placement: `PLACEMENT` only
+- Online List: connection/disconnection presence plus `PLAYER_POSITION`
+- Flaggen-Feed: `RAISED`, `LOWERED`
+
+No event is routed into a neighbouring family merely to make it visible.
+
 ## Server-side logging prerequisites
 
 V-Bot can only classify evidence that DayZ actually writes to ADM. Required server settings include:
@@ -56,4 +94,6 @@ A parser cannot reconstruct an event that vanilla DayZ never logs. In particular
 
 ## Regression contract
 
-`tests/modules/admVanillaActionCoverage.test.ts` protects the mapping above, including shelters/tents, folding, barbed wire, strict Placement separation, flag totem subclasses, intentional exclusions and chat false-positive rejection.
+- `tests/modules/admVanillaActionCoverage.test.ts` protects shelters/tents, folding, barbed wire, strict Placement separation, flag totem subclasses, intentional exclusions and build-action chat false-positive rejection.
+- `tests/modules/admVanillaDeathCoverage.test.ts` protects PVP/Suicide/Wild/Vehicle isolation, raw environmental/explosive causes and deathfeed chat false-positive rejection.
+- `tests/modules/admFeedIsolationRegression.test.ts` protects cross-category negative boundaries used by the Discord delivery layer.
