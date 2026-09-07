@@ -107,10 +107,13 @@ describe('ADM vanilla gameplay action coverage', () => {
   });
 
   test('does not classify chat text containing build verbs as gameplay actions', () => {
-    expect(parseAdmLine(
+    const event = parseAdmLine(
       '12:00:00 | Chat("Builder"(id=dayz-guid)): I dismantled Fence with Hammer',
       ctx(),
-    )).toBeNull();
+    );
+    expect(event?.eventType).toBe('UNKNOWN');
+    expect(kindForEvent(event!.eventType)).toBeNull();
+    expect(categoryForEvent(event!.eventType)).toBeNull();
   });
 
   test('does not accept a pseudo build line without the canonical action position prefix', () => {
