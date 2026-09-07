@@ -3,7 +3,7 @@
  * RewardBooking — productive booking of pending RewardDecisions.
  *
  * PENDING -> PAID and the money booking are one transaction. In addition to the
- * existing leave/race fences, V3 finally enforces EconomyRewardRule.dailyCap and
+ * existing leave/race fences, V3 enforces EconomyRewardRule.dailyCap and
  * cooldownSeconds at the point where real money would be created.
  */
 import { bookLedgerEntryInTx, type LedgerClient, type LedgerTx } from './ledger';
@@ -142,7 +142,7 @@ async function markSkipped(
   });
 }
 
-/** Returns actual newly paid amount, 0n for a handled no-pay outcome, null for CAS/leave loss. */
+/** Returns finalized paid amount, 0n for a handled no-pay outcome, null for CAS/leave loss. */
 async function finalizePendingReward(
   client: RewardBookingClient,
   scope: RewardBookingScope,
@@ -179,9 +179,8 @@ async function finalizePendingReward(
     if (claim.count !== 1) return null;
 
     const key = `reward:${decision.id}`;
-
-    // Recovery has priority over a newly configured cap/cooldown: if money was
-    // already committed by a legacy transaction, never create or remove it again.
+    // Recovery has priority over newly configured limits: money that already
+    // committed must only repair the Decision state, never be mutated again.
     const existing = await tx.economyLedgerEntry.findUnique({
       where: { idempotencyKey: key },
       select: {
@@ -203,7 +202,7 @@ async function finalizePendingReward(
         where: { id: decision.id },
         data: { status: 'PAID', paid: decision.calculated, ledgerEntryId: existing.id },
       });
-      return 0n;
+      return decision.calculated;
     }
 
     const limits = await rewardLimits(tx, scope, decision, normalized.timezone);
