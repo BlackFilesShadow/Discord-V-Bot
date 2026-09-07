@@ -12,6 +12,7 @@ import { logger } from '../../../utils/logger';
 import { asGuildId, asNitradoConnId } from '../../../types/scope';
 import { runPvpRewardShadow, type RewardEngineClient } from './rewardEngine';
 import { aggregatePlayerSessions, type PlayerSessionClient } from './playerSessionService';
+import { runAdmParserBackfill, type AdmParserBackfillClient } from './admParserBackfill';
 import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../../economy/rewardRules';
 import { getSlotEconomyConfig, type SlotConfigClient } from '../../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewardBooking';
@@ -33,6 +34,27 @@ interface ScopedConnection {
 
 async function processConnection(conn: ScopedConnection): Promise<void> {
   const scopeRef = { guildId: conn.guildId, nitradoConnId: conn.id };
+
+  // Parser-Upgrades werden ausschliesslich auf der bereits persistierten
+  // AdmEvent-Historie nachgezogen. Der Backfill fasst keinen Remote-Dateicursor
+  // an und behaelt eventKey/createdAt bei, sodass bereits passierte Feed-, Radar-
+  // und Reward-High-Watermarks niemals kuenstlich zurueckgesetzt werden.
+  try {
+    const backfill = await runAdmParserBackfill(
+      prisma as unknown as AdmParserBackfillClient,
+      scopeRef,
+    );
+    if (backfill.reparsed > 0 || backfill.flagRowsCreated > 0) {
+      logger.info(
+        `ADM-Postprocess: Parser-Backfill ${conn.id}: reparsed=${backfill.reparsed}, flags=${backfill.flagRowsCreated}, complete=${backfill.complete}`,
+      );
+    }
+  } catch (error) {
+    // Ein historischer Backfill darf den Live-Postprocess nicht blockieren. Die
+    // alte parserVersion bleibt bei Fehlern bestehen und wird im naechsten Lauf
+    // erneut idempotent versucht.
+    logger.warn(`ADM-Postprocess: Parser-Backfill fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
+  }
 
   try {
     await aggregatePlayerSessions(prisma as unknown as PlayerSessionClient, scopeRef);
