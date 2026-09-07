@@ -76,14 +76,20 @@ export function resolveOnlinePresence(
     if (!presence && !position) continue;
     if (presence?.eventType !== 'PLAYER_CONNECTED' && !position) continue;
 
-    const playerName = (
-      position?.actorName?.trim()
-      || presence?.actorName?.trim()
-      || 'Unbekannt'
-    );
     const connectedByteStart = presence?.eventType === 'PLAYER_CONNECTED'
       ? presence.sourceByteStart
       : position!.sourceByteStart;
+
+    // Der Anzeigename folgt derselben Evidenz-Reihenfolge wie der Online-
+    // Status. Eine Position vor einem spaeteren Reconnect darf deshalb keinen
+    // alten Spielernamen ueber den aktuelleren CONNECT-Namen legen.
+    const positionIsCurrent = Boolean(position && position.sourceByteStart >= connectedByteStart);
+    const playerName = (
+      (positionIsCurrent ? position?.actorName?.trim() : null)
+      || presence?.actorName?.trim()
+      || position?.actorName?.trim()
+      || 'Unbekannt'
+    );
 
     online.push({ gameId, playerName, connectedByteStart });
   }
