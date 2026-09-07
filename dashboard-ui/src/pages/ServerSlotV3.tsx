@@ -27,6 +27,7 @@ import {
 
 type CasinoGameType = 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK' | 'ROULETTE' | 'HIGHLOW' | 'BACCARAT' | 'WHEEL';
 type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
+type RewardTarget = 'WALLET' | 'BANK';
 
 interface EconomyConfigState {
   enabled: boolean;
@@ -34,10 +35,28 @@ interface EconomyConfigState {
   emoji: string;
   startBalance: number;
   playtimeRewardPer10Min: number;
-  /** rolling compatibility response from older API clients */
+  /** Rolling compatibility response for older clients. */
   playtimeRewardPercent?: number;
   bankInterestPercent: number;
   bankChannelId: string | null;
+}
+
+interface EconomyRewardState {
+  economyActive: boolean;
+  admRewardsEnabled: boolean;
+  timezone: string;
+  pvp: {
+    enabled: boolean;
+    baseAmount: string;
+    rewardTarget: RewardTarget;
+    dailyCap: string | null;
+    cooldownSeconds: number;
+  };
+  playtime: {
+    enabled: boolean;
+    baseAmount: string;
+    rewardTarget: RewardTarget;
+  };
 }
 
 interface ChannelOption { id: string; name: string; type: number; parentId: string | null; }
@@ -53,6 +72,7 @@ interface CasinoGameRow {
   minBet: string;
   maxBet: string;
   cooldownSeconds: number;
+  drawConditionalPct: number;
   theoreticalRtpPct: number;
   houseEdgePct: number;
 }
@@ -75,17 +95,18 @@ interface EconomyOverviewData {
 const CASINO_TYPES: readonly CasinoGameType[] = [
   'SLOT', 'COINFLIP', 'DICE', 'BLACKJACK', 'ROULETTE', 'HIGHLOW', 'BACCARAT', 'WHEEL',
 ];
-const FALLBACK_META: Record<CasinoGameType, { label: string; emoji: string; description: string }> = {
-  SLOT: { label: 'Slot', emoji: '🎰', description: 'Drei Walzen mit konfigurierbarer Gewinnchance.' },
-  COINFLIP: { label: 'Coinflip', emoji: '🪙', description: 'Kopf oder Zahl mit konfigurierter Server-Chance.' },
-  DICE: { label: 'Dice', emoji: '🎲', description: 'Zahl von 1 bis 6 tippen.' },
-  BLACKJACK: { label: 'Blackjack', emoji: '🃏', description: 'Automatische Kartenrunde.' },
-  ROULETTE: { label: 'Roulette', emoji: '🎡', description: 'Rot oder Schwarz.' },
-  HIGHLOW: { label: 'High-Low', emoji: '🔼', description: 'Höher oder tiefer tippen.' },
-  BACCARAT: { label: 'Baccarat', emoji: '🎴', description: 'Auf Spieler oder Banker setzen.' },
-  WHEEL: { label: 'Glücksrad', emoji: '🎯', description: 'Schnelle Glücksrad-Runde.' },
+const FALLBACK_META: Record<CasinoGameType, { label: string; emoji: string; description: string; drawConditionalPct: number }> = {
+  SLOT: { label: 'Slot', emoji: '🎰', description: 'Drei Walzen mit konfigurierbarer Gewinnchance.', drawConditionalPct: 0 },
+  COINFLIP: { label: 'Coinflip', emoji: '🪙', description: 'Kopf oder Zahl mit konfigurierter Server-Chance.', drawConditionalPct: 0 },
+  DICE: { label: 'Dice', emoji: '🎲', description: 'Zahl von 1 bis 6 tippen.', drawConditionalPct: 0 },
+  BLACKJACK: { label: 'Blackjack', emoji: '🃏', description: 'Automatische Kartenrunde.', drawConditionalPct: 10 },
+  ROULETTE: { label: 'Roulette', emoji: '🎡', description: 'Rot oder Schwarz.', drawConditionalPct: 0 },
+  HIGHLOW: { label: 'High-Low', emoji: '🔼', description: 'Höher oder tiefer tippen.', drawConditionalPct: 0 },
+  BACCARAT: { label: 'Baccarat', emoji: '🎴', description: 'Auf Spieler oder Banker setzen.', drawConditionalPct: 8 },
+  WHEEL: { label: 'Glücksrad', emoji: '🎯', description: 'Schnelle Glücksrad-Runde.', drawConditionalPct: 0 },
 };
 const MAX_BET = 1_000_000_000_000_000n;
+const MAX_REWARD = 1_000_000_000_000_000n;
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 const NAV: ReadonlyArray<[Tab, string, typeof Settings]> = [
@@ -101,6 +122,17 @@ const NAV: ReadonlyArray<[Tab, string, typeof Settings]> = [
 
 function fmtBig(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
+}
+
+function validUnsignedBigint(value: string, max: bigint, allowEmpty = false): boolean {
+  if (allowEmpty && value === '') return true;
+  if (!/^\d+$/.test(value)) return false;
+  try {
+    const parsed = BigInt(value);
+    return parsed >= 0n && parsed <= max;
+  } catch {
+    return false;
+  }
 }
 
 function SlotV3Shell({ tab, children }: { tab: Tab; children: React.ReactNode }) {
@@ -160,6 +192,11 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
     queryFn: () => api.get<EconomyOverviewData>(`/api/v2/guilds/${guildId}/economy/overview?slot=${encodeURIComponent(slot)}`),
     retry: false,
   });
+  const rewards = useQuery({
+    queryKey: ['economy-rewards', guildId, slot],
+    queryFn: () => api.get<EconomyRewardState>(`/api/v2/guilds/${guildId}/economy/rewards?slot=${encodeURIComponent(slot)}`),
+    retry: false,
+  });
   const update = useMutation({
     mutationFn: (patch: Partial<EconomyConfigState>) => api.put<EconomyConfigState>(
       `/api/v2/guilds/${guildId}/economy/config?slot=${encodeURIComponent(slot)}`,
@@ -168,7 +205,22 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
     onSuccess: saved => {
       qc.setQueryData(['economy', guildId, slot], saved);
       void qc.invalidateQueries({ queryKey: ['economy-overview', guildId, slot] });
+      void qc.invalidateQueries({ queryKey: ['economy-rewards', guildId, slot] });
       toast.push({ variant: 'success', title: 'Gespeichert', desc: 'Economy-Konfiguration aktualisiert.' });
+    },
+    onError: err => {
+      const d = describeApiError(err);
+      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+    },
+  });
+  const updateRewards = useMutation({
+    mutationFn: (patch: Record<string, unknown>) => api.put<EconomyRewardState>(
+      `/api/v2/guilds/${guildId}/economy/rewards?slot=${encodeURIComponent(slot)}`,
+      patch,
+    ),
+    onSuccess: saved => {
+      qc.setQueryData(['economy-rewards', guildId, slot], saved);
+      toast.push({ variant: 'success', title: 'Rewards gespeichert', desc: 'Automatische DayZ-Rewards wurden aktualisiert.' });
     },
     onError: err => {
       const d = describeApiError(err);
@@ -181,8 +233,9 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
       <div className="flex items-center gap-2 border-b border-border/60 pb-3">
         <h2 className="text-base font-semibold text-white">Economy</h2>
         <FunctionHelpButton title="Economy" text={[
-          'Hier konfigurierst du die echte servergescoppte Währung und Spielzeit-Belohnung.',
-          'Spielzeit wird in vollständigen 10-Minuten-Buckets gebucht; die Einstellung ist kein Prozentwert mehr.',
+          'Hier konfigurierst du die servergescoppte Währung und automatische DayZ-Rewards.',
+          'Spielzeit wird in vollständigen 10-Minuten-Buckets gebucht; historische Zeit wird nicht nachbezahlt.',
+          'Der ADM-Rewards-Master bleibt ein eigenes Sicherheits-Gate und muss für automatische Auszahlungen aktiv sein.',
         ]} />
       </div>
       <EconomyScopePanel guildId={guildId} slot={slot} />
@@ -200,22 +253,29 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
       {config.isLoading && <Card><p className="text-muted">Lade Economy-Konfiguration…</p></Card>}
       {config.isError && <Card><p className="text-danger">Economy-Konfiguration konnte nicht geladen werden.</p></Card>}
       {config.data && <EconomyConfigCard value={config.data} onSave={patch => update.mutate(patch)} pending={update.isPending} />}
+      {rewards.isLoading && <Card><p className="text-muted">Lade DayZ-Rewards…</p></Card>}
+      {rewards.isError && <Card><p className="text-danger">DayZ-Rewards konnten nicht geladen werden.</p></Card>}
+      {rewards.data && (
+        <AdmRewardsCard
+          value={rewards.data}
+          pending={updateRewards.isPending}
+          onSave={patch => updateRewards.mutate(patch)}
+        />
+      )}
     </>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3">
+    <div className="rounded-lg border border-border/60 bg-bg-elev/40 p-3 min-w-0">
       <p className="text-[11px] text-muted">{label}</p>
-      <p className="font-semibold text-white">{value}</p>
+      <p className="font-semibold text-white break-words">{value}</p>
     </div>
   );
 }
 
-function EconomyConfigCard({
-  value, onSave, pending,
-}: {
+function EconomyConfigCard({ value, onSave, pending }: {
   value: EconomyConfigState;
   onSave: (patch: Partial<EconomyConfigState>) => void;
   pending: boolean;
@@ -267,6 +327,92 @@ function EconomyConfigCard({
   );
 }
 
+function AdmRewardsCard({ value, pending, onSave }: {
+  value: EconomyRewardState;
+  pending: boolean;
+  onSave: (patch: Record<string, unknown>) => void;
+}) {
+  const [master, setMaster] = useState(value.admRewardsEnabled);
+  const [pvpEnabled, setPvpEnabled] = useState(value.pvp.enabled);
+  const [pvpAmount, setPvpAmount] = useState(value.pvp.baseAmount);
+  const [pvpTarget, setPvpTarget] = useState<RewardTarget>(value.pvp.rewardTarget);
+  const [dailyCap, setDailyCap] = useState(value.pvp.dailyCap ?? '');
+  const [cooldown, setCooldown] = useState(value.pvp.cooldownSeconds);
+  const [playtimeTarget, setPlaytimeTarget] = useState<RewardTarget>(value.playtime.rewardTarget);
+
+  useEffect(() => {
+    setMaster(value.admRewardsEnabled);
+    setPvpEnabled(value.pvp.enabled);
+    setPvpAmount(value.pvp.baseAmount);
+    setPvpTarget(value.pvp.rewardTarget);
+    setDailyCap(value.pvp.dailyCap ?? '');
+    setCooldown(value.pvp.cooldownSeconds);
+    setPlaytimeTarget(value.playtime.rewardTarget);
+  }, [value]);
+
+  const pvpAmountValid = validUnsignedBigint(pvpAmount, MAX_REWARD) && (!pvpEnabled || BigInt(pvpAmount || '0') > 0n);
+  const capValid = validUnsignedBigint(dailyCap, MAX_REWARD, true);
+  const valid = pvpAmountValid && capValid && Number.isInteger(cooldown) && cooldown >= 0 && cooldown <= 86_400;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle>Automatische DayZ-Rewards</CardTitle>
+            <p className="mt-1 text-xs text-muted">ADM-Ereignisse werden nur bezahlt, wenn Economy und dieser Master-Schalter aktiv sind.</p>
+          </div>
+          <Badge variant={value.economyActive && master ? 'ok' : 'neutral'}>{value.economyActive && master ? 'Auszahlungen aktiv' : 'Auszahlungen gesperrt'}</Badge>
+        </div>
+      </CardHeader>
+
+      <div className="space-y-5">
+        <Switch checked={master} onChange={setMaster} label="ADM-Rewards aktiviert" />
+
+        <div className="rounded-lg border border-border/60 bg-bg-elev/30 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div><p className="font-medium text-white">PvP-Kill-Reward</p><p className="text-[11px] text-muted">Tageslimit und Cooldown verhindern einfaches Kill-Farming.</p></div>
+            <Switch checked={pvpEnabled} onChange={setPvpEnabled} ariaLabel="PvP-Rewards aktiv" />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-sm"><span className="text-muted">Betrag pro Kill</span><Input aria-label="PvP Reward Betrag" inputMode="numeric" value={pvpAmount} onChange={e => setPvpAmount(e.target.value.trim())} /></label>
+            <label className="text-sm"><span className="text-muted">Zielkonto</span><Select aria-label="PvP Reward Zielkonto" value={pvpTarget} onChange={e => setPvpTarget(e.target.value as RewardTarget)}><option value="WALLET">Wallet</option><option value="BANK">Bank</option></Select></label>
+            <label className="text-sm"><span className="text-muted">Tageslimit (leer = unbegrenzt)</span><Input aria-label="PvP Tageslimit" inputMode="numeric" value={dailyCap} onChange={e => setDailyCap(e.target.value.trim())} placeholder="unbegrenzt" /></label>
+            <label className="text-sm"><span className="text-muted">Reward-Cooldown (Sek.)</span><Input aria-label="PvP Reward Cooldown" type="number" min={0} max={86_400} value={cooldown} onChange={e => setCooldown(Math.max(0, Math.min(86_400, Math.trunc(Number(e.target.value) || 0))))} /></label>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border/60 bg-bg-elev/30 p-4 space-y-3">
+          <div>
+            <p className="font-medium text-white">Spielzeit-Reward</p>
+            <p className="text-[11px] text-muted">Aktuell {fmtBig(value.playtime.baseAmount)} pro vollständige 10 Minuten · Betrag wird oben in der Economy-Konfiguration gepflegt.</p>
+          </div>
+          <label className="text-sm block max-w-sm"><span className="text-muted">Zielkonto</span><Select aria-label="Spielzeit Reward Zielkonto" value={playtimeTarget} onChange={e => setPlaytimeTarget(e.target.value as RewardTarget)}><option value="WALLET">Wallet</option><option value="BANK">Bank</option></Select></label>
+        </div>
+
+        <p className="text-[11px] text-muted">Tagesgrenzen werden in <code>{value.timezone}</code> ausgewertet. Deaktivierte Zeit-Buckets werden als verarbeitet markiert und später nicht rückwirkend ausgezahlt.</p>
+        {!value.economyActive && <p className="text-xs text-warning">Economy ist aktuell deaktiviert. Die Regeln können vorbereitet werden, erzeugen aber kein Geld.</p>}
+        <Button
+          disabled={pending || !valid}
+          onClick={() => onSave({
+            admRewardsEnabled: master,
+            pvp: {
+              enabled: pvpEnabled,
+              baseAmount: pvpAmount,
+              rewardTarget: pvpTarget,
+              dailyCap: dailyCap === '' ? null : dailyCap,
+              cooldownSeconds: cooldown,
+            },
+            playtime: { rewardTarget: playtimeTarget },
+          })}
+        >
+          {pending ? 'Speichere…' : 'DayZ-Rewards speichern'}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function BankCasinoV3Page({ guildId, slot }: { guildId: string; slot: string }) {
   const config = useQuery({
     queryKey: ['economy', guildId, slot],
@@ -302,7 +448,7 @@ function BankCasinoV3Page({ guildId, slot }: { guildId: string; slot: string }) 
         <FunctionHelpButton title="Bank und Casino" text={[
           'Jedes Casino-Spiel hat eine eigene servergescoppte Konfiguration und einen eigenen Discord-Command.',
           'Gewinnchance, Auszahlung, Einsatzgrenzen und Cooldown werden vor jeder Runde aus genau dieser Karte gelesen.',
-          'RTP über 100 % wird serverseitig blockiert.',
+          'RTP über 100 % wird serverseitig blockiert; Draw-Anteile von Blackjack/Baccarat sind im RTP enthalten.',
         ]} />
       </div>
       {config.data && (
@@ -319,9 +465,7 @@ function BankCasinoV3Page({ guildId, slot }: { guildId: string; slot: string }) 
   );
 }
 
-function BankCard({
-  value, channels, channelsForbidden, pending, onSave,
-}: {
+function BankCard({ value, channels, channelsForbidden, pending, onSave }: {
   value: EconomyConfigState;
   channels: ChannelOption[];
   channelsForbidden: boolean;
@@ -393,7 +537,7 @@ function CasinoCards({ guildId, slot, economyEnabled }: { guildId: string; slot:
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 id="casino-games-heading" className="text-lg font-semibold text-white">🎲 Casino-Games</h3>
-          <p className="text-xs text-muted">Acht getrennte Spiele · ein zentraler Economy-Ledger · jede Runde mit Audit-ID.</p>
+          <p className="text-xs text-muted">Acht getrennte Spiele · zentraler Economy-Ledger · jede Runde mit Audit-ID.</p>
         </div>
         <Badge variant={economyEnabled ? 'ok' : 'neutral'}>{economyEnabled ? 'Economy aktiv' : 'Economy deaktiviert'}</Badge>
       </div>
@@ -415,6 +559,7 @@ function CasinoCards({ guildId, slot, economyEnabled }: { guildId: string; slot:
               minBet: '1',
               maxBet: '10000',
               cooldownSeconds: 2,
+              drawConditionalPct: meta.drawConditionalPct,
               theoreticalRtpPct: 80,
               houseEdgePct: 20,
             };
@@ -434,9 +579,7 @@ function CasinoCards({ guildId, slot, economyEnabled }: { guildId: string; slot:
   );
 }
 
-function CasinoGameCard({
-  game, stat, pending, onSave,
-}: {
+function CasinoGameCard({ game, stat, pending, onSave }: {
   game: CasinoGameRow;
   stat: CasinoStatRow | null;
   pending: boolean;
@@ -470,13 +613,16 @@ function CasinoGameCard({
     minBet = null;
     maxBet = null;
   }
-  const rtp = (draft.winChancePct / 100) * draft.payoutMult * 100;
+  const normalizedPayout = Math.round(draft.payoutMult * 1000) / 1000;
+  const winProbability = draft.winChancePct / 100;
+  const drawProbability = (1 - winProbability) * (game.drawConditionalPct / 100);
+  const rtp = (winProbability * normalizedPayout + drawProbability) * 100;
   const valid = Number.isInteger(draft.winChancePct)
     && draft.winChancePct >= 1
     && draft.winChancePct <= 99
-    && Number.isFinite(draft.payoutMult)
-    && draft.payoutMult >= 1
-    && draft.payoutMult <= 100
+    && Number.isFinite(normalizedPayout)
+    && normalizedPayout >= 1
+    && normalizedPayout <= 100
     && minBet !== null
     && maxBet !== null
     && minBet >= 1n
@@ -496,33 +642,18 @@ function CasinoGameCard({
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <CardTitle><span className="inline-flex items-center gap-2"><span className="text-xl">{game.emoji}</span>{game.label}</span></CardTitle>
-            <p className="mt-1 text-xs text-muted">/{game.type === 'HIGHLOW' ? 'highlow' : game.type.toLowerCase()} · {game.description}</p>
+            <p className="mt-1 text-xs text-muted break-words">/{game.type === 'HIGHLOW' ? 'highlow' : game.type.toLowerCase()} · {game.description}</p>
           </div>
           <Switch checked={draft.enabled} onChange={enabled => setDraft(s => ({ ...s, enabled }))} ariaLabel={`Casino ${game.type} aktiv`} />
         </div>
       </CardHeader>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="text-sm">
-          <span className="text-muted">Gewinnchance (%)</span>
-          <Input aria-label={`${game.type} Gewinnchance`} type="number" min={1} max={99} step={1} value={draft.winChancePct} onChange={e => setDraft(s => ({ ...s, winChancePct: Math.max(1, Math.min(99, Math.trunc(Number(e.target.value) || 1))) }))} />
-        </label>
-        <label className="text-sm">
-          <span className="text-muted">Auszahlung x</span>
-          <Input aria-label={`${game.type} Auszahlung`} type="number" min={1} max={100} step="0.01" value={draft.payoutMult} onChange={e => setDraft(s => ({ ...s, payoutMult: Math.max(1, Math.min(100, Number(e.target.value) || 1)) }))} />
-        </label>
-        <label className="text-sm">
-          <span className="text-muted">Mindest-Einsatz</span>
-          <Input aria-label={`${game.type} Mindest-Einsatz`} inputMode="numeric" value={draft.minBet} onChange={e => setDraft(s => ({ ...s, minBet: e.target.value.trim() }))} />
-        </label>
-        <label className="text-sm">
-          <span className="text-muted">Maximal-Einsatz</span>
-          <Input aria-label={`${game.type} Maximal-Einsatz`} inputMode="numeric" value={draft.maxBet} onChange={e => setDraft(s => ({ ...s, maxBet: e.target.value.trim() }))} />
-        </label>
-        <label className="text-sm sm:col-span-2">
-          <span className="text-muted">Cooldown (Sekunden)</span>
-          <Input aria-label={`${game.type} Cooldown`} type="number" min={0} max={3600} step={1} value={draft.cooldownSeconds} onChange={e => setDraft(s => ({ ...s, cooldownSeconds: Math.max(0, Math.min(3600, Math.trunc(Number(e.target.value) || 0))) }))} />
-        </label>
+        <label className="text-sm"><span className="text-muted">Gewinnchance (%)</span><Input aria-label={`${game.type} Gewinnchance`} type="number" min={1} max={99} step={1} value={draft.winChancePct} onChange={e => setDraft(s => ({ ...s, winChancePct: Math.max(1, Math.min(99, Math.trunc(Number(e.target.value) || 1))) }))} /></label>
+        <label className="text-sm"><span className="text-muted">Auszahlung x</span><Input aria-label={`${game.type} Auszahlung`} type="number" min={1} max={100} step="0.001" value={draft.payoutMult} onChange={e => setDraft(s => ({ ...s, payoutMult: Math.max(1, Math.min(100, Number(e.target.value) || 1)) }))} /></label>
+        <label className="text-sm"><span className="text-muted">Mindest-Einsatz</span><Input aria-label={`${game.type} Mindest-Einsatz`} inputMode="numeric" value={draft.minBet} onChange={e => setDraft(s => ({ ...s, minBet: e.target.value.trim() }))} /></label>
+        <label className="text-sm"><span className="text-muted">Maximal-Einsatz</span><Input aria-label={`${game.type} Maximal-Einsatz`} inputMode="numeric" value={draft.maxBet} onChange={e => setDraft(s => ({ ...s, maxBet: e.target.value.trim() }))} /></label>
+        <label className="text-sm sm:col-span-2"><span className="text-muted">Cooldown (Sekunden)</span><Input aria-label={`${game.type} Cooldown`} type="number" min={0} max={3600} step={1} value={draft.cooldownSeconds} onChange={e => setDraft(s => ({ ...s, cooldownSeconds: Math.max(0, Math.min(3600, Math.trunc(Number(e.target.value) || 0))) }))} /></label>
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
@@ -531,18 +662,18 @@ function CasinoGameCard({
         <Metric label="W / D / L" value={stat ? `${stat.wins} / ${stat.draws} / ${stat.losses}` : '— / — / —'} />
         <Metric label="Win-Rate*" value={`${winRate.toFixed(2)}%`} />
       </div>
-      <p className="mt-2 text-[10px] text-muted">* Win-Rate nur aus entschiedenen Runden; Draws werden nicht als Niederlage gezählt.</p>
+      <p className="mt-2 text-[10px] text-muted">* Win-Rate nur aus entschiedenen Runden; Draws werden nicht als Niederlage gezählt.{game.drawConditionalPct > 0 ? ` Draw-Anteil nach einem Nicht-Gewinn: ${game.drawConditionalPct}%.` : ''}</p>
       {rtp > 100 && <p className="mt-2 text-xs text-danger">Diese Kombination würde RTP über 100 % erzeugen und kann nicht gespeichert werden.</p>}
 
-      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/60 pt-4">
-        <span className="text-[11px] text-muted">Server-Chance wird im Runden-Audit gespeichert.</span>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
+        <span className="text-[11px] text-muted">Server-Chance und Regeln werden im Runden-Audit gespeichert.</span>
         <Button
           size="sm"
           disabled={pending || !valid}
           onClick={() => onSave({
             enabled: draft.enabled,
             winChancePct: draft.winChancePct,
-            payoutMult: draft.payoutMult,
+            payoutMult: normalizedPayout,
             minBet: draft.minBet,
             maxBet: draft.maxBet,
             cooldownSeconds: draft.cooldownSeconds,
@@ -561,11 +692,7 @@ export default function ServerSlotV3() {
   const tab = (params.get('tab') ?? 'settings') as Tab;
 
   if (!guildId || !slot) return <LegacyServerSlot />;
-  if (tab === 'economy') {
-    return <SlotV3Shell tab="economy"><EconomyV3Page guildId={guildId} slot={slot} /></SlotV3Shell>;
-  }
-  if (tab === 'bank-casino') {
-    return <SlotV3Shell tab="bank-casino"><BankCasinoV3Page guildId={guildId} slot={slot} /></SlotV3Shell>;
-  }
+  if (tab === 'economy') return <SlotV3Shell tab="economy"><EconomyV3Page guildId={guildId} slot={slot} /></SlotV3Shell>;
+  if (tab === 'bank-casino') return <SlotV3Shell tab="bank-casino"><BankCasinoV3Page guildId={guildId} slot={slot} /></SlotV3Shell>;
   return <LegacyServerSlot />;
 }
