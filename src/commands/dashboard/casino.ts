@@ -438,7 +438,7 @@ export const coinflipCommand: Command = {
     .setDescription('Wirft eine echte 50/50-Muenze. Richtige Wahl gewinnt.')
     .addStringOption(o => o.setName('seite').setDescription('Kopf oder Zahl').setRequired(true).addChoices(
       { name: 'Kopf', value: 'KOPF' }, { name: 'Zahl', value: 'ZAHL' },
-    )))),
+    )) as SlashCommandBuilder)),
   cooldown: 2,
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const choice = i.options.getString('seite', true) as 'KOPF' | 'ZAHL';
@@ -467,7 +467,7 @@ export const diceCommand: Command = {
   data: slotOption(betOption(new SlashCommandBuilder()
     .setName('dice')
     .setDescription('Wuerfelt 1..6. Exakter Treffer gewinnt.')
-    .addIntegerOption(o => o.setName('zahl').setDescription('Tippe 1..6').setRequired(true).setMinValue(1).setMaxValue(6)))),
+    .addIntegerOption(o => o.setName('zahl').setDescription('Tippe 1..6').setRequired(true).setMinValue(1).setMaxValue(6)) as SlashCommandBuilder)),
   cooldown: 2,
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const tip = i.options.getInteger('zahl', true);
@@ -631,7 +631,7 @@ export const casinoVerifyCommand: Command = {
     const snapshot = auditSnapshot(round.result);
     if (!snapshot || snapshot.algorithmVersion !== CASINO_ALGORITHM_VERSION) {
       const legacy = buildStatusEmbed({
-        status: 'WARNING', title: 'Legacy-Runde',
+        status: 'INFO', title: '⚠️ Legacy-Runde',
         description: 'Diese Runde besitzt noch keinen vollstaendigen unveraenderlichen Regel-Snapshot und kann deshalb nicht kryptographisch vollstaendig nachgerechnet werden.',
         fields: [
           { name: 'Runde', value: `\`${round.id}\`` },
