@@ -460,7 +460,7 @@ killfeedRouter.get('/:id/recent', requireGuildPermission('killfeed.view'), async
           eventType,
           occurredAt: event.occurredAt?.toISOString() ?? null,
           actorName: event.actorName,
-          targetName: 'TerritoryFlag',
+          targetName: event.totemType,
           objectType: event.flagType,
           toolOrWeapon: null,
           distanceMeters: null,
