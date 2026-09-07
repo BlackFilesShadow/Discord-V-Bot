@@ -9,7 +9,7 @@ function ctxWithDate() {
 
 describe('admLineParser — Golden', () => {
   it('verwendet die neue Parser-Version fuer korrigierte Feed-Semantik', () => {
-    expect(ADM_PARSER_VERSION).toBe(5);
+    expect(ADM_PARSER_VERSION).toBe(8);
   });
 
   it('erkennt den Header und setzt das Basisdatum', () => {
@@ -59,12 +59,12 @@ describe('admLineParser — Golden', () => {
     expect(ev?.distanceMeters).toBeCloseTo(300.5);
   });
 
-  it('trennt normalen Tod, Suizid und Wild-Tod', () => {
+  it('trennt normalen Tod, Suizid und echten Vanilla-Wild-Tod', () => {
     expect(parseAdmLine('18:08:00 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) died. Stats> Water: 0.0', ctxWithDate())?.eventType).toBe('PLAYER_DIED');
     expect(parseAdmLine('18:09:00 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) committed suicide', ctxWithDate())?.eventType).toBe('PLAYER_SUICIDE');
-    const wild = parseAdmLine('18:10:00 | Player "Delta" (DEAD) (id=4 pos=<5,6,7>) killed by Wolf', ctxWithDate());
+    const wild = parseAdmLine('18:10:00 | Player "Delta" (DEAD) (id=4 pos=<5,6,7>) killed by Animal_CanisLupus', ctxWithDate());
     expect(wild?.eventType).toBe('NPC_KILL');
-    expect(wild?.targetName).toBe('Wolf');
+    expect(wild?.targetName).toBe('Animal_CanisLupus');
   });
 
   it('uebernimmt eine Suizidwaffe nur wenn sie in der ADM-Zeile belegt ist', () => {
@@ -135,10 +135,10 @@ describe('admLineParser — Golden', () => {
   });
 });
 
-  it('verknuepft vollstaendige ADM-PvP-Treffer mit Opfer, Taeter und exakten Details', () => {
-    const line = '18:11:00 | Player "Echo" (id=victim pos=<8,9,10>)[HP: 90] hit by Player "Alpha" (id=killer pos=<1,2,3>) into Head(0) for 12.5 damage (FirearmHit_Rifle) with M4-A1';
-    const event = parseAdmLine(line, ctxWithDate());
+it('verknuepft vollstaendige ADM-PvP-Treffer mit Opfer, Taeter und exakten Details', () => {
+  const line = '18:11:00 | Player "Echo" (id=victim pos=<8,9,10>)[HP: 90] hit by Player "Alpha" (id=killer pos=<1,2,3>) into Head(0) for 12.5 damage (FirearmHit_Rifle) with M4-A1';
+  const event = parseAdmLine(line, ctxWithDate());
 
-    expect(event).toMatchObject({ eventType: 'PLAYER_HIT', actorGameId: 'victim', targetGameId: 'killer', toolOrWeapon: 'M4-A1' });
-    expect(parsePvpHitDetails(line)).toEqual({ bodyPart: 'Head', damage: 12.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' });
-  });
+  expect(event).toMatchObject({ eventType: 'PLAYER_HIT', actorGameId: 'victim', targetGameId: 'killer', toolOrWeapon: 'M4-A1' });
+  expect(parsePvpHitDetails(line)).toEqual({ bodyPart: 'Head', damage: 12.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' });
+});

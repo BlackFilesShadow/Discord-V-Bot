@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 5;
+export const ADM_PARSER_VERSION = 8;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -65,8 +65,14 @@ const ID_RE = /id=([^\s,)]+)/;
 const POS_RE = /pos=<([^>]+)>/;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
 const PVP_HIT_DETAILS_RE = /\bhit by\s+(.+?)\s+into\s+([A-Za-z]+)\(\d+\)\s+for\s+([\d.]+)\s+damage\s+\(([^)]+)\)(?:\s+with\s+(.+?))?\s*\.?\s*$/i;
-const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+TerritoryFlag\s+at\s+<([^>]+)>\s*\.?\s*$/i;
+const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+([A-Za-z_][A-Za-z0-9_]*)\s+at\s+<([^>]+)>\s*\.?\s*$/i;
+const PLAYER_PREFIX_RE = /^Player\s+"[^"]+"\s*(?:\(DEAD\)\s*)?\(id=[^)]*\)\s*/i;
+const PLAYER_ACTION_RE = /^Player\s+"[^"]+"\s*(?:\(DEAD\)\s*)?\(id=[^)]*?\bpos=<[^>]+>\)\s*(.+)$/i;
 const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
+// PluginAdminLog.PlayerKilled() uses source.GetType() for the explicit
+// animal/infected branch. Vanilla class names are therefore structurally
+// distinguishable from display-name based explosive/other-object causes.
+const VANILLA_WILD_SOURCE_RE = /^(?:Animal_[A-Za-z0-9_]+|Zmb[MF]_[A-Za-z0-9_]+)$/i;
 
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
   for (const line of text.split(/\r?\n/, 8)) {
@@ -168,6 +174,12 @@ function fill(
   return event;
 }
 
+function playerDiedWithCause(content: string, cause: string): ParsedAdmEvent {
+  const event = fill(content, 'PLAYER_DIED', extractActor(content));
+  event.targetName = cause;
+  return event;
+}
+
 function cleanActionValue(value: string): string {
   return value
     .replace(/\s*\(id=[^)]*\)\s*$/i, '')
@@ -176,34 +188,78 @@ function cleanActionValue(value: string): string {
     .trim();
 }
 
-function parseBuildAction(content: string): { type: AdmParsedType; object: string; tool: string | null } | null {
-  const match = /\b(placed|built|dismantled|destroyed)\s+(.+?)\s*$/i.exec(content);
-  if (!match) return null;
-  const action = match[1].toLowerCase();
-  const tail = match[2].trim();
+function splitObjectAndTool(tail: string): { object: string; tool: string | null } | null {
   const withMatch = /^(.+?)\s+with\s+(.+?)\s*$/i.exec(tail);
   const object = cleanActionValue(withMatch?.[1] ?? tail);
   const tool = withMatch ? cleanActionValue(withMatch[2]) : null;
-  const type: AdmParsedType = action === 'placed'
-    ? 'PLACEMENT'
-    : action === 'built'
-      ? 'BUILD'
-      : action === 'dismantled'
-        ? 'DISMANTLE'
-        : 'DESTROY';
-  return object ? { type, object, tool } : null;
+  return object ? { object, tool } : null;
+}
+
+/**
+ * Klassifiziert ausschliesslich echte DayZ-Spieleraktionen mit kanonischem
+ * Player+id+pos-Praefix. Dadurch koennen Chat/Report-/Custom-Log-Texte mit
+ * Woertern wie "dismantled" niemals versehentlich in einen Gameplay-Feed
+ * geraten.
+ *
+ * Vanilla-Zuordnung:
+ * - placed                         -> PLACEMENT
+ * - built / Mounted BarbedWire     -> BUILD
+ * - dismantled / packed / folded   -> DISMANTLE
+ * - Unmounted BarbedWire           -> DISMANTLE
+ * - destroyed                      -> DESTROY
+ *
+ * Bewusst NICHT umetikettiert werden repaired, re-packed und Dug in/out:
+ * Dafuer existiert in der UI keine semantisch passende Feed-Kategorie.
+ */
+function parseBuildAction(content: string): { type: AdmParsedType; object: string; tool: string | null } | null {
+  const playerAction = PLAYER_ACTION_RE.exec(content);
+  if (!playerAction) return null;
+  const actionContent = playerAction[1].trim();
+
+  const standard = /^(placed|built|dismantled|destroyed|packed|folded)\s+(.+?)\s*$/i.exec(actionContent);
+  if (standard) {
+    const action = standard[1].toLowerCase();
+    const parsed = splitObjectAndTool(standard[2].trim());
+    if (!parsed) return null;
+    const type: AdmParsedType = action === 'placed'
+      ? 'PLACEMENT'
+      : action === 'built'
+        ? 'BUILD'
+        : action === 'destroyed'
+          ? 'DESTROY'
+          : 'DISMANTLE';
+    return { type, ...parsed };
+  }
+
+  // ActionMountBarbedWire / ActionUnmountBarbedWire liefern in Vanilla einen
+  // zusaetzlichen "Player %1"-Abschnitt innerhalb der Action-Message. Nur die
+  // exakten BarbedWire-Verben werden akzeptiert, damit keine Fremdaktion als
+  // Build/Dismantle einsortiert wird.
+  const wire = /^(?:Player\s+.+?\s+)?(Mounted|Unmounted)\s+BarbedWire\s+(on|from)\s+(.+?)\s*$/i.exec(actionContent);
+  if (!wire) return null;
+  const mounted = wire[1].toLowerCase() === 'mounted';
+  const relation = wire[2].toLowerCase();
+  if ((mounted && relation !== 'on') || (!mounted && relation !== 'from')) return null;
+  const target = cleanActionValue(wire[3]);
+  if (!target) return null;
+  return {
+    type: mounted ? 'BUILD' : 'DISMANTLE',
+    object: `BarbedWire ${relation} ${target}`,
+    tool: null,
+  };
 }
 
 function parseFlagAction(content: string): ParsedAdmEvent | null {
-  // TerritoryFlag actions are accepted only in the canonical DayZ player-action
-  // shape. Chat/report text can contain the same English words and must never
-  // become a gameplay event merely because an unanchored substring matches.
+  // TerritoryFlag/StaticFlagPole-Aktionen werden nur in der kanonischen
+  // PluginAdminLog-Form akzeptiert. Chat/report text kann dieselben englischen
+  // Woerter enthalten und darf dadurch niemals zum Gameplay-Event werden.
   const match = FLAG_ACTION_RE.exec(content);
   if (!match) return null;
   const actorPosition = match[3].trim();
-  const flagPosition = match[6].trim();
+  const flagPosition = match[7].trim();
   if (!COORDINATE_TRIPLET_RE.test(actorPosition) || !COORDINATE_TRIPLET_RE.test(flagPosition)) return null;
   const objectType = cleanActionValue(match[5]);
+  const totemType = match[6].trim();
   if (!objectType || /[\r\n\t\u0000-\u001f\u007f]/.test(objectType)) return null;
 
   const event = fill(content, match[4].toLowerCase() === 'raised' ? 'FLAG_RAISED' : 'FLAG_LOWERED', {
@@ -212,7 +268,7 @@ function parseFlagAction(content: string): ParsedAdmEvent | null {
     pos: actorPosition,
   });
   event.objectType = objectType;
-  event.targetName = 'TerritoryFlag';
+  event.targetName = totemType;
   event.targetPosition = flagPosition;
   return event;
 }
@@ -238,6 +294,18 @@ function extractVehicleCause(segment: string): string | null {
     .replace(/[.\s]+$/, '')
     .trim();
   return cause || null;
+}
+
+function extractNonPlayerKillCause(segment: string): string | null {
+  const cause = segment
+    .replace(/\s+with\s+.*$/i, '')
+    .replace(/[.\s]+$/, '')
+    .trim();
+  return cause || null;
+}
+
+function isVanillaWildSource(value: string | null): boolean {
+  return value !== null && VANILLA_WILD_SOURCE_RE.test(value);
 }
 
 /** Liest nur Werte aus einem vollstaendigen, von ADM bezeugten PvP-Treffer. */
@@ -289,6 +357,8 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
 
   const content = line.replace(/^\d{2}:\d{2}:\d{2}\s*\|?\s*/, '');
   const hasPlayer = /Player\s*"/.test(content) || /"[^"]+"\s*\(/.test(content);
+  const canonicalPlayerLine = PLAYER_PREFIX_RE.test(content);
+  const canonicalPlayerAction = PLAYER_ACTION_RE.test(content);
 
   const finalize = (event: ParsedAdmEvent): ParsedAdmEvent => {
     event.occurredAt = occurredAt;
@@ -296,23 +366,23 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return event;
   };
 
-  if (/\bis connected\b/i.test(content) || /\)\s*connected\b/i.test(content)) {
+  if (canonicalPlayerLine && (/\bis connected\b/i.test(content) || /\)\s*connected\b/i.test(content))) {
     return finalize(fill(content, 'PLAYER_CONNECTED', extractActor(content)));
   }
-  if (/\bhas been disconnected\b/i.test(content) || /\)\s*disconnected\b/i.test(content)) {
+  if (canonicalPlayerLine && (/\bhas been disconnected\b/i.test(content) || /\)\s*disconnected\b/i.test(content))) {
     return finalize(fill(content, 'PLAYER_DISCONNECTED', extractActor(content)));
   }
 
   const flag = parseFlagAction(content);
   if (flag) return finalize(flag);
 
-  if (/committed suicide/i.test(content)) {
+  if (canonicalPlayerAction && /committed suicide/i.test(content)) {
     const event = fill(content, 'PLAYER_SUICIDE', extractActor(content));
     event.toolOrWeapon = extractWeapon(content);
     return finalize(event);
   }
 
-  const killedByIndex = content.search(/\bkilled by\b/i);
+  const killedByIndex = canonicalPlayerAction ? content.search(/\bkilled by\b/i) : -1;
   if (killedByIndex >= 0) {
     const victimSegment = content.slice(0, killedByIndex);
     const killerSegment = content.slice(killedByIndex + 'killed by'.length).trim();
@@ -339,17 +409,40 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
       const distance = DISTANCE_RE.exec(killerSegment);
       event.distanceMeters = distance ? Number(distance[1]) : null;
     } else {
-      event.eventType = 'NPC_KILL';
-      event.targetName = killerSegment.replace(/\s+with\s+.*$/i, '').replace(/[.\s]+$/, '').trim() || null;
+      // Vanilla logs animals/infected with source.GetType(), but explosive and
+      // other non-player causes can use the same "killed by" wording with a
+      // display name. Only the unmistakable vanilla class families are allowed
+      // into Wild Kill. Everything else remains a raw PLAYER_DIED cause.
+      const cause = extractNonPlayerKillCause(killerSegment);
+      event.targetName = cause;
+      event.eventType = isVanillaWildSource(cause) ? 'NPC_KILL' : 'PLAYER_DIED';
     }
     return finalize(event);
   }
 
-  if (/\bbled out\b|\bdied\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bhas drowned while unconscious\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Drowned while unconscious'));
+  }
+  if (canonicalPlayerAction && /\bis choosing to respawn\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Respawn'));
+  }
+  const disconnectDeath = canonicalPlayerAction
+    ? /\bis disconnecting while being (unconscious|restrained)\b/i.exec(content)
+    : null;
+  if (disconnectDeath) {
+    return finalize(playerDiedWithCause(content, `Disconnect while ${disconnectDeath[1].toLowerCase()}`));
+  }
+  if (canonicalPlayerAction && /\bbled out\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Bled out'));
+  }
+  if (canonicalPlayerAction && /\bdrowned\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Drowned'));
+  }
+  if (canonicalPlayerAction && /\bdied\b/i.test(content)) {
     return finalize(fill(content, 'PLAYER_DIED', extractActor(content)));
   }
 
-  if (/\bhit by\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bhit by\b/i.test(content)) {
     const fatalVehicle = /\(DEAD\)/i.test(content)
       && (/\[vehicle\]/i.test(content) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(content));
     const event = fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content));
@@ -376,7 +469,7 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return finalize(event);
   }
 
-  if (hasPlayer && POS_RE.test(content) && isBarePlayerPosition(content)) {
+  if (canonicalPlayerLine && POS_RE.test(content) && isBarePlayerPosition(content)) {
     return finalize(fill(content, 'PLAYER_POSITION', extractActor(content)));
   }
 

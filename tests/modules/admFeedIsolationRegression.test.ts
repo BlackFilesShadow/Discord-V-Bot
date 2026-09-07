@@ -6,7 +6,12 @@ function ctx() {
 }
 
 describe('#293 ADM feed negative/golden isolation', () => {
-  it.each(['Bear', 'Wolf', 'Zombie', 'Infected'])('keeps %s kills in NPC and never PvP/Vehicle', cause => {
+  it.each([
+    'Animal_CanisLupus',
+    'Animal_UrsusArctos',
+    'ZmbM_HermitSkinny_Beige',
+    'ZmbF_CitizenANormal_Beige',
+  ])('keeps vanilla wild source %s in NPC and never PvP/Vehicle', cause => {
     const event = parseAdmLine(
       `12:00:00 | Player "Victim" (DEAD) (id=game-1 pos=<1,2,3>) killed by ${cause}`,
       ctx(),
@@ -17,6 +22,17 @@ describe('#293 ADM feed negative/golden isolation', () => {
     expect(categoryAllowed('DEATH', ['NPC'], event!.eventType)).toBe(true);
     expect(categoryAllowed('DEATH', ['PVP'], event!.eventType)).toBe(false);
     expect(categoryAllowed('DEATH', ['VEHICLE'], event!.eventType)).toBe(false);
+  });
+
+  it.each(['Wolf', 'Bear', 'M67 Fragmentation Grenade', 'LandMine'])('does not relabel non-class cause %s as Wild/NPC', cause => {
+    const event = parseAdmLine(
+      `12:00:30 | Player "Victim" (DEAD) (id=game-1 pos=<1,2,3>) killed by ${cause}`,
+      ctx(),
+    );
+    expect(event?.eventType).toBe('PLAYER_DIED');
+    expect(event?.targetName).toBe(cause);
+    expect(kindForEvent(event!.eventType)).toBeNull();
+    expect(categoryAllowed('DEATH', ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'], event!.eventType)).toBe(false);
   });
 
   it('never upgrades a DEAD explosion hit into a deathfeed event by itself', () => {

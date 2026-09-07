@@ -35,7 +35,8 @@ describe('Gameplay feed activation, pacing and Online List architecture gate', (
     expect(runtime).toContain('sourceFile: latestCursor.fileIdentity');
     expect(runtime).toContain('AdmEventType.PLAYER_CONNECTED');
     expect(runtime).toContain('AdmEventType.PLAYER_DISCONNECTED');
-    expect(runtime).toContain('resolveOnlinePresence(presenceEvents)');
+    expect(runtime).toContain('AdmEventType.PLAYER_POSITION');
+    expect(runtime).toContain('resolveOnlinePresence(presenceEvents, positions)');
     expect(runtime).toContain('attachCurrentPositions(online, positions)');
     expect(runtime).toContain('playerListNonce(config.id, stateHash, postKey)');
     expect(runtime).toContain('message.edit');

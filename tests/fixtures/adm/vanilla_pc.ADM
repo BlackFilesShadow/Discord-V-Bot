@@ -4,7 +4,7 @@ AdminLog started on 2026-07-01 at 18:00:00
 18:05:30 | Player "Bravo"(DEAD) (id=76561190000000002 pos=<7501.0, 8499.0, 300.0>) killed by Player "Alpha" (id=76561190000000001 pos=<7480.0, 8490.0, 300.0>) with M4A1 from 25.3 meters
 18:07:11 | Player "Charlie"(id=76561190000000003, pos=<1000.0, 2000.0, 50.0>) killed by "Alpha"(id=76561190000000001, pos=<1010.0, 2010.0, 50.0>) with SVD from 300.5 meters
 18:09:00 | Player "Alpha" (DEAD) (id=76561190000000001 pos=<7480.0, 8490.0, 300.0>) committed suicide
-18:10:00 | Player "Delta" (DEAD) (id=76561190000000004 pos=<500.0, 600.0, 20.0>) killed by Wolf
+18:10:00 | Player "Delta" (DEAD) (id=76561190000000004 pos=<500.0, 600.0, 20.0>) killed by Animal_CanisLupus
 18:12:00 | Player "Echo" (id=76561190000000005 pos=<800.0, 900.0, 30.0>) placed Fireplace Kit
 18:13:00 | Player "Echo" (id=76561190000000005 pos=<800.0, 900.0, 30.0>) built Watchtower Kit
 18:20:00 | Player "Alpha"(id=76561190000000001) has been disconnected

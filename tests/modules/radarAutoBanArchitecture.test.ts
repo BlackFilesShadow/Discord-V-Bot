@@ -71,11 +71,13 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
     expect(editor).toContain('Mittelpunkt Z');
   });
 
-  it('normalisiert TerritoryFlag bewusst als X/Hoehe/Z und bannt den ausfuehrenden Actor an der Flaggenposition', () => {
+  it('normalisiert kanonische dynamische Flag-Totems als X/Hoehe/Z und bannt den ausfuehrenden Actor an der Flaggenposition', () => {
     expect(coordinates).toContain('export function parseAdmTerritoryFlagPosition');
     expect(coordinates).toContain('y: values[2], altitude: values[1]');
-    expect(catalog).toContain("targetName !== 'TerritoryFlag'");
+    expect(catalog).toContain('const FLAG_ACTIVITY_RAW_RE');
+    expect(catalog).toContain('raw[2].trim() !== event.targetName.trim()');
     expect(catalog).toContain('parseAdmTerritoryFlagPosition(event.targetPosition)');
+    expect(catalog).not.toContain("targetName !== 'TerritoryFlag'");
   });
 
   it('ordnet Hit/Kill dem Target-Angreifer zu und trennt Explosion fail-closed von normalen Hit/Kill-Regeln', () => {

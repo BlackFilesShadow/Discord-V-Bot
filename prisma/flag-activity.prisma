@@ -21,6 +21,7 @@ model FlagActivityEvent {
   actorName       String?
   actorPosition   String?
   flagType        String?
+  totemType       String?
   flagPosition    String?
   rawLine         String             @db.Text
   createdAt       DateTime           @default(now())

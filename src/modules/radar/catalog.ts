@@ -47,6 +47,7 @@ export interface RadarFunctionDefinition {
 }
 
 const EXPLOSIVE_EVIDENCE_RE = /(?:\bexplosion\b|\bgrenade\b|\bm79\b|\b40\s*mm\b|\bclaymore\b|plastic[_\s-]*explosive|land[_\s-]*mine|rgd5|m67|flashbang|grenade[_\s-]*ammo)/i;
+const FLAG_ACTIVITY_RAW_RE = /^Player\s+"[^"]+"\s*\(id=[^\s,)]+\s+pos=<[^>]+>\)\s+has\s+(?:raised|lowered)\s+(.+?)\s+on\s+([A-Za-z_][A-Za-z0-9_]*)\s+at\s+<[^>]+>\s*\.?\s*$/i;
 
 export function isExplosiveRadarEvent(event: RadarAdmEvent): boolean {
   const evidence = [event.toolOrWeapon, event.objectType, event.rawLine].filter(Boolean).join(' ');
@@ -98,8 +99,19 @@ function explosiveAttacker(event: RadarAdmEvent): RadarPositionCandidate[] {
   return isExplosiveRadarEvent(event) ? attackingPlayerPosition(event) : [];
 }
 
+/**
+ * Flag-Aktionen bleiben in AdmEvent aus Enum-Kompatibilitaet UNKNOWN. Deshalb
+ * reicht UNKNOWN allein niemals als Radar-Beleg. Wir verlangen zusaetzlich die
+ * unveraenderte kanonische Vanilla-Rohzeile und gleichen Flag- sowie
+ * Totem-Classname exakt gegen die bereits geparsten Felder ab. Damit werden
+ * TerritoryFlag, StaticFlagPole und weitere echte Totem-Subklassen akzeptiert,
+ * ohne irgendein anderes UNKNOWN-Ereignis als Flagge umzudeuten.
+ */
 function territoryFlagPosition(event: RadarAdmEvent): RadarPositionCandidate[] {
-  if (event.eventType !== 'UNKNOWN' || event.targetName !== 'TerritoryFlag' || !event.objectType) return [];
+  if (event.eventType !== 'UNKNOWN' || !event.targetName || !event.objectType || !event.rawLine) return [];
+  const raw = FLAG_ACTIVITY_RAW_RE.exec(event.rawLine.trim());
+  if (!raw) return [];
+  if (raw[1].trim() !== event.objectType.trim() || raw[2].trim() !== event.targetName.trim()) return [];
   return candidate(
     'ACTOR',
     event.actorGameId,
@@ -107,7 +119,7 @@ function territoryFlagPosition(event: RadarAdmEvent): RadarPositionCandidate[] {
     parseAdmTerritoryFlagPosition(event.targetPosition),
     event.occurredAt,
     null,
-    'TerritoryFlag',
+    event.targetName,
   );
 }
 
@@ -177,8 +189,8 @@ const catalog: readonly RadarFunctionDefinition[] = [
     defaultEnabled: false,
     punitive: true,
     // Flag activities are intentionally persisted in AdmEvent as UNKNOWN and
-    // separately typed in FlagActivityEvent. The strict TerritoryFlag selector
-    // below prevents unrelated UNKNOWN lines from ever becoming radar events.
+    // separately typed in FlagActivityEvent. territoryFlagPosition() requires
+    // the canonical raw action plus exact flag/totem field agreement.
     sourceEvents: ['UNKNOWN'],
     selectPositions: territoryFlagPosition,
   },

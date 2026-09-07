@@ -31,15 +31,16 @@ describe('Flag activity feeds', () => {
     });
   });
 
-  test('parses lowered territory flag without confusing it with build events', () => {
+  test('parses lowered derived totem without confusing it with build events', () => {
     const ctx = newDateContext(new Date(Date.UTC(2026, 7, 29)));
     const event = parseAdmLine(
-      '12:45:03 | Player "Survivor Two" (id=xyz789 pos=<100.1, 4.2, 200.3>) has lowered Flag_Base on TerritoryFlag at <101.5, 4.0, 201.8>',
+      '12:45:03 | Player "Survivor Two" (id=xyz789 pos=<100.1, 4.2, 200.3>) has lowered Flag_Base on StaticFlagPole at <101.5, 4.0, 201.8>',
       ctx,
     );
 
     expect(event?.eventType).toBe('FLAG_LOWERED');
     expect(event?.objectType).toBe('Flag_Base');
+    expect(event?.targetName).toBe('StaticFlagPole');
     expect(categoryForEvent(event!.eventType)).toBe('LOWERED');
     expect(kindForEvent(event!.eventType)).toBe('FLAG');
   });
@@ -63,10 +64,10 @@ describe('Flag activity feeds', () => {
     expect(verifyFlagActivityCustomId('flagshort:v1:invalid:deadbeef')).toBeNull();
   });
 
-  test('persists flag raw event compatibly and canonical flag domain idempotently', async () => {
+  test('persists flag raw event compatibly and canonical flag domain idempotently with exact totem classname', async () => {
     const input = [
       'AdminLog started on 2026-08-29',
-      '12:42:51 | Player "Survivor" (id=game-a pos=<1, 2, 3>) has raised Flag_Base on TerritoryFlag at <4, 5, 6>',
+      '12:42:51 | Player "Survivor" (id=game-a pos=<1, 2, 3>) has raised Flag_Base on StaticFlagPole at <4, 5, 6>',
       '',
     ].join('\n');
     const result = ingestFullFile(input, 0, { fileName: 'ADM_2026-08-29.log' });
@@ -97,7 +98,7 @@ describe('Flag activity feeds', () => {
     }, result, null);
 
     expect(admRows).toHaveLength(1);
-    expect(admRows[0].eventType).toBe('UNKNOWN');
+    expect(admRows[0]).toMatchObject({ eventType: 'UNKNOWN', targetName: 'StaticFlagPole' });
     expect(flagRows).toHaveLength(1);
     expect(flagRows[0]).toMatchObject({
       action: 'RAISED',
@@ -105,6 +106,7 @@ describe('Flag activity feeds', () => {
       actorName: 'Survivor',
       actorPosition: '1, 2, 3',
       flagType: 'Flag_Base',
+      totemType: 'StaticFlagPole',
       flagPosition: '4, 5, 6',
     });
     expect(flagRows[0].eventKey).toBe(admRows[0].eventKey);
@@ -119,7 +121,7 @@ describe('Flag activity feeds', () => {
       eventType: 'FLAG_RAISED',
       occurredAt: new Date('2026-08-30T12:36:44.000Z'),
       actorName: 'JtReaper',
-      targetName: 'TerritoryFlag',
+      targetName: 'StaticFlagPole',
       objectType: 'Flag_RSTA',
       toolOrWeapon: null,
       distanceMeters: null,
@@ -163,14 +165,19 @@ describe('Flag activity feeds', () => {
     ]));
   });
 
-  test('architecture keeps raised/lowered separate and wires signed analysis button', () => {
+  test('architecture keeps raised/lowered separate, dynamic totems intact and wires signed analysis button', () => {
     const root = path.resolve(__dirname, '../..');
     const route = fs.readFileSync(path.join(root, 'src/dashboard/routes/v2/killfeed.ts'), 'utf8');
     const runtime = fs.readFileSync(path.join(root, 'src/modules/gameplayFeeds/runtime.ts'), 'utf8');
+    const ingestor = fs.readFileSync(path.join(root, 'src/modules/nitrado/adm/serverLogIngestor.ts'), 'utf8');
     const composite = fs.readFileSync(path.join(root, 'src/events/interactionCreateComposite.ts'), 'utf8');
     const ui = fs.readFileSync(path.join(root, 'dashboard-ui/src/components/KillfeedTab.tsx'), 'utf8');
 
     expect(route).toContain("kind === 'FLAG' && categories.length !== 1");
+    expect(route).toContain('targetName: event.totemType');
+    expect(runtime).toContain('targetName: row.totemType');
+    expect(runtime).toContain('totemType: true');
+    expect(ingestor).toContain('totemType: event.targetName');
     expect(runtime).toContain('buildFlagActivityCustomId(event.id)');
     expect(runtime).toContain(".setLabel('Kurz-Online prüfen')");
     expect(composite).toContain('flagshort:v1:');

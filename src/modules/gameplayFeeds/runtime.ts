@@ -98,6 +98,7 @@ function flagRowToGameplayEvent(row: {
   actorName: string | null;
   actorPosition: string | null;
   flagType: string | null;
+  totemType: string | null;
   flagPosition: string | null;
 }): GameplayAdmEvent {
   return {
@@ -108,7 +109,7 @@ function flagRowToGameplayEvent(row: {
     actorGameId: row.actorGameId,
     actorName: row.actorName,
     targetGameId: null,
-    targetName: 'TerritoryFlag',
+    targetName: row.totemType,
     objectType: row.flagType,
     toolOrWeapon: null,
     distanceMeters: null,
@@ -160,6 +161,7 @@ async function scanFlagEvents(
       actorName: true,
       actorPosition: true,
       flagType: true,
+      totemType: true,
       flagPosition: true,
     },
   });
@@ -311,6 +313,7 @@ async function loadDeliveryEvent(config: GameplayFeedConfig, eventId: string): P
         actorName: true,
         actorPosition: true,
         flagType: true,
+        totemType: true,
         flagPosition: true,
       },
     });
@@ -550,26 +553,31 @@ async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerList
     orderBy: [{ sourceByteStart: 'desc' }, { id: 'desc' }],
   }) as PlayerPresenceEvent[];
 
-  const online = resolveOnlinePresence(presenceEvents);
-  if (online.length === 0) return [];
-
+  // Bare PLAYER_POSITION rows are emitted by PluginAdminLog.PlayerList() and
+  // therefore are direct online evidence. Read them before resolving presence
+  // so a bot/V2 baseline taken while players are already online does not hide
+  // them until their next reconnect. A later disconnect still wins by byte
+  // order inside resolveOnlinePresence().
   const positions = await prisma.admEvent.findMany({
     where: {
       guildId: config.guildId,
       nitradoConnId: config.nitradoConnId,
       sourceFile: latestCursor.fileIdentity,
       eventType: AdmEventType.PLAYER_POSITION,
-      actorGameId: { in: online.map(player => player.gameId) },
+      actorGameId: { not: null },
     },
     select: {
       id: true,
       actorGameId: true,
+      actorName: true,
       actorPosition: true,
       sourceByteStart: true,
     },
     orderBy: [{ sourceByteStart: 'desc' }, { id: 'desc' }],
   }) as PlayerPositionEvent[];
 
+  const online = resolveOnlinePresence(presenceEvents, positions);
+  if (online.length === 0) return [];
   return attachCurrentPositions(online, positions);
 }
 

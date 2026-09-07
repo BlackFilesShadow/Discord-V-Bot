@@ -1,0 +1,19 @@
+// Persistenter, versionsgebundener Fortschritt fuer den kontrollierten ADM-Reparse.
+//
+// Der Backfill arbeitet ausschliesslich auf bereits persistierten AdmEvent-Zeilen.
+// AdmSourceCursor/Remote-Dateien werden dabei niemals zurueckgesetzt oder erneut
+// eingelesen. Eine neue Parser-Version bekommt automatisch einen eigenen State.
+model AdmParserBackfillState {
+  id                  String   @id @default(cuid())
+  guildId             String
+  nitradoConnId       String
+  targetParserVersion Int
+  processedRows       BigInt   @default(0)
+  lastCheckedAt       DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId, targetParserVersion])
+  @@index([targetParserVersion, completedAt])
+}
