@@ -6,6 +6,7 @@
  * historischen Wert. Die API nimmt deshalb fuer diese Typen keine neue Win-%-
  * Konfiguration mehr an.
  */
+import { createHash } from 'crypto';
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
@@ -258,7 +259,7 @@ casinoRouter.get('/rounds', requireGuildPermission('casino.view'), async (req, r
       bet: r.bet.toString(),
       payout: r.payout.toString(),
       result: r.result,
-      serverSeedHash: r.serverSeed ? require('crypto').createHash('sha256').update(r.serverSeed).digest('hex') : null,
+      serverSeedHash: createHash('sha256').update(r.serverSeed).digest('hex'),
       nonce: r.nonce.toString(),
       createdAt: r.createdAt,
     })),
