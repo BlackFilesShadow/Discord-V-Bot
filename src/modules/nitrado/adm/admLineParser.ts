@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 7;
+export const ADM_PARSER_VERSION = 8;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -66,6 +66,7 @@ const POS_RE = /pos=<([^>]+)>/;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
 const PVP_HIT_DETAILS_RE = /\bhit by\s+(.+?)\s+into\s+([A-Za-z]+)\(\d+\)\s+for\s+([\d.]+)\s+damage\s+\(([^)]+)\)(?:\s+with\s+(.+?))?\s*\.?\s*$/i;
 const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+([A-Za-z_][A-Za-z0-9_]*)\s+at\s+<([^>]+)>\s*\.?\s*$/i;
+const PLAYER_PREFIX_RE = /^Player\s+"[^"]+"\s*(?:\(DEAD\)\s*)?\(id=[^)]*\)\s*/i;
 const PLAYER_ACTION_RE = /^Player\s+"[^"]+"\s*(?:\(DEAD\)\s*)?\(id=[^)]*?\bpos=<[^>]+>\)\s*(.+)$/i;
 const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
 // PluginAdminLog.PlayerKilled() uses source.GetType() for the explicit
@@ -356,6 +357,8 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
 
   const content = line.replace(/^\d{2}:\d{2}:\d{2}\s*\|?\s*/, '');
   const hasPlayer = /Player\s*"/.test(content) || /"[^"]+"\s*\(/.test(content);
+  const canonicalPlayerLine = PLAYER_PREFIX_RE.test(content);
+  const canonicalPlayerAction = PLAYER_ACTION_RE.test(content);
 
   const finalize = (event: ParsedAdmEvent): ParsedAdmEvent => {
     event.occurredAt = occurredAt;
@@ -363,23 +366,23 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return event;
   };
 
-  if (/\bis connected\b/i.test(content) || /\)\s*connected\b/i.test(content)) {
+  if (canonicalPlayerLine && (/\bis connected\b/i.test(content) || /\)\s*connected\b/i.test(content))) {
     return finalize(fill(content, 'PLAYER_CONNECTED', extractActor(content)));
   }
-  if (/\bhas been disconnected\b/i.test(content) || /\)\s*disconnected\b/i.test(content)) {
+  if (canonicalPlayerLine && (/\bhas been disconnected\b/i.test(content) || /\)\s*disconnected\b/i.test(content))) {
     return finalize(fill(content, 'PLAYER_DISCONNECTED', extractActor(content)));
   }
 
   const flag = parseFlagAction(content);
   if (flag) return finalize(flag);
 
-  if (/committed suicide/i.test(content)) {
+  if (canonicalPlayerAction && /committed suicide/i.test(content)) {
     const event = fill(content, 'PLAYER_SUICIDE', extractActor(content));
     event.toolOrWeapon = extractWeapon(content);
     return finalize(event);
   }
 
-  const killedByIndex = content.search(/\bkilled by\b/i);
+  const killedByIndex = canonicalPlayerAction ? content.search(/\bkilled by\b/i) : -1;
   if (killedByIndex >= 0) {
     const victimSegment = content.slice(0, killedByIndex);
     const killerSegment = content.slice(killedByIndex + 'killed by'.length).trim();
@@ -417,27 +420,29 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return finalize(event);
   }
 
-  if (/\bhas drowned while unconscious\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bhas drowned while unconscious\b/i.test(content)) {
     return finalize(playerDiedWithCause(content, 'Drowned while unconscious'));
   }
-  if (/\bis choosing to respawn\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bis choosing to respawn\b/i.test(content)) {
     return finalize(playerDiedWithCause(content, 'Respawn'));
   }
-  const disconnectDeath = /\bis disconnecting while being (unconscious|restrained)\b/i.exec(content);
+  const disconnectDeath = canonicalPlayerAction
+    ? /\bis disconnecting while being (unconscious|restrained)\b/i.exec(content)
+    : null;
   if (disconnectDeath) {
     return finalize(playerDiedWithCause(content, `Disconnect while ${disconnectDeath[1].toLowerCase()}`));
   }
-  if (/\bbled out\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bbled out\b/i.test(content)) {
     return finalize(playerDiedWithCause(content, 'Bled out'));
   }
-  if (/\bdrowned\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bdrowned\b/i.test(content)) {
     return finalize(playerDiedWithCause(content, 'Drowned'));
   }
-  if (/\bdied\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bdied\b/i.test(content)) {
     return finalize(fill(content, 'PLAYER_DIED', extractActor(content)));
   }
 
-  if (/\bhit by\b/i.test(content)) {
+  if (canonicalPlayerAction && /\bhit by\b/i.test(content)) {
     const fatalVehicle = /\(DEAD\)/i.test(content)
       && (/\[vehicle\]/i.test(content) || /\bat speed\s+\d+(?:\.\d+)?\s*km\/h/i.test(content));
     const event = fill(content, fatalVehicle ? 'VEHICLE_DEATH' : 'PLAYER_HIT', extractActor(content));
@@ -464,7 +469,7 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     return finalize(event);
   }
 
-  if (hasPlayer && POS_RE.test(content) && isBarePlayerPosition(content)) {
+  if (canonicalPlayerLine && POS_RE.test(content) && isBarePlayerPosition(content)) {
     return finalize(fill(content, 'PLAYER_POSITION', extractActor(content)));
   }
 
