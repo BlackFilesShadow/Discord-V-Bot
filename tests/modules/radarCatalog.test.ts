@@ -95,20 +95,40 @@ describe('Radar-Funktionskatalog', () => {
     }))).toEqual([]);
   });
 
-  it('normalisiert TerritoryFlag X/Hoehe/Z und verwendet die Flaggenposition fuer die Zone', () => {
+  it('normalisiert dynamische Flag-Totems X/Hoehe/Z und verwendet die exakte Flaggenposition', () => {
     const candidates = radarFunctionByKey('BAN_FLAG')?.selectPositions(event({
       eventType: 'UNKNOWN',
-      targetName: 'TerritoryFlag',
+      targetName: 'StaticFlagPole',
       objectType: 'Flag_Chernarus',
       targetPosition: '4643.467773,339.000000,10338.107422',
+      rawLine: 'Player "Actor" (id=aaaaaaaaaaaaaaaa pos=<4640, 338, 10330>) has raised Flag_Chernarus on StaticFlagPole at <4643.467773,339.000000,10338.107422>',
     }));
     expect(candidates).toEqual([
       expect.objectContaining({
         identity: 'ACTOR',
         gameId: 'aaaaaaaaaaaaaaaa',
+        relatedName: 'StaticFlagPole',
         position: { x: 4643.467773, y: 10338.107422, altitude: 339 },
       }),
     ]);
+  });
+
+  it('rejects UNKNOWN lookalikes when canonical raw flag evidence disagrees', () => {
+    const flag = radarFunctionByKey('BAN_FLAG')!;
+    expect(flag.selectPositions(event({
+      eventType: 'UNKNOWN',
+      targetName: 'StaticFlagPole',
+      objectType: 'Flag_Chernarus',
+      targetPosition: '4643.467773,339.000000,10338.107422',
+      rawLine: 'Player "Actor" (id=aaaaaaaaaaaaaaaa pos=<4640, 338, 10330>) has raised Flag_Chernarus on TerritoryFlag at <4643.467773,339.000000,10338.107422>',
+    }))).toEqual([]);
+    expect(flag.selectPositions(event({
+      eventType: 'UNKNOWN',
+      targetName: 'StaticFlagPole',
+      objectType: 'Flag_Chernarus',
+      targetPosition: '4643.467773,339.000000,10338.107422',
+      rawLine: 'some unrelated UNKNOWN line',
+    }))).toEqual([]);
   });
 
   it('erkennt Explosion nur mit Explosiv-Evidenz und verhindert Doppelzuordnung zu Hit/Kill', () => {
