@@ -216,14 +216,14 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
 
 interface OverviewAggregate { wallet: bigint | null; bank: bigint | null; count: bigint }
 interface OverviewTx { id: string; userDiscordId: string; delta: bigint; type: string; reason: string | null; createdAt: Date }
-interface OverviewCasinoRound { bet: bigint; payout: bigint; type: string }
+interface OverviewCasinoAggregate { type: string; rounds: bigint; wins: bigint; draws: bigint; bet: bigint; payout: bigint }
 interface OverviewCasinoGame { type: string; enabled: boolean }
 
 /** GET /overview — ausschliesslich fuer den validierten Gameserver. */
 economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const guildId = scope.guildId;
-  const [cfg, interestBasisPoints, enabled, accountAggRows, linkCountRows, txCountRows, recentTx, casinoRounds, casinoGames] = await Promise.all([
+  const [cfg, interestBasisPoints, enabled, accountAggRows, linkCountRows, txCountRows, recentTx, casinoStats, casinoGames] = await Promise.all([
     getConfig(guildId, connId),
     getInterestBasisPoints(guildId, connId),
     economyEnabled(guildId, connId),
@@ -239,25 +239,32 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
     rawDb.$queryRawUnsafe<OverviewTx[]>(
       'SELECT "id", "userDiscordId", "delta", "type"::text AS type, "reason", "createdAt" FROM "EconomyTransaction" WHERE "guildId"=$1 AND "nitradoConnId"=$2 ORDER BY "createdAt" DESC LIMIT 10',
       String(guildId), String(connId)),
-    rawDb.$queryRawUnsafe<OverviewCasinoRound[]>(
-      'SELECT r."bet", r."payout", g."type"::text AS type FROM "CasinoRound" r JOIN "CasinoGame" g ON g."id"=r."gameId" WHERE r."guildId"=$1 AND r."nitradoConnId"=$2 LIMIT 100000',
+    rawDb.$queryRawUnsafe<OverviewCasinoAggregate[]>(
+      `SELECT g."type"::text AS "type",
+              COUNT(*)::bigint AS "rounds",
+              COUNT(*) FILTER (WHERE r."result"->>'draw' = 'true')::bigint AS "draws",
+              COUNT(*) FILTER (
+                WHERE COALESCE(r."result"->>'draw', 'false') <> 'true'
+                  AND CASE WHEN r."result" ? 'won' THEN r."result"->>'won' = 'true' ELSE r."payout" > 0 END
+              )::bigint AS "wins",
+              COALESCE(SUM(r."bet"), 0)::bigint AS "bet",
+              COALESCE(SUM(r."payout"), 0)::bigint AS "payout"
+         FROM "CasinoRound" r
+         JOIN "CasinoGame" g
+           ON g."id" = r."gameId"
+          AND g."guildId" = r."guildId"
+          AND g."nitradoConnId" = r."nitradoConnId"
+        WHERE r."guildId"=$1 AND r."nitradoConnId"=$2
+        GROUP BY g."type"`,
       String(guildId), String(connId)),
     rawDb.$queryRawUnsafe<OverviewCasinoGame[]>(
       'SELECT "type"::text AS type, "enabled" FROM "CasinoGame" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
       String(guildId), String(connId)),
   ]);
 
-  const buckets = new Map<string, { type: string; rounds: number; wins: number; bet: bigint; payout: bigint }>();
-  for (const r of casinoRounds) {
-    const cur = buckets.get(r.type) ?? { type: r.type, rounds: 0, wins: 0, bet: 0n, payout: 0n };
-    cur.rounds++;
-    if (r.payout > 0n) cur.wins++;
-    cur.bet += r.bet;
-    cur.payout += r.payout;
-    buckets.set(r.type, cur);
-  }
-  const casinoTotalBet = casinoRounds.reduce((a, r) => a + r.bet, 0n);
-  const casinoTotalPayout = casinoRounds.reduce((a, r) => a + r.payout, 0n);
+  const casinoRounds = casinoStats.reduce((sum, row) => sum + row.rounds, 0n);
+  const casinoTotalBet = casinoStats.reduce((sum, row) => sum + row.bet, 0n);
+  const casinoTotalPayout = casinoStats.reduce((sum, row) => sum + row.payout, 0n);
   const accAgg = accountAggRows[0] ?? { wallet: 0n, bank: 0n, count: 0n };
 
   res.json({
@@ -280,13 +287,18 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
     casino: {
       gamesConfigured: casinoGames.length,
       gamesEnabled: casinoGames.filter(g => g.enabled).length,
-      rounds: casinoRounds.length,
+      rounds: Number(casinoRounds),
       totalBet: casinoTotalBet.toString(),
       totalPayout: casinoTotalPayout.toString(),
       houseEdge: (casinoTotalBet - casinoTotalPayout).toString(),
-      stats: Array.from(buckets.values()).map(b => ({
-        type: b.type, rounds: b.rounds, wins: b.wins, losses: b.rounds - b.wins,
-        bet: b.bet.toString(), payout: b.payout.toString(),
+      stats: casinoStats.map(b => ({
+        type: b.type,
+        rounds: Number(b.rounds),
+        wins: Number(b.wins),
+        draws: Number(b.draws),
+        losses: Number(b.rounds - b.wins - b.draws),
+        bet: b.bet.toString(),
+        payout: b.payout.toString(),
       })),
     },
     recentTransactions: recentTx.map(t => ({
