@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 5;
+export const ADM_PARSER_VERSION = 6;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -65,7 +65,8 @@ const ID_RE = /id=([^\s,)]+)/;
 const POS_RE = /pos=<([^>]+)>/;
 const DISTANCE_RE = /\bfrom\s+([\d.]+)\s*m(?:eters?)?\b/i;
 const PVP_HIT_DETAILS_RE = /\bhit by\s+(.+?)\s+into\s+([A-Za-z]+)\(\d+\)\s+for\s+([\d.]+)\s+damage\s+\(([^)]+)\)(?:\s+with\s+(.+?))?\s*\.?\s*$/i;
-const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+TerritoryFlag\s+at\s+<([^>]+)>\s*\.?\s*$/i;
+const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+([A-Za-z_][A-Za-z0-9_]*)\s+at\s+<([^>]+)>\s*\.?\s*$/i;
+const PLAYER_ACTION_RE = /^Player\s+"[^"]+"\s*(?:\(DEAD\)\s*)?\(id=[^)]*?\bpos=<[^>]+>\)\s*(.+)$/i;
 const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
 
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
@@ -176,34 +177,78 @@ function cleanActionValue(value: string): string {
     .trim();
 }
 
-function parseBuildAction(content: string): { type: AdmParsedType; object: string; tool: string | null } | null {
-  const match = /\b(placed|built|dismantled|destroyed)\s+(.+?)\s*$/i.exec(content);
-  if (!match) return null;
-  const action = match[1].toLowerCase();
-  const tail = match[2].trim();
+function splitObjectAndTool(tail: string): { object: string; tool: string | null } | null {
   const withMatch = /^(.+?)\s+with\s+(.+?)\s*$/i.exec(tail);
   const object = cleanActionValue(withMatch?.[1] ?? tail);
   const tool = withMatch ? cleanActionValue(withMatch[2]) : null;
-  const type: AdmParsedType = action === 'placed'
-    ? 'PLACEMENT'
-    : action === 'built'
-      ? 'BUILD'
-      : action === 'dismantled'
-        ? 'DISMANTLE'
-        : 'DESTROY';
-  return object ? { type, object, tool } : null;
+  return object ? { object, tool } : null;
+}
+
+/**
+ * Klassifiziert ausschliesslich echte DayZ-Spieleraktionen mit kanonischem
+ * Player+id+pos-Praefix. Dadurch koennen Chat/Report-/Custom-Log-Texte mit
+ * Woertern wie "dismantled" niemals versehentlich in einen Gameplay-Feed
+ * geraten.
+ *
+ * Vanilla-Zuordnung:
+ * - placed                         -> PLACEMENT
+ * - built / Mounted BarbedWire     -> BUILD
+ * - dismantled / packed / folded   -> DISMANTLE
+ * - Unmounted BarbedWire           -> DISMANTLE
+ * - destroyed                      -> DESTROY
+ *
+ * Bewusst NICHT umetikettiert werden repaired, re-packed und Dug in/out:
+ * Dafuer existiert in der UI keine semantisch passende Feed-Kategorie.
+ */
+function parseBuildAction(content: string): { type: AdmParsedType; object: string; tool: string | null } | null {
+  const playerAction = PLAYER_ACTION_RE.exec(content);
+  if (!playerAction) return null;
+  const actionContent = playerAction[1].trim();
+
+  const standard = /^(placed|built|dismantled|destroyed|packed|folded)\s+(.+?)\s*$/i.exec(actionContent);
+  if (standard) {
+    const action = standard[1].toLowerCase();
+    const parsed = splitObjectAndTool(standard[2].trim());
+    if (!parsed) return null;
+    const type: AdmParsedType = action === 'placed'
+      ? 'PLACEMENT'
+      : action === 'built'
+        ? 'BUILD'
+        : action === 'destroyed'
+          ? 'DESTROY'
+          : 'DISMANTLE';
+    return { type, ...parsed };
+  }
+
+  // ActionMountBarbedWire / ActionUnmountBarbedWire liefern in Vanilla einen
+  // zusaetzlichen "Player %1"-Abschnitt innerhalb der Action-Message. Nur die
+  // exakten BarbedWire-Verben werden akzeptiert, damit keine Fremdaktion als
+  // Build/Dismantle einsortiert wird.
+  const wire = /^(?:Player\s+.+?\s+)?(Mounted|Unmounted)\s+BarbedWire\s+(on|from)\s+(.+?)\s*$/i.exec(actionContent);
+  if (!wire) return null;
+  const mounted = wire[1].toLowerCase() === 'mounted';
+  const relation = wire[2].toLowerCase();
+  if ((mounted && relation !== 'on') || (!mounted && relation !== 'from')) return null;
+  const target = cleanActionValue(wire[3]);
+  if (!target) return null;
+  return {
+    type: mounted ? 'BUILD' : 'DISMANTLE',
+    object: `BarbedWire ${relation} ${target}`,
+    tool: null,
+  };
 }
 
 function parseFlagAction(content: string): ParsedAdmEvent | null {
-  // TerritoryFlag actions are accepted only in the canonical DayZ player-action
-  // shape. Chat/report text can contain the same English words and must never
-  // become a gameplay event merely because an unanchored substring matches.
+  // TerritoryFlag/StaticFlagPole-Aktionen werden nur in der kanonischen
+  // PluginAdminLog-Form akzeptiert. Chat/report text kann dieselben englischen
+  // Woerter enthalten und darf dadurch niemals zum Gameplay-Event werden.
   const match = FLAG_ACTION_RE.exec(content);
   if (!match) return null;
   const actorPosition = match[3].trim();
-  const flagPosition = match[6].trim();
+  const flagPosition = match[7].trim();
   if (!COORDINATE_TRIPLET_RE.test(actorPosition) || !COORDINATE_TRIPLET_RE.test(flagPosition)) return null;
   const objectType = cleanActionValue(match[5]);
+  const totemType = match[6].trim();
   if (!objectType || /[\r\n\t\u0000-\u001f\u007f]/.test(objectType)) return null;
 
   const event = fill(content, match[4].toLowerCase() === 'raised' ? 'FLAG_RAISED' : 'FLAG_LOWERED', {
@@ -212,7 +257,7 @@ function parseFlagAction(content: string): ParsedAdmEvent | null {
     pos: actorPosition,
   });
   event.objectType = objectType;
-  event.targetName = 'TerritoryFlag';
+  event.targetName = totemType;
   event.targetPosition = flagPosition;
   return event;
 }
