@@ -23,10 +23,11 @@ function presence(
   };
 }
 
-function position(id: string, gameId: string, byte: number, value: string): PlayerPositionEvent {
+function position(id: string, gameId: string, byte: number, value: string, name = gameId): PlayerPositionEvent {
   return {
     id,
     actorGameId: gameId,
+    actorName: name,
     actorPosition: value,
     sourceByteStart: BigInt(byte),
   };
@@ -55,6 +56,41 @@ describe('Online List live roster truth', () => {
     ]);
 
     expect(online.map(player => player.gameId)).toEqual(['a']);
+  });
+
+  it('seeds an already-online player from the first exact PlayerList position after baseline', () => {
+    const online = resolveOnlinePresence([], [
+      position('pos-seed', 'seeded', 100, '10,20,30', 'Seeded Player'),
+    ]);
+
+    expect(online).toEqual([
+      { gameId: 'seeded', playerName: 'Seeded Player', connectedByteStart: 100n },
+    ]);
+    expect(attachCurrentPositions(online, [
+      position('pos-seed', 'seeded', 100, '10,20,30', 'Seeded Player'),
+    ])).toEqual([
+      { gameId: 'seeded', playerName: 'Seeded Player', position: '10,20,30' },
+    ]);
+  });
+
+  it('lets a newer disconnect beat older PlayerList evidence', () => {
+    const online = resolveOnlinePresence([
+      presence('disconnect', 'PLAYER_DISCONNECTED', 'seeded', 150, 'Seeded Player'),
+    ], [
+      position('old-pos', 'seeded', 100, '10,20,30', 'Seeded Player'),
+    ]);
+    expect(online).toEqual([]);
+  });
+
+  it('lets a newer PlayerList row prove the player is online again after an older disconnect', () => {
+    const online = resolveOnlinePresence([
+      presence('old-disconnect', 'PLAYER_DISCONNECTED', 'seeded', 100, 'Seeded Player'),
+    ], [
+      position('new-pos', 'seeded', 150, '40,50,60', 'Seeded Player'),
+    ]);
+    expect(online).toEqual([
+      { gameId: 'seeded', playerName: 'Seeded Player', connectedByteStart: 150n },
+    ]);
   });
 
   it('never carries a position from before the current reconnect', () => {
@@ -90,6 +126,8 @@ describe('Online List live roster truth', () => {
     expect(rosterSection).toContain('admSourceCursor.findFirst');
     expect(rosterSection).toContain('sourceFile: latestCursor.fileIdentity');
     expect(rosterSection).toContain('AdmEventType.PLAYER_DISCONNECTED');
+    expect(rosterSection).toContain('AdmEventType.PLAYER_POSITION');
+    expect(rosterSection).toContain('resolveOnlinePresence(presenceEvents, positions)');
     expect(rosterSection).not.toContain('playerSession.findMany');
   });
 });
