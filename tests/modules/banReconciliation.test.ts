@@ -40,6 +40,8 @@ jest.mock('../../src/database/prisma', () => ({
     nitradoConnection: { findMany: jest.fn(), findFirst: jest.fn() },
     serverBanEntry: { findMany: jest.fn(), updateMany: jest.fn() },
     serverBanRemoteIdentity: { findMany: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn() },
+    whitelistEntry: { updateMany: jest.fn() },
+    whitelistRequest: { updateMany: jest.fn() },
   },
 }));
 
@@ -75,6 +77,8 @@ beforeEach(() => {
   db.serverBanRemoteIdentity.findMany.mockResolvedValue([]);
   db.serverBanRemoteIdentity.upsert.mockResolvedValue({});
   db.serverBanRemoteIdentity.deleteMany.mockResolvedValue({ count: 1 });
+  db.whitelistEntry.updateMany.mockResolvedValue({ count: 0 });
+  db.whitelistRequest.updateMany.mockResolvedValue({ count: 0 });
   mockGetBanlist.mockResolvedValue([]);
   mockEnqueueAdd.mockResolvedValue(true);
   mockEnqueueRemove.mockResolvedValue(true);
@@ -103,6 +107,59 @@ describe('Nitrado-1W server-ban DB <-> Nitrado reconciliation', () => {
         manualRemoteMissingObserved: 1,
         repairedAdds: 0,
       }),
+    );
+  });
+
+  it('does not report drift when Nitrado returns only different casing for the stored ban identifier', async () => {
+    const row = ban('ban-case', 'PlayerOne');
+    db.serverBanEntry.findMany.mockResolvedValue([row]);
+    db.serverBanRemoteIdentity.findMany.mockResolvedValue([{
+      banId: row.id,
+      identifierEnc: encrypt('PlayerOne', KEY),
+    }]);
+    mockGetBanlist.mockResolvedValue([{ identifier: 'playerone' }]);
+
+    await runBanReconciliationOnce(NOW);
+
+    expect(mockNotifyDrift).not.toHaveBeenCalled();
+    expect(mockEnqueueAdd).not.toHaveBeenCalled();
+    expect(mockClearDrift).toHaveBeenCalledWith(undefined, 'guild-1', 'conn-1', 'BAN', 'ban-case');
+  });
+
+  it('repairs a historical case-mismatched whitelist mirror for an active ban without direct remote whitelist writes', async () => {
+    const row = ban('ban-whitelist-repair', 'PlayerOne');
+    db.serverBanEntry.findMany.mockResolvedValue([row]);
+    db.serverBanRemoteIdentity.findMany.mockResolvedValue([{
+      banId: row.id,
+      identifierEnc: encrypt('PlayerOne', KEY),
+    }]);
+    mockGetBanlist.mockResolvedValue([{ identifier: 'PlayerOne' }]);
+    db.whitelistEntry.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await runBanReconciliationOnce(NOW);
+
+    expect(db.whitelistEntry.updateMany).toHaveBeenCalledWith({
+      where: {
+        guildId: 'guild-1',
+        nitradoConnId: 'conn-1',
+        gameId: { equals: 'PlayerOne', mode: 'insensitive' },
+        syncState: { in: ['LOCAL_ONLY', 'SYNCED'] },
+      },
+      data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
+    });
+    expect(db.whitelistRequest.updateMany).toHaveBeenCalledWith({
+      where: {
+        guildId: 'guild-1',
+        nitradoConnId: 'conn-1',
+        gameId: { equals: 'PlayerOne', mode: 'insensitive' },
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
+      data: { status: 'CANCELLED' },
+    });
+    expect(mockLogAudit).toHaveBeenCalledWith(
+      'SERVER_BAN_RECONCILED',
+      'NITRADO',
+      expect.objectContaining({ repairedWhitelistMirrors: 1 }),
     );
   });
 
