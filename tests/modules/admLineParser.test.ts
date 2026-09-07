@@ -9,7 +9,7 @@ function ctxWithDate() {
 
 describe('admLineParser — Golden', () => {
   it('verwendet die neue Parser-Version fuer korrigierte Feed-Semantik', () => {
-    expect(ADM_PARSER_VERSION).toBe(6);
+    expect(ADM_PARSER_VERSION).toBe(7);
   });
 
   it('erkennt den Header und setzt das Basisdatum', () => {
@@ -59,12 +59,12 @@ describe('admLineParser — Golden', () => {
     expect(ev?.distanceMeters).toBeCloseTo(300.5);
   });
 
-  it('trennt normalen Tod, Suizid und Wild-Tod', () => {
+  it('trennt normalen Tod, Suizid und echten Vanilla-Wild-Tod', () => {
     expect(parseAdmLine('18:08:00 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) died. Stats> Water: 0.0', ctxWithDate())?.eventType).toBe('PLAYER_DIED');
     expect(parseAdmLine('18:09:00 | Player "Alpha" (DEAD) (id=1 pos=<1,2,3>) committed suicide', ctxWithDate())?.eventType).toBe('PLAYER_SUICIDE');
-    const wild = parseAdmLine('18:10:00 | Player "Delta" (DEAD) (id=4 pos=<5,6,7>) killed by Wolf', ctxWithDate());
+    const wild = parseAdmLine('18:10:00 | Player "Delta" (DEAD) (id=4 pos=<5,6,7>) killed by Animal_CanisLupus_Grey', ctxWithDate());
     expect(wild?.eventType).toBe('NPC_KILL');
-    expect(wild?.targetName).toBe('Wolf');
+    expect(wild?.targetName).toBe('Animal_CanisLupus_Grey');
   });
 
   it('uebernimmt eine Suizidwaffe nur wenn sie in der ADM-Zeile belegt ist', () => {
