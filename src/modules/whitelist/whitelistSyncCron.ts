@@ -95,7 +95,8 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection, client?:
 
   const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
   const api = new NitradoClient(token);
-  let remoteNames = (await api.getWhitelist(conn.nitradoServerId)).map((e) => e.identifier);
+  const remoteEntries = await api.getWhitelist(conn.nitradoServerId);
+  let remoteNames = remoteEntries.map((e) => e.identifier);
   let remoteNorm = new Set(remoteNames.map(normGameId));
 
   const local = await prisma.whitelistEntry.findMany({
@@ -106,11 +107,11 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection, client?:
   // Ein einzelner Nitrado-Snapshot darf niemals eine Abwesenheit bestaetigen.
   // Sobald irgendein lokaler Soll-/Spiegeleintrag im ersten Read fehlt, wird
   // unter demselben Connection-Lock erneut gelesen. Fuer die Reconciliation
-  // gilt konservativ die Vereinigungsmenge: "fehlend" bedeutet damit, dass der
-  // Name in BEIDEN Reads nicht vorhanden war.
+  // gilt konservativ die Vereinigungsmenge: Abwesenheit gilt nur, wenn beide Reads fehlen.
   if (local.some(entry => !remoteNorm.has(normGameId(entry.gameId)))) {
     await delay(REMOTE_ABSENCE_CONFIRM_DELAY_MS);
-    const secondRemoteNames = (await api.getWhitelist(conn.nitradoServerId)).map((e) => e.identifier);
+    const secondRemoteEntries = await api.getWhitelist(conn.nitradoServerId);
+    const secondRemoteNames = secondRemoteEntries.map((e) => e.identifier);
     remoteNames = mergeRemoteNames(remoteNames, secondRemoteNames);
     remoteNorm = new Set(remoteNames.map(normGameId));
   }
