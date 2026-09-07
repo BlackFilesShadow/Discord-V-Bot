@@ -1,0 +1,27 @@
+// Casino V3 configuration is intentionally independent from the legacy
+// CasinoGameType enum. Public game identity is stored as a validated string so
+// new Discord games do not require rewriting historic CasinoRound rows.
+//
+// There is deliberately no Prisma relation to NitradoConnection here because
+// the large legacy connection model lives in schema.prisma and cannot be
+// extended across Prisma schema files. The accompanying migration installs a
+// database trigger that removes these rows atomically when the owning
+// NitradoConnection is deleted. Runtime writes additionally pass the canonical
+// Guild+Gameserver scope guard before reaching this model.
+model CasinoGameConfigV3 {
+  id              String   @id @default(cuid())
+  guildId         String
+  nitradoConnId   String
+  type            String   @db.VarChar(24)
+  enabled         Boolean  @default(false)
+  winChancePct    Int
+  minBet          BigInt   @default(1)
+  maxBet          BigInt   @default(10000)
+  payoutMult      Float    @default(2.0)
+  cooldownSeconds Int      @default(2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([guildId, nitradoConnId, type], name: "guildServerType", map: "CasinoGameConfigV3_guild_conn_type_key")
+  @@index([guildId, nitradoConnId], map: "CasinoGameConfigV3_guild_conn_idx")
+}
