@@ -35,6 +35,7 @@ import {
   type NitradoOutboxClient,
   type NitradoOutboxTxClient,
 } from '../nitrado/outboxLock';
+import { markWhitelistRemoveIntent } from '../whitelist/whitelistOutbox';
 
 export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 
@@ -81,6 +82,13 @@ interface BanRemoteIdentityTxClient {
   };
 }
 
+interface EnsureBanJobOptions {
+  recentDeadCooldownMs?: number;
+  now?: Date;
+  /** Nur zur Laufzeit; wird nie in NitradoJob.payload persistiert. */
+  whitelistIdentifier?: string;
+}
+
 function asPayload(value: unknown): ServerBanJobPayload | null {
   if (!value || typeof value !== 'object') return null;
   const v = value as Record<string, unknown>;
@@ -105,8 +113,16 @@ async function ensureJobInLock(
   scope: BanOutboxScope,
   operation: ServerBanJobOperation,
   payload: ServerBanJobPayload,
-  options: { recentDeadCooldownMs?: number; now?: Date } = {},
+  options: EnsureBanJobOptions = {},
 ): Promise<boolean> {
+  if (operation === 'SERVER_BAN_ADD' && options.whitelistIdentifier) {
+    // Ein Bann bedeutet immer auch: derselbe Spieler darf lokal nicht weiter
+    // als SYNCED-Whitelist-Wahrheit stehen. Diese Spiegelmutation liegt unter
+    // derselben Connection-/Subject-Transaktion und verwendet dieselbe
+    // case-insensitive Identitaet wie der Nitrado-Whitelist-Remove.
+    await markWhitelistRemoveIntent(tx, scope, options.whitelistIdentifier);
+  }
+
   if (operation === 'SERVER_BAN_ADD' && payload.encryptedIdentifier) {
     const identityTx = tx as unknown as BanRemoteIdentityTxClient;
     await identityTx.serverBanRemoteIdentity.upsert({
@@ -160,7 +176,7 @@ async function ensureJob(
   scope: BanOutboxScope,
   operation: ServerBanJobOperation,
   payload: ServerBanJobPayload,
-  options: { recentDeadCooldownMs?: number; now?: Date } = {},
+  options: EnsureBanJobOptions = {},
 ): Promise<boolean> {
   const banId = payload.banId.trim();
   if (!banId) throw new Error('Leere Server-Ban-ID');
@@ -225,6 +241,7 @@ export async function enqueueServerBanAdd(
     {
       recentDeadCooldownMs: Math.max(0, options.recentDeadCooldownMs ?? 0),
       now: options.now,
+      whitelistIdentifier: identifier,
     },
   );
 }
