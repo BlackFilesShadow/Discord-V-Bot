@@ -53,6 +53,56 @@ function jobPayload(operation: WhitelistJobOperation, gameId: string): Record<st
   return { gameId };
 }
 
+interface WhitelistMirrorTxClient {
+  whitelistEntry?: {
+    updateMany(args: unknown): Promise<{ count: number }>;
+  };
+  whitelistRequest?: {
+    updateMany(args: unknown): Promise<{ count: number }>;
+  };
+}
+
+/**
+ * Spiegelt einen expliziten Remove-Intent zentral und case-insensitiv in den
+ * lokalen Sollzustand. DayZ/Nitrado behandeln Spielernamen beim Listen-Remove
+ * case-insensitiv; der lokale Spiegel darf deshalb nicht an `PlayerOne` vs.
+ * `playerone` auseinanderlaufen.
+ *
+ * Der Helper ist absichtlich idempotent und darf auch fuer remote-only Namen
+ * aufgerufen werden. Minimaladapter in isolierten Unit-Tests besitzen die
+ * optionalen Mirror-Modelle nicht; in Produktion ist `lockedTx` ein echter
+ * Prisma-TransactionClient und fuehrt beide Updates unter demselben Outbox-
+ * Connection-/Subject-Lock aus.
+ */
+export async function markWhitelistRemoveIntent(
+  tx: NitradoOutboxTxClient,
+  scope: WhitelistOutboxScope,
+  rawGameId: string,
+): Promise<void> {
+  const gameId = rawGameId.trim();
+  if (!gameId) throw new Error('Whitelist-Outbox: leerer Gameserver-Identifier.');
+  const mirror = tx as unknown as WhitelistMirrorTxClient;
+  const gameIdFilter = { equals: gameId, mode: 'insensitive' as const };
+
+  await mirror.whitelistEntry?.updateMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      gameId: gameIdFilter,
+    },
+    data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
+  });
+  await mirror.whitelistRequest?.updateMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      gameId: gameIdFilter,
+      status: { in: ['PENDING', 'APPROVED'] },
+    },
+    data: { status: 'CANCELLED' },
+  });
+}
+
 /**
  * Ein alter Leave-Cleanup darf nach bereits abgeschlossenem WHITELIST-Step
  * nicht durch einen Rejoin + erneutes ADD unterlaufen werden. Der Guard sitzt
@@ -110,6 +160,10 @@ async function ensureWhitelistJobInLock(
   gameId: string,
   normalizedGameId: string,
 ): Promise<boolean> {
+  if (operation === 'WHITELIST_REMOVE') {
+    await markWhitelistRemoveIntent(tx, scope, gameId);
+  }
+
   const existing = await tx.nitradoJob.findMany({
     where: {
       guildId: scope.guildId,
