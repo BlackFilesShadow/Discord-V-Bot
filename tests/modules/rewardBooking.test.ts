@@ -14,6 +14,7 @@ interface LedgerRow {
   type: string;
   sourceRef: string | null;
 }
+interface HistoricalPaidReward { occurredAt: Date; paid: bigint }
 
 const GUILD = '123456789012345678';
 const USER_1 = '223456789012345678';
@@ -24,6 +25,7 @@ const BASE_TIME = new Date('2026-09-08T10:00:00.000Z');
 function decision(id: string, userDiscordId: string, calculated: bigint, offsetSeconds = 0): PendingRewardRow {
   return {
     id,
+    admEventId: `event-${id}`,
     userDiscordId,
     calculated,
     rewardRuleId: 'pvp:default',
@@ -31,14 +33,23 @@ function decision(id: string, userDiscordId: string, calculated: bigint, offsetS
   };
 }
 
+function localDay(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 function makeClient(decisions: PendingRewardRow[]) {
   const accounts = new Map<string, Account>();
   const status = new Map<string, DecisionState>();
   const ledger = new Map<string, LedgerRow>();
+  const eventTimes = new Map<string, Date | null>(decisions.map(row => [row.admEventId, row.createdAt]));
+  let historicalPaid: HistoricalPaidReward[] = [];
   let pendingLeave = false;
   let queryLocks = 0;
-  let paidToday = 0n;
-  let lastPaidAt: Date | null = null;
   let chain: Promise<unknown> = Promise.resolve();
 
   for (const d of decisions) status.set(d.id, { status: 'PENDING', paid: 0n });
@@ -70,12 +81,28 @@ function makeClient(decisions: PendingRewardRow[]) {
   };
 
   const tx = {
-    $queryRawUnsafe: async (query: string) => {
+    $queryRawUnsafe: async (query: string, ...values: unknown[]) => {
       if (query.includes('pg_advisory_xact_lock')) {
         queryLocks++;
         return [{ pg_advisory_xact_lock: null }];
       }
-      if (query.includes('FROM "RewardDecision"')) return [{ paidToday, lastPaidAt }];
+      if (query.includes('FROM "AdmEvent"') && query.includes('LIMIT 1')) {
+        const admEventId = String(values[0]);
+        return eventTimes.has(admEventId) ? [{ occurredAt: eventTimes.get(admEventId) ?? null }] : [];
+      }
+      if (query.includes('FROM "RewardDecision" d')) {
+        const timezone = String(values[4]);
+        const eventOccurredAt = values[5] as Date;
+        const cooldownSeconds = Number(values[6]);
+        const currentDay = localDay(eventOccurredAt, timezone);
+        const paidToday = historicalPaid
+          .filter(row => localDay(row.occurredAt, timezone) === currentDay)
+          .reduce((sum, row) => sum + row.paid, 0n);
+        const cooldownConflict = cooldownSeconds > 0 && historicalPaid.some(row =>
+          Math.abs(row.occurredAt.getTime() - eventOccurredAt.getTime()) < cooldownSeconds * 1000,
+        );
+        return [{ paidToday, cooldownConflict }];
+      }
       throw new Error(`unexpected raw query: ${query}`);
     },
     dataDeletionRequest: { findFirst: async () => pendingLeave ? { id: 'leave-1' } : null },
@@ -149,10 +176,12 @@ function makeClient(decisions: PendingRewardRow[]) {
     ledger,
     setPendingLeave: (value: boolean) => { pendingLeave = value; },
     seedLedger: (row: LedgerRow) => ledger.set(row.idempotencyKey, row),
-    setLimits: (limits: { paidToday?: bigint; lastPaidAt?: Date | null }) => {
-      if (limits.paidToday !== undefined) paidToday = limits.paidToday;
-      if (limits.lastPaidAt !== undefined) lastPaidAt = limits.lastPaidAt;
+    setEventTime: (decisionId: string, occurredAt: Date | null) => {
+      const row = decisions.find(value => value.id === decisionId);
+      if (!row) throw new Error(`unknown decision ${decisionId}`);
+      eventTimes.set(row.admEventId, occurredAt);
     },
+    setHistoricalPaid: (rows: HistoricalPaidReward[]) => { historicalPaid = rows; },
     queryLockCount: () => queryLocks,
   };
 }
@@ -227,30 +256,59 @@ describe('bookPendingRewards', () => {
     expect(state.accounts.size).toBe(0);
   });
 
-  it('skips once the daily cap is already exhausted', async () => {
+  it('skips once the event-day cap is already exhausted', async () => {
     const state = makeClient([decision('d1', USER_1, 500n)]);
-    state.setLimits({ paidToday: 1_000n });
-    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', dailyCap: 1_000n });
+    state.setHistoricalPaid([{ occurredAt: new Date('2026-09-08T09:00:00.000Z'), paid: 1_000n }]);
+    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', dailyCap: 1_000n, timezone: 'Europe/Berlin' });
     expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
     expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_DAILY_CAP' });
     expect(state.accounts.size).toBe(0);
   });
 
-  it('pays only the remaining amount when a decision crosses the daily cap', async () => {
+  it('pays only the event-day remainder when a decision crosses the cap', async () => {
     const state = makeClient([decision('d1', USER_1, 500n)]);
-    state.setLimits({ paidToday: 800n });
-    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', dailyCap: 1_000n });
+    state.setHistoricalPaid([{ occurredAt: new Date('2026-09-08T09:00:00.000Z'), paid: 800n }]);
+    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', dailyCap: 1_000n, timezone: 'Europe/Berlin' });
     expect(result).toEqual({ paid: 1, totalAmount: 200n, skipped: 0 });
     expect(state.accounts.get(`${GUILD}:n:${USER_1}`)!.walletBalance).toBe(200n);
     expect(state.status.get('d1')).toMatchObject({ status: 'PAID', paid: 200n, reasonCode: 'PAID_DAILY_CAP_PARTIAL' });
   });
 
+  it('uses ADM event time instead of delayed RewardDecision creation time for the daily cap', async () => {
+    const delayed = decision('d1', USER_1, 500n, 86_400);
+    const state = makeClient([delayed]);
+    state.setEventTime('d1', new Date('2026-09-08T10:00:00.000Z'));
+    state.setHistoricalPaid([{ occurredAt: new Date('2026-09-08T09:30:00.000Z'), paid: 1_000n }]);
+    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', dailyCap: 1_000n, timezone: 'Europe/Berlin' });
+    expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
+    expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_DAILY_CAP' });
+  });
+
   it('skips a reward inside the configured event-time cooldown', async () => {
     const state = makeClient([decision('d1', USER_1, 500n, 120)]);
-    state.setLimits({ lastPaidAt: BASE_TIME });
+    state.setHistoricalPaid([{ occurredAt: BASE_TIME, paid: 500n }]);
     const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', cooldownSeconds: 300 });
     expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
     expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_COOLDOWN' });
     expect(state.accounts.size).toBe(0);
+  });
+
+  it('detects cooldown conflicts even when a later event was processed first', async () => {
+    const state = makeClient([decision('d1', USER_1, 500n)]);
+    state.setEventTime('d1', BASE_TIME);
+    state.setHistoricalPaid([{ occurredAt: new Date(BASE_TIME.getTime() + 120_000), paid: 500n }]);
+    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', cooldownSeconds: 300 });
+    expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
+    expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_COOLDOWN' });
+  });
+
+  it('fails closed without a trustworthy ADM event timestamp', async () => {
+    const state = makeClient([decision('d1', USER_1, 500n)]);
+    state.setEventTime('d1', null);
+    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET' });
+    expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
+    expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_INVALID_EVENT_TIME' });
+    expect(state.accounts.size).toBe(0);
+    expect(state.ledger.size).toBe(0);
   });
 });
