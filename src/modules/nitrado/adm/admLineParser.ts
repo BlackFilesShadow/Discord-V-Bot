@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 6;
+export const ADM_PARSER_VERSION = 7;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -68,6 +68,10 @@ const PVP_HIT_DETAILS_RE = /\bhit by\s+(.+?)\s+into\s+([A-Za-z]+)\(\d+\)\s+for\s
 const FLAG_ACTION_RE = /^Player\s+"([^"]+)"\s*\(id=([^\s,)]+)\s+pos=<([^>]+)>\)\s+has\s+(raised|lowered)\s+(.+?)\s+on\s+([A-Za-z_][A-Za-z0-9_]*)\s+at\s+<([^>]+)>\s*\.?\s*$/i;
 const PLAYER_ACTION_RE = /^Player\s+"[^"]+"\s*(?:\(DEAD\)\s*)?\(id=[^)]*?\bpos=<[^>]+>\)\s*(.+)$/i;
 const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*$/;
+// PluginAdminLog.PlayerKilled() uses source.GetType() for the explicit
+// animal/infected branch. Vanilla class names are therefore structurally
+// distinguishable from display-name based explosive/other-object causes.
+const VANILLA_WILD_SOURCE_RE = /^(?:Animal_[A-Za-z0-9_]+|Zmb[MF]_[A-Za-z0-9_]+)$/i;
 
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
   for (const line of text.split(/\r?\n/, 8)) {
@@ -166,6 +170,12 @@ function fill(
   event.actorName = actor.name;
   event.actorGameId = actor.id;
   event.actorPosition = actor.pos;
+  return event;
+}
+
+function playerDiedWithCause(content: string, cause: string): ParsedAdmEvent {
+  const event = fill(content, 'PLAYER_DIED', extractActor(content));
+  event.targetName = cause;
   return event;
 }
 
@@ -285,6 +295,18 @@ function extractVehicleCause(segment: string): string | null {
   return cause || null;
 }
 
+function extractNonPlayerKillCause(segment: string): string | null {
+  const cause = segment
+    .replace(/\s+with\s+.*$/i, '')
+    .replace(/[.\s]+$/, '')
+    .trim();
+  return cause || null;
+}
+
+function isVanillaWildSource(value: string | null): boolean {
+  return value !== null && VANILLA_WILD_SOURCE_RE.test(value);
+}
+
 /** Liest nur Werte aus einem vollstaendigen, von ADM bezeugten PvP-Treffer. */
 export function parsePvpHitDetails(rawLine: string): PvpHitDetails | null {
   const match = PVP_HIT_DETAILS_RE.exec(rawLine);
@@ -384,13 +406,34 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
       const distance = DISTANCE_RE.exec(killerSegment);
       event.distanceMeters = distance ? Number(distance[1]) : null;
     } else {
-      event.eventType = 'NPC_KILL';
-      event.targetName = killerSegment.replace(/\s+with\s+.*$/i, '').replace(/[.\s]+$/, '').trim() || null;
+      // Vanilla logs animals/infected with source.GetType(), but explosive and
+      // other non-player causes can use the same "killed by" wording with a
+      // display name. Only the unmistakable vanilla class families are allowed
+      // into Wild Kill. Everything else remains a raw PLAYER_DIED cause.
+      const cause = extractNonPlayerKillCause(killerSegment);
+      event.targetName = cause;
+      event.eventType = isVanillaWildSource(cause) ? 'NPC_KILL' : 'PLAYER_DIED';
     }
     return finalize(event);
   }
 
-  if (/\bbled out\b|\bdied\b/i.test(content)) {
+  if (/\bhas drowned while unconscious\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Drowned while unconscious'));
+  }
+  if (/\bis choosing to respawn\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Respawn'));
+  }
+  const disconnectDeath = /\bis disconnecting while being (unconscious|restrained)\b/i.exec(content);
+  if (disconnectDeath) {
+    return finalize(playerDiedWithCause(content, `Disconnect while ${disconnectDeath[1].toLowerCase()}`));
+  }
+  if (/\bbled out\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Bled out'));
+  }
+  if (/\bdrowned\b/i.test(content)) {
+    return finalize(playerDiedWithCause(content, 'Drowned'));
+  }
+  if (/\bdied\b/i.test(content)) {
     return finalize(fill(content, 'PLAYER_DIED', extractActor(content)));
   }
 
