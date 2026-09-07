@@ -93,6 +93,30 @@ describe('Online List live roster truth', () => {
     ]);
   });
 
+  it('never lets a PlayerList row from before reconnect override the newer connect identity', () => {
+    const online = resolveOnlinePresence([
+      presence('reconnect', 'PLAYER_CONNECTED', 'same-guid', 200, 'New Name'),
+    ], [
+      position('old-position', 'same-guid', 150, '10,20,30', 'Old Name'),
+    ]);
+
+    expect(online).toEqual([
+      { gameId: 'same-guid', playerName: 'New Name', connectedByteStart: 200n },
+    ]);
+  });
+
+  it('uses a newer PlayerList identity after the current connect', () => {
+    const online = resolveOnlinePresence([
+      presence('connect', 'PLAYER_CONNECTED', 'same-guid', 100, 'Connect Name'),
+    ], [
+      position('new-position', 'same-guid', 150, '10,20,30', 'Current Name'),
+    ]);
+
+    expect(online).toEqual([
+      { gameId: 'same-guid', playerName: 'Current Name', connectedByteStart: 100n },
+    ]);
+  });
+
   it('never carries a position from before the current reconnect', () => {
     const online = resolveOnlinePresence([
       presence('connect', 'PLAYER_CONNECTED', 'solo', 100, 'Solo'),
