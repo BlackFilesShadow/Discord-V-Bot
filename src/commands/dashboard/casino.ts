@@ -20,6 +20,7 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   MessageFlags,
+  type InteractionReplyOptions,
 } from 'discord.js';
 import { createHash, createHmac, randomBytes, randomUUID } from 'crypto';
 import type { Command } from '../../types';
@@ -147,16 +148,16 @@ async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<v
       error: e instanceof Error ? e.message : String(e),
     });
   }
-  const payload = {
+  const payload: InteractionReplyOptions = {
     embeds: [buildStatusEmbed({
-      status: 'ERROR' as const,
+      status: 'ERROR',
       title: 'Spiel nicht gestartet',
       description: 'Die Runde konnte nicht gestartet werden.',
       fields: [{ name: '📝 Grund', value: safeMessage }],
       footerText: 'V-Bot Casino',
     })],
     flags: MessageFlags.Ephemeral,
-    allowedMentions: { parse: [] as string[] },
+    allowedMentions: { parse: [] },
   };
 
   if (i.deferred || i.replied) {
