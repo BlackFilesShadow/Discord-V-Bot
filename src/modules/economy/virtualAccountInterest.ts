@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import { computeInterestBasisPoints, normalizeInterestBasisPoints } from './bankInterest';
+import { POSTGRES_BIGINT_MAX } from './ledger';
 
 interface RawDb {
   $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
@@ -74,6 +75,8 @@ export async function runDailyTreasuryInterestForServer(args: {
 
       const interest = computeInterestBasisPoints(row.bankBalance, basisPoints);
       if (interest <= 0n) return 0n;
+      if (row.bankBalance > POSTGRES_BIGINT_MAX - interest) return 0n;
+
       const key = `interest:treasury:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${row.accountId}`;
       const inserted = await raw.$executeRawUnsafe(
         `INSERT INTO "EconomyVirtualAccountEntry"
