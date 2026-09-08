@@ -80,6 +80,10 @@ function assertPostgresBigint(value: bigint, field: string): void {
   }
 }
 
+function accountLockKey(input: LedgerEntryInput): string {
+  return `economy-account:${input.guildId}:${input.nitradoConnId}:${input.userDiscordId}`;
+}
+
 async function assertAccountRange(
   tx: LedgerTx,
   input: LedgerEntryInput,
@@ -100,11 +104,18 @@ async function assertAccountRange(
   // locks; those are not treated as a complete database transaction here.
   if (!tx.$queryRawUnsafe || !tx.$executeRawUnsafe) return;
 
-  // Existing account rows are locked before the ledger entry is created. This
-  // makes the range decision part of the same transaction as the increment and
-  // avoids relying on PostgreSQL's numeric-overflow exception after a write has
-  // already been attempted. Callers that already locked the same row simply
-  // reacquire their own transaction lock without changing lock order.
+  // FOR UPDATE cannot lock a row that does not exist yet. The account-scoped
+  // advisory lock therefore serializes both first-account creation and later
+  // mutations before the numeric snapshot is read. All central-ledger callers
+  // mutate one scoped account per invocation, so this gives a stable lock order.
+  await tx.$queryRawUnsafe(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+    accountLockKey(input),
+  );
+
+  // Existing account rows are additionally row-locked before the ledger entry
+  // is created. The range decision is therefore part of the same transaction
+  // as the increment and never relies on a PostgreSQL overflow after a write.
   const rows = await tx.$queryRawUnsafe<EconomyAccountRangeRow[]>(
     `SELECT "walletBalance", "bankBalance", "lifetimeEarned", "lifetimeSpent"
        FROM "EconomyAccount"
