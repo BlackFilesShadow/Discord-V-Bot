@@ -107,6 +107,7 @@ const FALLBACK_META: Record<CasinoGameType, { label: string; emoji: string; desc
 };
 const MAX_BET = 1_000_000_000_000_000n;
 const MAX_REWARD = 1_000_000_000_000_000n;
+const MAX_REWARD_NUMBER = Number(MAX_REWARD);
 const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 const NAV: ReadonlyArray<[Tab, string, typeof Settings]> = [
@@ -304,7 +305,7 @@ function EconomyConfigCard({ value, onSave, pending }: {
     && draft.startBalance >= 0
     && Number.isInteger(draft.playtimeRewardPer10Min)
     && draft.playtimeRewardPer10Min >= 0
-    && draft.playtimeRewardPer10Min <= 1_000_000_000;
+    && draft.playtimeRewardPer10Min <= MAX_REWARD_NUMBER;
 
   return (
     <Card>
@@ -317,7 +318,7 @@ function EconomyConfigCard({ value, onSave, pending }: {
           <label className="text-sm"><span className="text-muted">Startguthaben</span><Input type="number" min={0} max={1_000_000_000} value={draft.startBalance} onChange={e => setDraft(s => ({ ...s, startBalance: Math.max(0, Math.min(1_000_000_000, Math.trunc(Number(e.target.value) || 0))) }))} /></label>
           <label className="text-sm">
             <span className="text-muted">Spielzeit-Belohnung je 10 Minuten</span>
-            <Input type="number" min={0} max={1_000_000_000} value={draft.playtimeRewardPer10Min} onChange={e => setDraft(s => ({ ...s, playtimeRewardPer10Min: Math.max(0, Math.min(1_000_000_000, Math.trunc(Number(e.target.value) || 0))) }))} />
+            <Input type="number" min={0} max={MAX_REWARD_NUMBER} value={draft.playtimeRewardPer10Min} onChange={e => setDraft(s => ({ ...s, playtimeRewardPer10Min: Math.max(0, Math.min(MAX_REWARD_NUMBER, Math.trunc(Number(e.target.value) || 0))) }))} />
             <span className="mt-1 block text-[11px] text-muted">0 deaktiviert die Spielzeit-Auszahlung. Historische Zeit wird nicht nachbezahlt.</span>
           </label>
         </div>
