@@ -9,8 +9,8 @@ function death(action: string) {
   return parseAdmLine(`12:00:00 | Player "Victim" (DEAD) (id=victim-guid pos=<100, 20, 300>) ${action}`, ctx());
 }
 
-describe('ADM vanilla deathfeed coverage', () => {
-  test('keeps a canonical player-attributed kill exclusively in PVP', () => {
+describe('ADM vanilla kill/death feed coverage', () => {
+  test('keeps a canonical player-attributed kill exclusively in first-class KILL/PVP', () => {
     const event = death('killed by Player "Killer" (id=killer-guid pos=<110, 20, 310>) with M4-A1 from 14.2 meters');
 
     expect(event).toMatchObject({
@@ -21,17 +21,19 @@ describe('ADM vanilla deathfeed coverage', () => {
       toolOrWeapon: 'M4-A1',
       distanceMeters: 14.2,
     });
+    expect(kindForEvent(event!.eventType)).toBe('KILL');
     expect(categoryForEvent(event!.eventType)).toBe('PVP');
-    expect(categoryAllowed('DEATH', ['PVP'], event!.eventType)).toBe(true);
-    expect(categoryAllowed('DEATH', ['NPC', 'VEHICLE', 'SUICIDE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(true);
+    expect(categoryAllowed('DEATH', ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'], event!.eventType)).toBe(false);
   });
 
-  test('keeps committed suicide exclusively in SUICIDE', () => {
+  test('keeps committed suicide exclusively in DEATH/SUICIDE', () => {
     const event = death('committed suicide');
     expect(event?.eventType).toBe('PLAYER_SUICIDE');
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
     expect(categoryForEvent(event!.eventType)).toBe('SUICIDE');
     expect(categoryAllowed('DEATH', ['SUICIDE'], event!.eventType)).toBe(true);
-    expect(categoryAllowed('DEATH', ['PVP', 'NPC', 'VEHICLE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
   test.each([
@@ -39,12 +41,13 @@ describe('ADM vanilla deathfeed coverage', () => {
     'Animal_UrsusArctos',
     'ZmbM_HermitSkinny_Beige',
     'ZmbF_CitizenANormal_Beige',
-  ])('keeps vanilla animal/infected source %s exclusively in NPC/Wild', cause => {
+  ])('keeps vanilla animal/infected source %s exclusively in DEATH/NPC', cause => {
     const event = death(`killed by ${cause}`);
     expect(event).toMatchObject({ eventType: 'NPC_KILL', targetName: cause });
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
     expect(categoryForEvent(event!.eventType)).toBe('NPC');
     expect(categoryAllowed('DEATH', ['NPC'], event!.eventType)).toBe(true);
-    expect(categoryAllowed('DEATH', ['PVP', 'VEHICLE', 'SUICIDE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
   test.each([
@@ -54,20 +57,23 @@ describe('ADM vanilla deathfeed coverage', () => {
     'Wolf',
     'Bear',
     'UnknownObject',
-  ])('never guesses non-player cause %s into Wild/PvP/Vehicle', cause => {
+  ])('keeps non-player cause %s out of guessed categories but delivers it as DEATH/OTHER', cause => {
     const event = death(`killed by ${cause}`);
     expect(event).toMatchObject({ eventType: 'PLAYER_DIED', targetName: cause });
-    expect(kindForEvent(event!.eventType)).toBeNull();
-    expect(categoryForEvent(event!.eventType)).toBeNull();
-    expect(categoryAllowed('DEATH', ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'], event!.eventType)).toBe(false);
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
+    expect(categoryForEvent(event!.eventType)).toBe('OTHER');
+    expect(categoryAllowed('DEATH', ['OTHER'], event!.eventType)).toBe(true);
+    expect(categoryAllowed('DEATH', ['NPC', 'VEHICLE', 'SUICIDE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
-  test('keeps a fatal engine vehicle line exclusively in VEHICLE', () => {
+  test('keeps a fatal engine vehicle line exclusively in DEATH/VEHICLE', () => {
     const event = death('hit by [vehicle] OffroadHatchback at speed 78 km/h');
     expect(event).toMatchObject({ eventType: 'VEHICLE_DEATH', targetName: 'OffroadHatchback' });
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
     expect(categoryForEvent(event!.eventType)).toBe('VEHICLE');
     expect(categoryAllowed('DEATH', ['VEHICLE'], event!.eventType)).toBe(true);
-    expect(categoryAllowed('DEATH', ['PVP', 'SUICIDE', 'NPC'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
   test.each([
@@ -77,17 +83,18 @@ describe('ADM vanilla deathfeed coverage', () => {
     ['is disconnecting while being unconscious', 'Disconnect while unconscious'],
     ['is disconnecting while being restrained', 'Disconnect while restrained'],
     ['drowned.', 'Drowned'],
-  ])('retains raw death cause %s without relabeling it into a visible category', (action, cause) => {
+  ])('retains and exposes raw death cause %s as DEATH/OTHER', (action, cause) => {
     const event = death(action);
     expect(event).toMatchObject({ eventType: 'PLAYER_DIED', targetName: cause });
-    expect(kindForEvent(event!.eventType)).toBeNull();
-    expect(categoryForEvent(event!.eventType)).toBeNull();
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
+    expect(categoryForEvent(event!.eventType)).toBe('OTHER');
   });
 
-  test('keeps generic died stats as raw PLAYER_DIED only', () => {
+  test('keeps generic died stats as DEATH/OTHER without inventing a cause', () => {
     const event = death('died. Stats> Water: 0 Energy: 0 Bleed sources: 0');
     expect(event).toMatchObject({ eventType: 'PLAYER_DIED', targetName: null });
-    expect(kindForEvent(event!.eventType)).toBeNull();
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
+    expect(categoryForEvent(event!.eventType)).toBe('OTHER');
   });
 
   test.each([

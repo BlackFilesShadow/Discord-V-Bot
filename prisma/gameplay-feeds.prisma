@@ -1,8 +1,9 @@
-// Gameplay-Feeds V2: gemeinsame persistente Zustellung fuer Deathfeed, Baufeed,
-// Placement-Feed, Online-Liste und Flaggenaktivitaeten.
+// Gameplay-Feeds V2: gemeinsame persistente Zustellung fuer Killfeed, Deathfeed,
+// Baufeed, Placement-Feed, Online-Liste und Flaggenaktivitaeten.
 // Liegt als additive Multi-File-Prisma-Domaene neben schema.prisma.
 
 enum GameplayFeedKind {
+  KILL
   DEATH
   BUILD
   PLACEMENT

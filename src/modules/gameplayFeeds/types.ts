@@ -1,23 +1,32 @@
-export type DeathFeedCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
+export type KillFeedCategory = 'PVP';
+export type DeathFeedCategory = 'SUICIDE' | 'NPC' | 'VEHICLE' | 'OTHER';
 export type BuildFeedCategory = 'BUILD' | 'DISMANTLE' | 'DESTROY';
 export type PlacementFeedCategory = 'PLACEMENT';
 export type FlagFeedCategory = 'RAISED' | 'LOWERED';
-export type GameplayFeedCategory = DeathFeedCategory | BuildFeedCategory | PlacementFeedCategory | FlagFeedCategory;
-export type GameplayFeedKindValue = 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
+export type GameplayFeedCategory = KillFeedCategory | DeathFeedCategory | BuildFeedCategory | PlacementFeedCategory | FlagFeedCategory;
+export type GameplayFeedKindValue = 'KILL' | 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
 
-export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'];
+export const KILL_CATEGORIES: readonly KillFeedCategory[] = ['PVP'];
+export const DEATH_CATEGORIES: readonly DeathFeedCategory[] = ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'];
 export const BUILD_CATEGORIES: readonly BuildFeedCategory[] = ['BUILD', 'DISMANTLE', 'DESTROY'];
 export const PLACEMENT_CATEGORIES: readonly PlacementFeedCategory[] = ['PLACEMENT'];
 export const FLAG_CATEGORIES: readonly FlagFeedCategory[] = ['RAISED', 'LOWERED'];
 
-// PLAYER_DIED bleibt als kanonisches ADM-Rohereignis erhalten, wird aber bewusst
-// nicht mehr als Gameplay-Feed zugestellt. Der generische "died / bled out"-Feed
-// liefert auf Konsole keine belastbare, einheitliche Ursache fuer ein eigenes Embed.
+// PvP ist eine eigene semantische Feed-Klasse. Dadurch koennen Killfeed und
+// Deathfeed getrennt konfiguriert werden, auch wenn beide in denselben Discord-
+// Channel zeigen. Der gemeinsame ADM-Store bleibt dabei unveraendert.
+export const KILL_EVENT_TYPES = ['PLAYER_KILLED'] as const;
+
+// Der Deathfeed umfasst alle nicht-PvP-Tode, die der kanonische ADM-Parser
+// sicher als Tod erkannt hat. PLAYER_DIED traegt dabei bekannte Rohursachen
+// (z.B. Bled out, Drowned, Respawn, Mine/Explosion) als OTHER. Eine nachgelagerte
+// Korrelationssperre in der Runtime unterdrueckt generische Duplicate-Zeilen,
+// wenn fuer denselben finalen Tod bereits ein spezifisches Todesereignis existiert.
 export const DEATH_EVENT_TYPES = [
-  'PLAYER_KILLED',
   'PLAYER_SUICIDE',
   'NPC_KILL',
   'VEHICLE_DEATH',
+  'PLAYER_DIED',
 ] as const;
 
 // Gemeinsamer DB-Scan-Superset fuer die zwei strikt getrennten semantischen
@@ -83,6 +92,7 @@ export function categoryForEvent(eventType: string): GameplayFeedCategory | null
     case 'PLAYER_SUICIDE': return 'SUICIDE';
     case 'NPC_KILL': return 'NPC';
     case 'VEHICLE_DEATH': return 'VEHICLE';
+    case 'PLAYER_DIED': return 'OTHER';
     case 'PLACEMENT': return 'PLACEMENT';
     case 'BUILD': return 'BUILD';
     case 'DISMANTLE': return 'DISMANTLE';
@@ -94,6 +104,7 @@ export function categoryForEvent(eventType: string): GameplayFeedCategory | null
 }
 
 export function kindForEvent(eventType: string): GameplayFeedKindValue | null {
+  if ((KILL_EVENT_TYPES as readonly string[]).includes(eventType)) return 'KILL';
   if ((DEATH_EVENT_TYPES as readonly string[]).includes(eventType)) return 'DEATH';
   if (eventType === 'PLACEMENT') return 'PLACEMENT';
   if (eventType === 'BUILD' || eventType === 'DISMANTLE' || eventType === 'DESTROY') return 'BUILD';

@@ -14,6 +14,7 @@ jest.mock('../../src/database/prisma', () => {
     },
     admEvent: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
     },
     $queryRaw: jest.fn(),
   };
@@ -57,10 +58,10 @@ function config() {
     id: 'cmtddpxix0w2p07mxjsztkajy',
     guildId: GUILD_ID,
     nitradoConnId: CONN_ID,
-    kind: 'DEATH',
+    kind: 'KILL',
     channelId: CHANNEL_ID,
     isActive: true,
-    categories: ['SUICIDE', 'NPC', 'VEHICLE', 'PVP'],
+    categories: ['PVP'],
     showActorCoords: true,
     showTargetCoords: true,
     showTool: true,
@@ -113,26 +114,25 @@ beforeEach(() => {
 });
 
 describe('PvP-Killfeed Mixed-Batch Regression', () => {
-  it('verliert PLAYER_KILLED nicht zwischen Suizid- und NPC-Ereignissen desselben Scans', async () => {
+  it('verliert keinen PLAYER_KILLED und laesst selbst bei einem ueberbreiten Mock keine Deathfeed-Ereignisse in KILL durch', async () => {
     const events = [
       event('kill-1', 'PLAYER_KILLED', '2026-09-04T21:25:53.375Z', 'Balu_cleo', 'DeathshotNo-'),
       event('kill-2', 'PLAYER_KILLED', '2026-09-04T21:25:53.488Z', 'DeathshotNo-', 'Oo_KirscHi_oO'),
       event('suicide-1', 'PLAYER_SUICIDE', '2026-09-04T21:25:53.598Z', 'arm982super', null),
-      event('npc-1', 'NPC_KILL', '2026-09-04T21:27:00.000Z', 'Legion_XCIV', 'LandMineTrap'),
+      event('npc-1', 'NPC_KILL', '2026-09-04T21:27:00.000Z', 'Legion_XCIV', 'Animal_CanisLupus'),
       event('kill-3', 'PLAYER_KILLED', '2026-09-04T21:36:53.501Z', 'DeathshotNo-', 'Oo_KirscHi_oO'),
     ];
     eventFindMany.mockResolvedValue(events);
 
     await runGameplayFeedsOnce();
 
-    expect(deliveryCreate).toHaveBeenCalledTimes(events.length);
     const enqueuedIds = deliveryCreate.mock.calls.map(call => call[0]?.data?.admEventId);
-    expect(enqueuedIds).toEqual(events.map(entry => entry.id));
-    expect(deliveryCreate.mock.calls.filter(call => String(call[0]?.data?.admEventId).startsWith('kill-'))).toHaveLength(3);
+    expect(enqueuedIds).toEqual(['kill-1', 'kill-2', 'kill-3']);
+    expect(deliveryCreate).toHaveBeenCalledTimes(3);
 
     expect(eventFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        eventType: { in: expect.arrayContaining(['PLAYER_KILLED', 'PLAYER_SUICIDE', 'NPC_KILL', 'VEHICLE_DEATH']) },
+        eventType: { in: ['PLAYER_KILLED'] },
       }),
     }));
 

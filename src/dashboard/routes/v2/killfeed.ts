@@ -1,7 +1,7 @@
 /**
  * Gameplay-Feed-Routen. Der bestehende /killfeed-Pfad bleibt aus
- * Rueckwaertskompatibilitaet erhalten; `?kind=DEATH|BUILD|PLACEMENT|PLAYER_LIST|FLAG`
- * waehlt den Feed. Ohne kind gilt DEATH.
+ * Rueckwaertskompatibilitaet erhalten; `?kind=KILL|DEATH|BUILD|PLACEMENT|PLAYER_LIST|FLAG`
+ * waehlt den Feed. Ohne kind gilt weiterhin DEATH fuer bestehende Clients.
  */
 
 import { Router } from 'express';
@@ -19,6 +19,8 @@ import {
   BUILD_CATEGORIES,
   DEATH_EVENT_TYPES,
   DEATH_CATEGORIES,
+  KILL_EVENT_TYPES,
+  KILL_CATEGORIES,
   FLAG_CATEGORIES,
   PLACEMENT_CATEGORIES,
   categoryForEvent,
@@ -48,7 +50,8 @@ interface FeedBody {
 
 function readKind(raw: unknown): GameplayFeedKindValue | null {
   const value = String(raw ?? 'DEATH').trim().toUpperCase();
-  return value === 'DEATH'
+  return value === 'KILL'
+    || value === 'DEATH'
     || value === 'BUILD'
     || value === 'PLACEMENT'
     || value === 'PLAYER_LIST'
@@ -59,6 +62,7 @@ function readKind(raw: unknown): GameplayFeedKindValue | null {
 
 function allowedCategories(kind: GameplayFeedKindValue): readonly string[] {
   if (kind === 'PLAYER_LIST') return [];
+  if (kind === 'KILL') return KILL_CATEGORIES;
   if (kind === 'DEATH') return DEATH_CATEGORIES;
   if (kind === 'BUILD') return BUILD_CATEGORIES;
   if (kind === 'PLACEMENT') return PLACEMENT_CATEGORIES;
@@ -68,6 +72,14 @@ function allowedCategories(kind: GameplayFeedKindValue): readonly string[] {
 function defaultCategories(kind: GameplayFeedKindValue): string[] {
   if (kind === 'FLAG') return [];
   return [...allowedCategories(kind)];
+}
+
+function admEventTypesForKind(kind: GameplayFeedKindValue): string[] {
+  if (kind === 'KILL') return [...KILL_EVENT_TYPES];
+  if (kind === 'DEATH') return [...DEATH_EVENT_TYPES];
+  if (kind === 'PLACEMENT') return ['PLACEMENT'];
+  if (kind === 'BUILD') return [...BUILD_EVENT_TYPES].filter(type => type !== 'PLACEMENT');
+  return [];
 }
 
 function validateBody(
@@ -96,6 +108,9 @@ function validateBody(
     const allowed = allowedCategories(kind);
     const categories = Array.from(new Set(body.categories.map(value => String(value).trim().toUpperCase())));
     if (categories.length === 0 && kind !== 'PLAYER_LIST') return { ok: false, error: 'Mindestens eine Kategorie ist erforderlich.' };
+    if (kind === 'KILL' && (categories.length !== 1 || categories[0] !== 'PVP')) {
+      return { ok: false, error: 'Ein Killfeed darf ausschliesslich die Kategorie PVP enthalten.' };
+    }
     if (kind === 'FLAG' && categories.length !== 1) {
       return { ok: false, error: 'Ein Flaggen-Feed muss genau RAISED oder LOWERED enthalten, damit beide Kanaele getrennt bleiben.' };
     }
@@ -211,7 +226,7 @@ function responseConfig(row: {
 }
 
 function invalidKind(res: Parameters<typeof killfeedRouter.get>[1] extends never ? never : any): void {
-  res.status(400).json({ error: 'kind muss DEATH, BUILD, PLACEMENT, PLAYER_LIST oder FLAG sein.' });
+  res.status(400).json({ error: 'kind muss KILL, DEATH, BUILD, PLACEMENT, PLAYER_LIST oder FLAG sein.' });
 }
 
 killfeedRouter.get('/', requireGuildPermission('killfeed.view'), async (req, res) => {
@@ -287,7 +302,7 @@ killfeedRouter.post('/', requireGuildPermission('killfeed.manage'), async (req, 
         showActorCoords: (data.showActorCoords as boolean | undefined) ?? true,
         showTargetCoords: (data.showTargetCoords as boolean | undefined) ?? (kind === 'FLAG'),
         showTool: kind === 'FLAG' ? false : ((data.showTool as boolean | undefined) ?? true),
-        showDistance: kind === 'DEATH' ? ((data.showDistance as boolean | undefined) ?? true) : false,
+        showDistance: kind === 'KILL' ? ((data.showDistance as boolean | undefined) ?? true) : false,
         embedColor: (data.embedColor as string | undefined)
           ?? (kind === 'BUILD' || kind === 'PLACEMENT'
             ? '#eab308'
@@ -371,11 +386,12 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
           updateData.cursorCreatedAt = watermark?.createdAt ?? new Date();
           updateData.cursorEventId = watermark?.id ?? '';
         } else {
-          const watermark = await tx.admEvent.findFirst({
+          const eventTypes = admEventTypesForKind(kind);
+          const watermark = eventTypes.length === 0 ? null : await tx.admEvent.findFirst({
             where: {
               guildId: scope.guildId,
               nitradoConnId: resolution.nitradoConnId,
-              eventType: { in: kind === 'DEATH' ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES] },
+              eventType: { in: eventTypes as any },
             },
             orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             select: { createdAt: true, id: true },

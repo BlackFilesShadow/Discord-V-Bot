@@ -14,7 +14,7 @@ const EVENT_TIME = `<t:${Math.floor(new Date('2026-08-24T20:00:00.000Z').getTime
 function view(overrides: Partial<GameplayFeedView>): GameplayFeedView {
   return {
     eventId: 'event-1',
-    kind: 'DEATH',
+    kind: 'KILL',
     category: 'PVP',
     eventType: 'PLAYER_KILLED',
     occurredAt: new Date('2026-08-24T20:00:00.000Z'),
@@ -45,6 +45,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
 
   it('renders Self Kill Report with weapon, Pos, alias and event time', () => {
     const json = buildGameplayFeedEmbed(view({
+      kind: 'DEATH',
       category: 'SUICIDE',
       eventType: 'PLAYER_SUICIDE',
       actorName: 'Solo',
@@ -62,23 +63,25 @@ describe('approved V-Bot gameplay feed embed designs', () => {
 
   it('renders Wild Kill Report only for the visible Wild/Infizierten cause model plus event time', () => {
     const json = buildGameplayFeedEmbed(view({
+      kind: 'DEATH',
       category: 'NPC',
       eventType: 'NPC_KILL',
       actorName: 'Survivor',
-      targetName: 'Wolf',
+      targetName: 'Animal_CanisLupus',
       targetPosition: null,
       toolOrWeapon: null,
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     expect(json.title).toBe('☣️ Wild Kill Report');
     expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Ursache', 'Pos:', 'Server', 'Ereigniszeit']);
-    expect(json.fields?.find(field => field.name === 'Ursache')?.value).toBe('Wolf');
+    expect(json.fields?.find(field => field.name === 'Ursache')?.value).toBe('Animal\\_CanisLupus');
     expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
     expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
   });
 
   it('renders Crash Kill Report with vehicle cause, Pos, alias and event time', () => {
     const json = buildGameplayFeedEmbed(view({
+      kind: 'DEATH',
       category: 'VEHICLE',
       eventType: 'VEHICLE_DEATH',
       targetName: 'OffroadHatchback',
@@ -93,6 +96,37 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
   });
 
+  it('renders generic Death Report with retained raw cause, Pos, alias and event time', () => {
+    const json = buildGameplayFeedEmbed(view({
+      kind: 'DEATH',
+      category: 'OTHER',
+      eventType: 'PLAYER_DIED',
+      actorName: 'Survivor',
+      targetName: 'Bled out',
+      targetPosition: null,
+      toolOrWeapon: null,
+      distanceMeters: null,
+    }), '#dc2626', SERVER).toJSON();
+    expect(json.title).toBe('☠️ Death Report');
+    expect(json.fields?.map(field => field.name)).toEqual(['Spieler', 'Todesursache', 'Pos:', 'Server', 'Ereigniszeit']);
+    expect(json.fields?.find(field => field.name === 'Todesursache')?.value).toBe('Bled out');
+    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
+    expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
+  });
+
+  it('does not invent a generic death cause when the ADM line has none', () => {
+    const json = buildGameplayFeedEmbed(view({
+      kind: 'DEATH',
+      category: 'OTHER',
+      eventType: 'PLAYER_DIED',
+      targetName: null,
+      targetPosition: null,
+      toolOrWeapon: null,
+      distanceMeters: null,
+    }), '#dc2626', SERVER).toJSON();
+    expect(json.fields?.find(field => field.name === 'Todesursache')?.value).toBe('Im ADM-Log nicht näher angegeben');
+  });
+
   const buildCases = [
     ['PLACEMENT', 'PLACEMENT', '📦 Placement Report'],
     ['BUILD', 'BUILD', '🔨 Build Report'],
@@ -102,7 +136,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
 
   it.each(buildCases)('renders %s as the approved report with alias followed by event time', (_event, category, title) => {
     const feed = view({
-      kind: 'BUILD',
+      kind: category === 'PLACEMENT' ? 'PLACEMENT' : 'BUILD',
       category,
       eventType: category,
       actorName: 'Builder',
@@ -126,7 +160,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     expect(placementObjectLabel('Nameless Object<WatchtowerKit>')).toBe('Nameless Watchtower Kit');
 
     const snareFields = fieldsFor(view({
-      kind: 'BUILD',
+      kind: 'PLACEMENT',
       category: 'PLACEMENT',
       eventType: 'PLACEMENT',
       actorName: 'Builder',
@@ -139,7 +173,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     expect(snareFields.find(field => field.name === 'Objekt')?.value).toBe('Snare Trap');
 
     const namelessFields = fieldsFor(view({
-      kind: 'BUILD',
+      kind: 'PLACEMENT',
       category: 'PLACEMENT',
       eventType: 'PLACEMENT',
       actorName: 'Builder',
