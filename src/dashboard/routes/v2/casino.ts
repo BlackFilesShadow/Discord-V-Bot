@@ -65,7 +65,7 @@ function auditedTypeIsValid(type: string | null, algorithmVersion: string | null
   return algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && LEGACY_TYPES.has(type);
 }
 
-function logicalRoundType(result: unknown, legacyType: string): string | null {
+function logicalRoundType(result: unknown, legacyType: string | null): string | null {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
     const row = result as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(row, 'audit')) {
@@ -270,12 +270,15 @@ casinoRouter.get('/rounds', requireGuildPermission('casino.view'), async (req, r
     where: { guildId: scope.guildId, nitradoConnId: connId },
     orderBy: { createdAt: 'desc' },
     take: 100,
-    include: { game: { select: { type: true } } },
+    include: { game: { select: { type: true, guildId: true, nitradoConnId: true } } },
   });
   res.json({
     nitradoConnId: connId,
     rounds: rounds.map(r => {
-      const type = logicalRoundType(r.result, r.game.type);
+      const legacyType = r.game.guildId === scope.guildId && r.game.nitradoConnId === connId
+        ? r.game.type
+        : null;
+      const type = logicalRoundType(r.result, legacyType);
       const outcome = storedOutcome(r.result, r.payout);
       return {
         id: r.id,
