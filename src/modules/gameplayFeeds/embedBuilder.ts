@@ -7,6 +7,7 @@ const TITLES: Record<GameplayFeedView['category'], string> = {
   SUICIDE: '🩸 Self Kill Report',
   NPC: '☣️ Wild Kill Report',
   VEHICLE: '💥 Crash Kill Report',
+  OTHER: '☠️ Death Report',
   PLACEMENT: '📦 Placement Report',
   BUILD: '🔨 Build Report',
   DISMANTLE: '🔧 Dismantle Report',
@@ -18,6 +19,7 @@ const TITLES: Record<GameplayFeedView['category'], string> = {
 const IZURVIVE_BASE_URL = 'https://www.izurvive.com/';
 const IZURVIVE_ZOOM = 6;
 const ADM_WEAPON_NOT_REPORTED = 'Im ADM-Log nicht angegeben';
+const ADM_DEATH_CAUSE_NOT_REPORTED = 'Im ADM-Log nicht näher angegeben';
 
 function parseHex(value: string): number {
   const raw = value.startsWith('#') ? value.slice(1) : value;
@@ -246,6 +248,19 @@ export function buildGameplayFeedEmbed(
     if (view.targetName) {
       embed.addFields({ name: 'Fahrzeug / Ursache', value: safeName(view.targetName), inline: false });
     }
+    const pos = positionField(view.actorPosition);
+    if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
+    addServer(embed, serverAlias, view.occurredAt, true);
+    return embed;
+  }
+
+  if (view.category === 'OTHER') {
+    embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
+    embed.addFields({
+      name: 'Todesursache',
+      value: safeEmbedField(view.targetName ?? ADM_DEATH_CAUSE_NOT_REPORTED, 256),
+      inline: false,
+    });
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
