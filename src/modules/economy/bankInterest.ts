@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { config } from '../../config';
-import { bookLedgerEntry, type LedgerClient } from './ledger';
+import { bookLedgerEntry, EconomyLedgerRangeError, type LedgerClient } from './ledger';
 import { economySubjectKey } from './subjectKey';
 
 export const MAX_INTEREST_BASIS_POINTS = 10_000;
@@ -178,18 +178,23 @@ export async function runDailyInterestForServer(
       const interest = computeInterestBasisPoints(a.bankBalance, basisPoints);
       if (interest <= 0n) continue;
       const subjectKey = economySubjectKey(args.guildId, a.userDiscordId, config.security.encryptionKey);
-      const result = await bookLedgerEntry(client, {
-        idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${subjectKey}`,
-        guildId: args.guildId,
-        nitradoConnId: args.nitradoConnId,
-        userDiscordId: a.userDiscordId,
-        bankDelta: interest,
-        type: 'INTEREST',
-        reason: 'Bank-Zinsen',
-      });
-      if (result.booked) {
-        credited++;
-        total += interest;
+      try {
+        const result = await bookLedgerEntry(client, {
+          idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${subjectKey}`,
+          guildId: args.guildId,
+          nitradoConnId: args.nitradoConnId,
+          userDiscordId: a.userDiscordId,
+          bankDelta: interest,
+          type: 'INTEREST',
+          reason: 'Bank-Zinsen',
+        });
+        if (result.booked) {
+          credited++;
+          total += interest;
+        }
+      } catch (error) {
+        if (error instanceof EconomyLedgerRangeError) continue;
+        throw error;
       }
     }
 
