@@ -32,12 +32,16 @@ CREATE INDEX "CasinoGameConfigV3_guild_conn_idx"
 
 -- Multi-file Prisma cannot add the inverse relation to the existing legacy
 -- NitradoConnection model without rewriting that model. Enforce the same
--- boundary directly in PostgreSQL: a V3 config must always point to an existing
--- connection of the SAME guild. This also protects direct SQL/import paths that
--- bypass the dashboard/Prisma scope guards.
+-- boundary directly in PostgreSQL. Validation and connection deletion take the
+-- same transaction-scoped advisory lock, closing the insert-vs-delete race that
+-- a plain existence trigger would otherwise leave open.
 CREATE OR REPLACE FUNCTION "vbot_validate_casino_v3_connection_scope"()
 RETURNS TRIGGER AS $$
 BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('casino-v3-conn:' || NEW."nitradoConnId", 0)
+    );
+
     IF NOT EXISTS (
         SELECT 1
           FROM "NitradoConnection" n
@@ -58,11 +62,15 @@ FOR EACH ROW
 EXECUTE FUNCTION "vbot_validate_casino_v3_connection_scope"();
 
 -- Keep connection deletion atomic with the V3 configuration lifecycle. The
--- cleanup happens before NitradoConnection disappears, so no orphan window can
--- be observed even by raw SQL readers.
+-- exact same advisory key as the validator prevents a concurrent writer from
+-- validating the connection and committing an orphan after this cleanup.
 CREATE OR REPLACE FUNCTION "vbot_delete_casino_v3_config_for_connection"()
 RETURNS TRIGGER AS $$
 BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('casino-v3-conn:' || OLD."id", 0)
+    );
+
     DELETE FROM "CasinoGameConfigV3"
      WHERE "guildId" = OLD."guildId"
        AND "nitradoConnId" = OLD."id";
