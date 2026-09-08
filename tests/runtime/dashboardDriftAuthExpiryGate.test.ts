@@ -34,11 +34,19 @@ describe('Dashboard drift + auth expiry gate', () => {
     expect(login).toContain('Sitzung abgelaufen – bitte erneut anmelden.');
   });
 
-  it('never claims a Nitrado drift from a 401 and deduplicates equal probe errors', () => {
-    expect(drift).toContain('const hasAuthError = rawErrors.some');
-    expect(drift).toContain('if (hasAuthError) return null');
-    expect(drift).toContain('const uniqueErrors = Array.from(new Map(');
-    expect(drift).toContain("{hasDrift ? 'Manuelle Nitrado-Abweichung erkannt' : 'Nitrado-Driftprüfung fehlgeschlagen'}");
+  it('never claims a Nitrado drift from a 401 and keeps auth handling ahead of contention/error rendering', () => {
+    const authCheck = drift.indexOf('const hasAuthError = describedErrors.some');
+    const authExit = drift.indexOf('if (hasAuthError) return null;', authCheck);
+    const contention = drift.indexOf('const hasTransientContention = describedErrors.some', authExit);
+    const uniqueErrors = drift.indexOf('const uniqueErrors = Array.from(new Map(', contention);
+
+    expect(authCheck).toBeGreaterThanOrEqual(0);
+    expect(authExit).toBeGreaterThan(authCheck);
+    expect(contention).toBeGreaterThan(authExit);
+    expect(uniqueErrors).toBeGreaterThan(contention);
+    expect(drift).toContain("? 'Manuelle Nitrado-Abweichung erkannt'");
+    expect(drift).toContain("? 'Nitrado-Prüfung wird verzögert'");
+    expect(drift).toContain("'Nitrado-Driftprüfung fehlgeschlagen'");
     expect(drift).toContain('Es wurde keine Nitrado-Abweichung bestätigt.');
   });
 });

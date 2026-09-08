@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Ban, CheckCircle2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api, describeApiError } from '@/lib/api';
+import {
+  isTransientNitradoDriftConflict,
+  nitradoDriftRetryDelay,
+  shouldRetryNitradoDrift,
+} from '@/lib/nitradoDriftRetry';
 import { useToast } from '@/lib/toast';
 import { Button } from '@/components/ui/Button';
 
@@ -63,7 +68,15 @@ function visibleError(error: unknown): ReturnType<typeof describeApiError> | nul
   // 401 wird global vom AuthProvider verarbeitet; 403/404 sind erwartete
   // Permission-/Surface-Zustaende und sollen ebenfalls keinen Drift vortaeuschen.
   if (described.status === 401 || described.status === 403 || described.status === 404) return null;
+  // Ein Binding-Lock-Konflikt ist ein erwarteter, temporaerer Parallelitaetszustand.
+  // Er wird separat als Verzoegerung behandelt und darf keinen False-Drift-Fehler
+  // erzeugen.
+  if (isTransientNitradoDriftConflict(described)) return null;
   return described;
+}
+
+function retryDriftContention(failureCount: number, error: unknown): boolean {
+  return shouldRetryNitradoDrift(failureCount, describeApiError(error));
 }
 
 export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: string }) {
@@ -74,13 +87,15 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
   const whitelist = useQuery({
     queryKey: ['nitrado-drift', 'whitelist', guildId, slot],
     queryFn: () => api.get<DriftResponse<WhitelistDriftItem>>(`/api/v2/guilds/${guildId}/nitrado-drift/whitelist${qs}`),
-    retry: false,
+    retry: retryDriftContention,
+    retryDelay: nitradoDriftRetryDelay,
     refetchInterval: 60_000,
   });
   const bans = useQuery({
     queryKey: ['nitrado-drift', 'bans', guildId, slot],
     queryFn: () => api.get<DriftResponse<BanDriftItem>>(`/api/v2/guilds/${guildId}/nitrado-drift/bans${qs}`),
-    retry: false,
+    retry: retryDriftContention,
+    retryDelay: nitradoDriftRetryDelay,
     refetchInterval: 60_000,
   });
 
@@ -123,12 +138,14 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
   const banItems = bans.data?.items ?? [];
   const total = whitelistItems.length + banItems.length;
   const rawErrors = [whitelist.error, bans.error].filter(Boolean);
-  const hasAuthError = rawErrors.some(error => describeApiError(error).status === 401);
+  const describedErrors = rawErrors.map(error => describeApiError(error));
+  const hasAuthError = describedErrors.some(error => error.status === 401);
 
   // Eine fehlgeschlagene Authentifizierung ist KEIN Drift. Der zentrale API-
   // Client signalisiert den Session-Ablauf und Protected leitet zum Login um.
   if (hasAuthError) return null;
 
+  const hasTransientContention = describedErrors.some(isTransientNitradoDriftConflict);
   const uniqueErrors = Array.from(new Map(
     rawErrors
       .map(visibleError)
@@ -136,8 +153,9 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
       .map(error => [`${error.status}:${error.code ?? ''}:${error.desc}`, error] as const),
   ).values());
   const hasDrift = total > 0;
+  const onlyTransientContention = !hasDrift && hasTransientContention && uniqueErrors.length === 0;
 
-  if (!hasDrift && uniqueErrors.length === 0) return null;
+  if (!hasDrift && uniqueErrors.length === 0 && !hasTransientContention) return null;
 
   const runDecision = (target: ResolveTargetInput, label: string) => {
     const reason = confirmationReason(label, target.decision);
@@ -152,7 +170,11 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
   return (
     <section
       className="mb-6 overflow-hidden rounded-xl border border-warn/45 bg-warn/[0.06] shadow-[0_16px_50px_-28px_rgba(0,0,0,0.85)]"
-      aria-label={hasDrift ? 'Manuelle Nitrado-Abweichungen' : 'Nitrado-Driftpruefung fehlgeschlagen'}
+      aria-label={hasDrift
+        ? 'Manuelle Nitrado-Abweichungen'
+        : onlyTransientContention
+          ? 'Nitrado-Pruefung verzoegert'
+          : 'Nitrado-Driftpruefung fehlgeschlagen'}
       data-testid="nitrado-drift-banner"
     >
       <div className="flex flex-col gap-3 border-b border-warn/20 bg-warn/[0.05] px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
@@ -162,12 +184,18 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
           </span>
           <div>
             <h2 className="text-sm font-semibold text-white">
-              {hasDrift ? 'Manuelle Nitrado-Abweichung erkannt' : 'Nitrado-Driftprüfung fehlgeschlagen'}
+              {hasDrift
+                ? 'Manuelle Nitrado-Abweichung erkannt'
+                : onlyTransientContention
+                  ? 'Nitrado-Prüfung wird verzögert'
+                  : 'Nitrado-Driftprüfung fehlgeschlagen'}
             </h2>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted">
               {hasDrift
                 ? 'V-Bot hatte diesen Zustand zuletzt auf Nitrado bestaetigt, Nitrado meldet ihn jetzt als entfernt. Die automatische Wiederherstellung ist pausiert, bis du dich bewusst fuer einen Zustand entscheidest.'
-                : 'Die aktuelle Drift-Prüfung konnte nicht abgeschlossen werden. Es wurde keine Nitrado-Abweichung bestätigt.'}
+                : onlyTransientContention
+                  ? 'Nitrado verarbeitet diese Verbindung gerade parallel. V-Bot hat keine Abweichung bestätigt und prüft den Zustand automatisch erneut.'
+                  : 'Die aktuelle Drift-Prüfung konnte nicht abgeschlossen werden. Es wurde keine Nitrado-Abweichung bestätigt.'}
             </p>
           </div>
         </div>
@@ -187,6 +215,12 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
       </div>
 
       <div className="space-y-3 p-4">
+        {onlyTransientContention && (
+          <p className="text-xs text-muted" role="status">
+            Die sichere Nitrado-Verarbeitung hat Vorrang. Dieser Zustand ist kein Drift und wird nicht als Abweichung gewertet.
+          </p>
+        )}
+
         {uniqueErrors.map(error => (
           <p key={`${error.status}:${error.code ?? ''}:${error.desc}`} className="text-xs text-danger" role="alert">
             Drift-Pruefung fehlgeschlagen: {error.desc}
