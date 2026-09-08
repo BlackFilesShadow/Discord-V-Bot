@@ -23,12 +23,17 @@ import {
   type InteractionReplyOptions,
 } from 'discord.js';
 import { createHash, createHmac, randomBytes, randomUUID } from 'crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
 import { getConfig } from '../../modules/economy/repository';
 import { assertEconomyScopeReady } from '../../modules/economy/scopeMigration';
-import { bookLedgerEntryInTx, type LedgerTx } from '../../modules/economy/ledger';
+import {
+  bookLedgerEntryInTx,
+  EconomyLedgerRangeError,
+  type LedgerTx,
+} from '../../modules/economy/ledger';
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildScope, UserDiscordId } from '../../types/scope';
 import { logAudit, logger } from '../../utils/logger';
@@ -139,8 +144,10 @@ async function queryOne<T>(db: RawDb, sql: string, ...values: unknown[]): Promis
 async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<void> {
   const safeMessage = e instanceof CasinoUserError
     ? e.message
-    : 'Interner Casino-Fehler. Die Runde wurde vollstaendig zurueckgerollt.';
-  if (!(e instanceof CasinoUserError)) {
+    : e instanceof EconomyLedgerRangeError
+      ? 'Das Economy-Konto hat den maximal darstellbaren Zahlenbereich erreicht.'
+      : 'Interner Casino-Fehler. Die Runde wurde vollstaendig zurueckgerollt.';
+  if (!(e instanceof CasinoUserError) && !(e instanceof EconomyLedgerRangeError)) {
     logger.error('Casino runtime failure', {
       guildId: i.guildId,
       userDiscordId: i.user.id,
@@ -447,6 +454,25 @@ function isStoredWin(value: unknown, payout: bigint): boolean {
   return payout > 0n;
 }
 
+function storedDetails(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const details = (value as Record<string, unknown>).details;
+  return details && typeof details === 'object' && !Array.isArray(details)
+    ? details as Record<string, unknown>
+    : null;
+}
+
+function storedEmbeddedPayout(value: unknown): bigint | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const payout = (value as Record<string, unknown>).payout;
+  if (typeof payout === 'bigint') return payout;
+  if (typeof payout === 'number' && Number.isSafeInteger(payout)) return BigInt(payout);
+  if (typeof payout === 'string' && /^\d+$/.test(payout)) {
+    try { return BigInt(payout); } catch { return null; }
+  }
+  return null;
+}
+
 async function bookCasinoLedger(tx: LedgerTx, args: {
   guildId: string;
   nitradoConnId: string;
@@ -546,9 +572,15 @@ async function playRound(args: {
         `SELECT r."createdAt" FROM "CasinoRound" r
           JOIN "CasinoGame" g ON g."id" = r."gameId"
          WHERE r."guildId"=$1 AND r."nitradoConnId"=$2 AND r."userDiscordId"=$3
-           AND COALESCE(r."result"->'audit'->>'type', g."type"::text)=$4
+           AND CASE
+                 WHEN NOT (r."result" ? 'audit') THEN g."type"::text
+                 WHEN r."result"->'audit'->>'algorithmVersion' IN ($5, $6)
+                   THEN r."result"->'audit'->>'type'
+                 ELSE NULL
+               END = $4
          ORDER BY r."createdAt" DESC LIMIT 1`,
         String(args.scope.guildId), String(nitradoConnId), String(args.scope.actorDiscordId), args.type,
+        CASINO_ALGORITHM_VERSION, LEGACY_CASINO_ALGORITHM_VERSION,
       );
       if (previous) {
         const waitMs = config.cooldownSeconds * 1000 - (Date.now() - previous.createdAt.getTime());
@@ -848,16 +880,23 @@ export const casinoVerifyCommand: Command = {
     const storedWin = isStoredWin(round.result, round.payout);
     const hashMatches = seedHashFull(round.serverSeed) === snapshot.serverSeedHash;
     const payoutMatches = replay.payout === round.payout;
+    const embeddedPayoutMatches = storedEmbeddedPayout(round.result) === round.payout;
     const outcomeMatches = replay.draw === storedDraw && replay.won === storedWin;
+    const detailsMatch = isDeepStrictEqual(storedDetails(round.result), replay.details);
     const betBoundsMatch = round.bet >= min && round.bet <= max;
-    const verified = hashMatches && payoutMatches && outcomeMatches && betBoundsMatch;
+    const verified = hashMatches
+      && payoutMatches
+      && embeddedPayoutMatches
+      && outcomeMatches
+      && detailsMatch
+      && betBoundsMatch;
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const def = casinoDefinition(snapshot.type);
     const embed = vEmbed(verified ? Colors.Success : Colors.Error)
       .setTitle(verified ? '✅ Casino-Runde verifiziert' : '❌ Casino-Runde NICHT verifiziert')
       .setDescription(verified
-        ? 'Seed, Nonce, Regel-Snapshot, Einsatzgrenzen, Outcome und Auszahlung sind reproduzierbar.'
-        : 'Mindestens ein gespeicherter Audit-Wert stimmt nicht mit der reproduzierten Runde ueberein.')
+        ? 'Seed, Nonce, Regel-Snapshot, Einsatzgrenzen, Outcome, Ergebnisdetails und Auszahlung sind reproduzierbar.'
+        : 'Mindestens ein gespeicherter Audit- oder Ergebniswert stimmt nicht mit der reproduzierten Runde ueberein.')
       .addFields(
         { name: '🎲 Spiel', value: `${def.emoji} ${def.label}`, inline: true },
         { name: '💰 Einsatz', value: `${fmt(round.bet)} ${cfg.emoji}`, inline: true },
@@ -874,7 +913,7 @@ export const casinoVerifyCommand: Command = {
     logAudit('CASINO_VERIFY', 'CASINO', {
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, roundId: round.id,
       type: snapshot.type, algorithmVersion: snapshot.algorithmVersion,
-      verified, hashMatches, payoutMatches, outcomeMatches, betBoundsMatch,
+      verified, hashMatches, payoutMatches, embeddedPayoutMatches, outcomeMatches, detailsMatch, betBoundsMatch,
     });
   }),
 };
