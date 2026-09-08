@@ -30,10 +30,36 @@ CREATE UNIQUE INDEX "CasinoGameConfigV3_guild_conn_type_key"
 CREATE INDEX "CasinoGameConfigV3_guild_conn_idx"
     ON "CasinoGameConfigV3"("guildId", "nitradoConnId");
 
--- Prisma schema files cannot extend the existing NitradoConnection model from
--- another file, so the connection lifecycle is enforced with a DB trigger.
--- This keeps slot deletion atomic and prevents orphaned V3 configurations while
--- avoiding an unsafe full rewrite of the legacy schema model.
+-- Multi-file Prisma cannot add the inverse relation to the existing legacy
+-- NitradoConnection model without rewriting that model. Enforce the same
+-- boundary directly in PostgreSQL: a V3 config must always point to an existing
+-- connection of the SAME guild. This also protects direct SQL/import paths that
+-- bypass the dashboard/Prisma scope guards.
+CREATE OR REPLACE FUNCTION "vbot_validate_casino_v3_connection_scope"()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM "NitradoConnection" n
+         WHERE n."id" = NEW."nitradoConnId"
+           AND n."guildId" = NEW."guildId"
+    ) THEN
+        RAISE EXCEPTION 'CasinoGameConfigV3 references missing or cross-guild NitradoConnection (%/%)', NEW."guildId", NEW."nitradoConnId"
+            USING ERRCODE = '23503';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "CasinoGameConfigV3_validate_connection_scope" ON "CasinoGameConfigV3";
+CREATE TRIGGER "CasinoGameConfigV3_validate_connection_scope"
+BEFORE INSERT OR UPDATE OF "guildId", "nitradoConnId" ON "CasinoGameConfigV3"
+FOR EACH ROW
+EXECUTE FUNCTION "vbot_validate_casino_v3_connection_scope"();
+
+-- Keep connection deletion atomic with the V3 configuration lifecycle. The
+-- cleanup happens before NitradoConnection disappears, so no orphan window can
+-- be observed even by raw SQL readers.
 CREATE OR REPLACE FUNCTION "vbot_delete_casino_v3_config_for_connection"()
 RETURNS TRIGGER AS $$
 BEGIN
