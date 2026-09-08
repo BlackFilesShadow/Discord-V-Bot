@@ -10,12 +10,13 @@ import { useToast } from '@/components/ui/Toast';
 import { useModalA11y } from '@/lib/useModalA11y';
 import { AdmTimeZoneCard } from '@/components/AdmTimeZoneCard';
 
-type FeedKind = 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
-type DeathCategory = 'PVP' | 'SUICIDE' | 'NPC' | 'VEHICLE';
+type FeedKind = 'KILL' | 'DEATH' | 'BUILD' | 'PLACEMENT' | 'PLAYER_LIST' | 'FLAG';
+type KillCategory = 'PVP';
+type DeathCategory = 'SUICIDE' | 'NPC' | 'VEHICLE' | 'OTHER';
 type BuildCategory = 'BUILD' | 'DISMANTLE' | 'DESTROY';
 type PlacementCategory = 'PLACEMENT';
 type FlagCategory = 'RAISED' | 'LOWERED';
-type Category = DeathCategory | BuildCategory | PlacementCategory | FlagCategory;
+type Category = KillCategory | DeathCategory | BuildCategory | PlacementCategory | FlagCategory;
 
 interface GameplayFeedConfig {
   id: string;
@@ -46,11 +47,15 @@ interface GameplayFeedConfig {
 interface DiscordChannel { id: string; name: string; type: number; parentId: string | null }
 interface Slot { id: string; slot: number; alias: string; alias5: string; status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }
 
-const DEATH_LABELS: Record<DeathCategory, { label: string; icon: string }> = {
+const KILL_LABELS: Record<KillCategory, { label: string; icon: string }> = {
   PVP: { label: 'V-Kill Report', icon: '💀' },
+};
+
+const DEATH_LABELS: Record<DeathCategory, { label: string; icon: string }> = {
   SUICIDE: { label: 'Self Kill Report', icon: '🩸' },
   NPC: { label: 'Wild Kill Report', icon: '☣️' },
   VEHICLE: { label: 'Crash Kill Report', icon: '💥' },
+  OTHER: { label: 'Death Report', icon: '☠️' },
 };
 
 const BUILD_LABELS: Record<BuildCategory, { label: string; icon: string }> = {
@@ -69,7 +74,8 @@ const FLAG_LABELS: Record<FlagCategory, { label: string; icon: string }> = {
 };
 
 const DEFAULTS: Record<FeedKind, Category[]> = {
-  DEATH: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
+  KILL: ['PVP'],
+  DEATH: ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'],
   BUILD: ['BUILD', 'DISMANTLE', 'DESTROY'],
   PLACEMENT: ['PLACEMENT'],
   PLAYER_LIST: [],
@@ -78,6 +84,7 @@ const DEFAULTS: Record<FeedKind, Category[]> = {
 const FLAG_OPTIONS: FlagCategory[] = ['RAISED', 'LOWERED'];
 
 function categoryMeta(kind: FeedKind, category: Category): { label: string; icon: string } | null {
+  if (kind === 'KILL') return KILL_LABELS[category as KillCategory] ?? null;
   if (kind === 'DEATH') return DEATH_LABELS[category as DeathCategory] ?? null;
   if (kind === 'BUILD') return BUILD_LABELS[category as BuildCategory] ?? null;
   if (kind === 'PLACEMENT') return PLACEMENT_LABELS[category as PlacementCategory] ?? null;
@@ -86,6 +93,7 @@ function categoryMeta(kind: FeedKind, category: Category): { label: string; icon
 }
 
 function feedTitle(kind: FeedKind): string {
+  if (kind === 'KILL') return 'Killfeed';
   if (kind === 'DEATH') return 'Deathfeed';
   if (kind === 'BUILD') return 'Baufeed';
   if (kind === 'PLACEMENT') return 'Placement-Feed';
@@ -96,7 +104,7 @@ function feedTitle(kind: FeedKind): string {
 export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOwner: boolean; slots: Slot[] }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [kind, setKind] = useState<FeedKind>('DEATH');
+  const [kind, setKind] = useState<FeedKind>('KILL');
   const [activeSlot, setActiveSlot] = useState<number>(slots.find(s => s.status === 'ACTIVE')?.slot ?? slots[0]?.slot ?? 1);
   const [editing, setEditing] = useState<GameplayFeedConfig | 'new' | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -138,7 +146,7 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
   const title = feedTitle(kind);
   const invalidate = () => qc.invalidateQueries({ queryKey: ['gameplay-feeds', guildId, activeSlot, kind] });
 
-  const kindIcon = kind === 'DEATH'
+  const kindIcon = kind === 'KILL' || kind === 'DEATH'
     ? <Crosshair className="h-5 w-5 text-accent" />
     : kind === 'BUILD' || kind === 'PLACEMENT'
       ? <Hammer className="h-5 w-5 text-accent" />
@@ -158,7 +166,8 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={kind} onChange={e => { setKind(e.target.value as FeedKind); setEditing(null); }}>
-            <option value="DEATH">Deathfeed</option>
+            <option value="KILL">💀 Killfeed</option>
+            <option value="DEATH">☠️ Deathfeed</option>
             <option value="BUILD">Baufeed</option>
             <option value="PLACEMENT">📦 Placement-Feed</option>
             <option value="PLAYER_LIST">🌐 Online List</option>
@@ -177,13 +186,26 @@ export function KillfeedTab({ guildId, isOwner, slots }: { guildId: string; isOw
 
       <AdmTimeZoneCard guildId={guildId} slot={activeSlot} />
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 max-w-5xl">
-        <button type="button" onClick={() => { setKind('DEATH'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'DEATH' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>💀 Deathfeed</button>
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-2 max-w-6xl">
+        <button type="button" onClick={() => { setKind('KILL'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'KILL' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>💀 Killfeed</button>
+        <button type="button" onClick={() => { setKind('DEATH'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'DEATH' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>☠️ Deathfeed</button>
         <button type="button" onClick={() => { setKind('BUILD'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'BUILD' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>🔨 Baufeed</button>
         <button type="button" onClick={() => { setKind('PLACEMENT'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'PLACEMENT' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>📦 Placement</button>
         <button type="button" onClick={() => { setKind('PLAYER_LIST'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'PLAYER_LIST' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>🌐 Online List</button>
         <button type="button" onClick={() => { setKind('FLAG'); setEditing(null); }} className={`rounded-lg border px-3 py-2 text-sm ${kind === 'FLAG' ? 'border-accent text-white bg-accent/10' : 'border-border text-muted'}`}>🚩 Flaggen-Feed</button>
       </div>
+
+      {kind === 'KILL' && (
+        <Card className="!p-3">
+          <p className="text-sm text-muted"><strong className="text-white">Killfeed</strong> ist ausschließlich PvP. Er zeigt den belegten Killer, das Opfer, Waffe, Distanz und – falls im ADM-Hit vorhanden – Trefferzone und Schaden.</p>
+        </Card>
+      )}
+
+      {kind === 'DEATH' && (
+        <Card className="!p-3">
+          <p className="text-sm text-muted"><strong className="text-white">Deathfeed</strong> ist vom PvP-Killfeed getrennt. Er erfasst Self-, Wild-, Fahrzeug- und sonstige belegte Todesursachen wie Verbluten, Ertrinken, Respawn oder Minen/Explosionen. Generische Duplicate-Todeszeilen nach einem spezifischen Tod werden serverseitig unterdrückt.</p>
+        </Card>
+      )}
 
       {kind === 'PLACEMENT' && (
         <Card className="!p-3">
@@ -324,7 +346,7 @@ function FeedEditor({
   const [showActorCoords, setShowActorCoords] = useState(existing?.showActorCoords ?? true);
   const [showTargetCoords, setShowTargetCoords] = useState(existing?.showTargetCoords ?? (kind === 'FLAG'));
   const [showTool, setShowTool] = useState(existing?.showTool ?? (kind !== 'FLAG' && kind !== 'PLACEMENT'));
-  const [showDistance, setShowDistance] = useState(existing?.showDistance ?? (kind === 'DEATH'));
+  const [showDistance, setShowDistance] = useState(existing?.showDistance ?? (kind === 'KILL'));
   const [embedColor, setEmbedColor] = useState(existing?.embedColor ?? (kind === 'BUILD' || kind === 'PLACEMENT' ? '#eab308' : kind === 'PLAYER_LIST' ? '#2563eb' : kind === 'FLAG' ? '#22c55e' : '#dc2626'));
   const [playerListIntervalMinutes, setPlayerListIntervalMinutes] = useState<number | null>(existing?.playerListIntervalMinutes ?? null);
   const [isActive, setIsActive] = useState(existing?.isActive ?? true);
@@ -340,6 +362,10 @@ function FeedEditor({
       if (!existing) setEmbedColor(category === 'RAISED' ? '#22c55e' : '#eab308');
       return;
     }
+    if (kind === 'KILL') {
+      setCategories(['PVP']);
+      return;
+    }
     if (kind === 'PLACEMENT') {
       setCategories(['PLACEMENT']);
       return;
@@ -349,16 +375,19 @@ function FeedEditor({
 
   const save = async () => {
     setError(null);
+    const invalidKillCategories = kind === 'KILL' && (categories.length !== 1 || categories[0] !== 'PVP');
     const invalidFlagCategories = kind === 'FLAG' && categories.length !== 1;
     const invalidPlacementCategories = kind === 'PLACEMENT' && (categories.length !== 1 || categories[0] !== 'PLACEMENT');
-    if (!channelId || (kind !== 'PLAYER_LIST' && categories.length === 0) || invalidFlagCategories || invalidPlacementCategories || !/^#[0-9a-fA-F]{6}$/.test(embedColor)) {
-      setError(kind === 'FLAG'
-        ? 'Channel, gültige Farbe und genau eine Flaggen-Aktion sind erforderlich.'
-        : kind === 'PLACEMENT'
-          ? 'Channel, gültige Farbe und ausschließlich PLACEMENT sind erforderlich.'
-          : kind === 'PLAYER_LIST'
-            ? 'Channel und gültige Farbe sind erforderlich.'
-            : 'Channel, gültige Farbe und mindestens eine Kategorie sind erforderlich.');
+    if (!channelId || (kind !== 'PLAYER_LIST' && categories.length === 0) || invalidKillCategories || invalidFlagCategories || invalidPlacementCategories || !/^#[0-9a-fA-F]{6}$/.test(embedColor)) {
+      setError(kind === 'KILL'
+        ? 'Channel, gültige Farbe und ausschließlich PVP sind erforderlich.'
+        : kind === 'FLAG'
+          ? 'Channel, gültige Farbe und genau eine Flaggen-Aktion sind erforderlich.'
+          : kind === 'PLACEMENT'
+            ? 'Channel, gültige Farbe und ausschließlich PLACEMENT sind erforderlich.'
+            : kind === 'PLAYER_LIST'
+              ? 'Channel und gültige Farbe sind erforderlich.'
+              : 'Channel, gültige Farbe und mindestens eine Kategorie sind erforderlich.');
       return;
     }
     setBusy(true);
@@ -367,9 +396,9 @@ function FeedEditor({
         channelId,
         categories,
         showActorCoords,
-        showTargetCoords,
+        showTargetCoords: kind === 'KILL' || kind === 'FLAG' ? showTargetCoords : false,
         showTool: kind === 'FLAG' || kind === 'PLACEMENT' ? false : showTool,
-        showDistance: kind === 'FLAG' ? false : showDistance,
+        showDistance: kind === 'KILL' ? showDistance : false,
         embedColor,
         isActive,
         ...(kind === 'PLAYER_LIST' ? { playerListIntervalMinutes } : {}),
@@ -385,15 +414,17 @@ function FeedEditor({
     }
   };
 
-  const editorTitle = kind === 'DEATH'
-    ? 'Deathfeed'
-    : kind === 'BUILD'
-      ? 'Baufeed'
-      : kind === 'PLACEMENT'
-        ? '📦 Placement-Feed'
-        : kind === 'FLAG'
-          ? '🚩 Flaggen-Feed'
-          : '🌐 Online List';
+  const editorTitle = kind === 'KILL'
+    ? '💀 Killfeed'
+    : kind === 'DEATH'
+      ? '☠️ Deathfeed'
+      : kind === 'BUILD'
+        ? 'Baufeed'
+        : kind === 'PLACEMENT'
+          ? '📦 Placement-Feed'
+          : kind === 'FLAG'
+            ? '🚩 Flaggen-Feed'
+            : '🌐 Online List';
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
@@ -415,14 +446,14 @@ function FeedEditor({
           </label>
 
           {kind !== 'PLAYER_LIST' && <div>
-            <div className="text-sm text-muted mb-2">{kind === 'FLAG' ? 'Flaggen-Aktion – genau eine auswählen' : kind === 'PLACEMENT' ? 'Placement – fest getrennt vom Baufeed' : 'Kategorien'}</div>
+            <div className="text-sm text-muted mb-2">{kind === 'KILL' ? 'Killfeed – fest auf PvP getrennt' : kind === 'FLAG' ? 'Flaggen-Aktion – genau eine auswählen' : kind === 'PLACEMENT' ? 'Placement – fest getrennt vom Baufeed' : 'Kategorien'}</div>
             <div className="grid sm:grid-cols-2 gap-2">
               {available.map(category => {
                 const meta = categoryMeta(kind, category);
                 if (!meta) return null;
                 return (
                   <label key={category} className="flex items-center gap-2 rounded-lg border border-border p-2 text-sm text-white">
-                    <input type={kind === 'FLAG' || kind === 'PLACEMENT' ? 'radio' : 'checkbox'} name={kind === 'FLAG' ? 'flag-action' : kind === 'PLACEMENT' ? 'placement-action' : undefined} checked={categories.includes(category)} onChange={() => toggleCategory(category)} />
+                    <input type={kind === 'KILL' || kind === 'FLAG' || kind === 'PLACEMENT' ? 'radio' : 'checkbox'} name={kind === 'KILL' ? 'kill-action' : kind === 'FLAG' ? 'flag-action' : kind === 'PLACEMENT' ? 'placement-action' : undefined} checked={categories.includes(category)} onChange={() => toggleCategory(category)} />
                     <span>{meta.icon} {meta.label}</span>
                   </label>
                 );
@@ -431,10 +462,10 @@ function FeedEditor({
           </div>}
 
           <div className="grid sm:grid-cols-2 gap-2 text-sm text-white">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'DEATH' ? 'Opfer-Position' : kind === 'BUILD' || kind === 'PLACEMENT' ? 'Spieler-Position' : kind === 'FLAG' ? 'Spieler-Koordinaten' : 'Koordinaten anzeigen'}</label>
-            {(kind === 'DEATH' || kind === 'FLAG') && <label className="flex items-center gap-2"><input type="checkbox" checked={showTargetCoords} onChange={e => setShowTargetCoords(e.target.checked)} />{kind === 'FLAG' ? 'Flaggen-Koordinaten' : 'Killer-Position'}</label>}
-            {kind !== 'PLAYER_LIST' && kind !== 'FLAG' && kind !== 'PLACEMENT' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'DEATH' ? 'Waffe / Ursache' : 'Werkzeug'}</label>}
-            {kind === 'DEATH' && <label className="flex items-center gap-2"><input type="checkbox" checked={showDistance} onChange={e => setShowDistance(e.target.checked)} />Distanz</label>}
+            <label className="flex items-center gap-2"><input type="checkbox" checked={showActorCoords} onChange={e => setShowActorCoords(e.target.checked)} />{kind === 'KILL' ? 'Opfer-Position' : kind === 'DEATH' ? 'Spieler-Position' : kind === 'BUILD' || kind === 'PLACEMENT' ? 'Spieler-Position' : kind === 'FLAG' ? 'Spieler-Koordinaten' : 'Koordinaten anzeigen'}</label>
+            {(kind === 'KILL' || kind === 'FLAG') && <label className="flex items-center gap-2"><input type="checkbox" checked={showTargetCoords} onChange={e => setShowTargetCoords(e.target.checked)} />{kind === 'FLAG' ? 'Flaggen-Koordinaten' : 'Killer-Position'}</label>}
+            {kind !== 'PLAYER_LIST' && kind !== 'FLAG' && kind !== 'PLACEMENT' && <label className="flex items-center gap-2"><input type="checkbox" checked={showTool} onChange={e => setShowTool(e.target.checked)} />{kind === 'KILL' ? 'Waffe' : kind === 'DEATH' ? 'Waffe bei Self Kill' : 'Werkzeug'}</label>}
+            {kind === 'KILL' && <label className="flex items-center gap-2"><input type="checkbox" checked={showDistance} onChange={e => setShowDistance(e.target.checked)} />Distanz</label>}
             <label className="flex items-center gap-2"><input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />Aktiv</label>
           </div>
 
