@@ -22,17 +22,20 @@ describe('#293 ADM feed negative/golden isolation', () => {
     expect(categoryAllowed('DEATH', ['NPC'], event!.eventType)).toBe(true);
     expect(categoryAllowed('DEATH', ['PVP'], event!.eventType)).toBe(false);
     expect(categoryAllowed('DEATH', ['VEHICLE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
-  it.each(['Wolf', 'Bear', 'M67 Fragmentation Grenade', 'LandMine'])('does not relabel non-class cause %s as Wild/NPC', cause => {
+  it.each(['Wolf', 'Bear', 'M67 Fragmentation Grenade', 'LandMine'])('retains non-class cause %s as OTHER death without relabeling it Wild/NPC', cause => {
     const event = parseAdmLine(
       `12:00:30 | Player "Victim" (DEAD) (id=game-1 pos=<1,2,3>) killed by ${cause}`,
       ctx(),
     );
     expect(event?.eventType).toBe('PLAYER_DIED');
     expect(event?.targetName).toBe(cause);
-    expect(kindForEvent(event!.eventType)).toBeNull();
+    expect(kindForEvent(event!.eventType)).toBe('DEATH');
+    expect(categoryAllowed('DEATH', ['OTHER'], event!.eventType)).toBe(true);
     expect(categoryAllowed('DEATH', ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
   it('never upgrades a DEAD explosion hit into a deathfeed event by itself', () => {
@@ -42,19 +45,22 @@ describe('#293 ADM feed negative/golden isolation', () => {
     );
     expect(event?.eventType).toBe('PLAYER_HIT');
     expect(kindForEvent(event!.eventType)).toBeNull();
-    expect(categoryAllowed('DEATH', ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('DEATH', ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
-  it('keeps a nonfatal vehicle hit out of the deathfeed', () => {
+  it('keeps a nonfatal vehicle hit out of both death and kill feeds', () => {
     const event = parseAdmLine(
       '12:02:00 | Player "Victim" (id=game-1 pos=<1,2,3>) hit by [vehicle] OffroadHatchback at speed 35 km/h',
       ctx(),
     );
     expect(event?.eventType).toBe('PLAYER_HIT');
     expect(kindForEvent(event!.eventType)).toBeNull();
+    expect(categoryAllowed('DEATH', ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'], event!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], event!.eventType)).toBe(false);
   });
 
-  it('only the canonical killed-by-player line is PvP', () => {
+  it('only the canonical killed-by-player line enters KILL/PVP', () => {
     const hit = parseAdmLine(
       '12:03:00 | Player "Victim" (DEAD) (id=game-1 pos=<1,2,3>) hit by explosion (Explosion_40mm_Ammo)',
       ctx(),
@@ -65,7 +71,8 @@ describe('#293 ADM feed negative/golden isolation', () => {
     );
     expect(hit?.eventType).toBe('PLAYER_HIT');
     expect(kill?.eventType).toBe('PLAYER_KILLED');
-    expect(categoryAllowed('DEATH', ['PVP'], hit!.eventType)).toBe(false);
-    expect(categoryAllowed('DEATH', ['PVP'], kill!.eventType)).toBe(true);
+    expect(categoryAllowed('KILL', ['PVP'], hit!.eventType)).toBe(false);
+    expect(categoryAllowed('KILL', ['PVP'], kill!.eventType)).toBe(true);
+    expect(categoryAllowed('DEATH', ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'], kill!.eventType)).toBe(false);
   });
 });
