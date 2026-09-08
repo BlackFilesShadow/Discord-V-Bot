@@ -11,7 +11,12 @@
  * Delayed ingestion/reprocessing can therefore neither move a kill into another
  * cap day nor let a later event consume the budget before an earlier event.
  */
-import { bookLedgerEntryInTx, type LedgerClient, type LedgerTx } from './ledger';
+import {
+  bookLedgerEntryInTx,
+  EconomyLedgerRangeError,
+  type LedgerClient,
+  type LedgerTx,
+} from './ledger';
 import { leaveCleanupJobKey } from '../moderation/leaveCleanupSaga';
 
 export interface PendingRewardRow {
@@ -189,10 +194,16 @@ async function rewardLimits(
   return rows[0] ?? { paidToday: 0n, cooldownConflict: false };
 }
 
+type RewardSkipReason =
+  | 'SKIPPED_DAILY_CAP'
+  | 'SKIPPED_COOLDOWN'
+  | 'SKIPPED_INVALID_EVENT_TIME'
+  | 'SKIPPED_BALANCE_LIMIT';
+
 async function markSkipped(
   tx: RewardBookingTx,
   decisionId: string,
-  reasonCode: 'SKIPPED_DAILY_CAP' | 'SKIPPED_COOLDOWN' | 'SKIPPED_INVALID_EVENT_TIME',
+  reasonCode: RewardSkipReason,
 ): Promise<void> {
   await tx.rewardDecision.update({
     where: { id: decisionId },
@@ -297,17 +308,27 @@ async function finalizePendingReward(
     }
 
     const { walletDelta, bankDelta } = expectedDeltas(amount, policy.rewardTarget);
-    const booked = await bookLedgerEntryInTx(tx, {
-      idempotencyKey: key,
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      userDiscordId: decision.userDiscordId,
-      walletDelta,
-      bankDelta,
-      type: 'GRANT',
-      reason: 'ADM-Reward',
-      sourceRef: decision.id,
-    });
+    let booked: { entryId: string };
+    try {
+      booked = await bookLedgerEntryInTx(tx, {
+        idempotencyKey: key,
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        userDiscordId: decision.userDiscordId,
+        walletDelta,
+        bankDelta,
+        type: 'GRANT',
+        reason: 'ADM-Reward',
+        sourceRef: decision.id,
+      });
+    } catch (error) {
+      if (!(error instanceof EconomyLedgerRangeError)) throw error;
+      // The range guard throws before any ledger/account mutation. Finalize the
+      // decision as an explicit no-pay result so an automatic worker never
+      // retries the same impossible credit forever.
+      await markSkipped(tx, decision.id, 'SKIPPED_BALANCE_LIMIT');
+      return 0n;
+    }
 
     await tx.rewardDecision.update({
       where: { id: decision.id },
