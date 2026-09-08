@@ -1,5 +1,5 @@
 import { bookPendingRewards, type RewardBookingClient, type PendingRewardRow } from '../../src/modules/economy/rewardBooking';
-import type { LedgerTx } from '../../src/modules/economy/ledger';
+import { POSTGRES_BIGINT_MAX, type LedgerTx } from '../../src/modules/economy/ledger';
 
 interface Account { walletBalance: bigint; bankBalance: bigint; lifetimeEarned: bigint; lifetimeSpent: bigint }
 interface DecisionState { status: string; paid: bigint; ledgerEntryId?: string; reasonCode?: string }
@@ -88,6 +88,11 @@ function makeClient(decisions: PendingRewardRow[]) {
         queryLocks++;
         return [{ pg_advisory_xact_lock: null }];
       }
+      if (query.includes('FROM "EconomyAccount"') && query.includes('FOR UPDATE')) {
+        const key = `${String(values[0])}:${String(values[1])}:${String(values[2])}`;
+        const account = accounts.get(key);
+        return account ? [{ ...account }] : [];
+      }
       if (query.includes('FROM "RewardDecision" d')) {
         const rewardRuleId = String(values[2]);
         const userDiscordId = String(values[3]);
@@ -112,6 +117,7 @@ function makeClient(decisions: PendingRewardRow[]) {
       }
       throw new Error(`unexpected raw query: ${query}`);
     },
+    $executeRawUnsafe: async () => 0,
     dataDeletionRequest: { findFirst: async () => pendingLeave ? { id: 'leave-1' } : null },
     rewardDecision: rewardDecisionTx,
     economyLedgerEntry: {
@@ -193,6 +199,7 @@ function makeClient(decisions: PendingRewardRow[]) {
     ledger,
     setPendingLeave: (value: boolean) => { pendingLeave = value; },
     seedLedger: (row: LedgerRow) => ledger.set(row.idempotencyKey, row),
+    seedAccount: (userDiscordId: string, account: Account) => accounts.set(`${GUILD}:n:${userDiscordId}`, { ...account }),
     setEventTime: (decisionId: string, occurredAt: Date | null) => {
       const row = decisions.find(value => value.id === decisionId);
       if (!row) throw new Error(`unknown decision ${decisionId}`);
@@ -210,7 +217,7 @@ describe('bookPendingRewards', () => {
     expect(result).toEqual({ paid: 2, totalAmount: 800n, skipped: 0 });
     expect(state.accounts.get(`${GUILD}:n:${USER_1}`)!.walletBalance).toBe(500n);
     expect(state.status.get('d1')).toMatchObject({ status: 'PAID', paid: 500n, ledgerEntryId: 'ledger-reward:d1' });
-    expect(state.queryLockCount()).toBe(2);
+    expect(state.queryLockCount()).toBe(4);
   });
 
   it('never pays the same decision twice', async () => {
@@ -335,6 +342,22 @@ describe('bookPendingRewards', () => {
     const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', cooldownSeconds: 300 });
     expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
     expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_COOLDOWN' });
+  });
+
+  it('finalizes a saturated account as an explicit no-pay decision', async () => {
+    const state = makeClient([decision('d1', USER_1, 100n)]);
+    state.seedAccount(USER_1, {
+      walletBalance: POSTGRES_BIGINT_MAX - 50n,
+      bankBalance: 0n,
+      lifetimeEarned: POSTGRES_BIGINT_MAX - 50n,
+      lifetimeSpent: 0n,
+    });
+
+    const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET' });
+    expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
+    expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', paid: 0n, reasonCode: 'SKIPPED_BALANCE_LIMIT' });
+    expect(state.ledger.size).toBe(0);
+    expect(state.accounts.get(`${GUILD}:n:${USER_1}`)!.walletBalance).toBe(POSTGRES_BIGINT_MAX - 50n);
   });
 
   it('fails closed without a trustworthy ADM event timestamp', async () => {
