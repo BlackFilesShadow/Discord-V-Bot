@@ -19,7 +19,12 @@
  * hinter einem festen Batch-Fenster verhungern.
  */
 
-import { bookLedgerEntryInTx, type LedgerClient, type LedgerTx } from './ledger';
+import {
+  bookLedgerEntryInTx,
+  EconomyLedgerRangeError,
+  type LedgerClient,
+  type LedgerTx,
+} from './ledger';
 import {
   advanceRewardCursor,
   afterCursorWhere,
@@ -267,18 +272,28 @@ async function processSession(
         continue;
       }
 
-      await bookLedgerEntryInTx(tx, {
-        idempotencyKey: key,
-        guildId: scope.guildId,
-        nitradoConnId: scope.nitradoConnId,
-        userDiscordId: link.userDiscordId,
-        walletDelta,
-        bankDelta,
-        buckets: 1,
-        type: 'PLAYTIME_REWARD',
-        reason: 'Spielzeit-Belohnung nach Account-Verknuepfung',
-        sourceRef: session.id,
-      });
+      try {
+        await bookLedgerEntryInTx(tx, {
+          idempotencyKey: key,
+          guildId: scope.guildId,
+          nitradoConnId: scope.nitradoConnId,
+          userDiscordId: link.userDiscordId,
+          walletDelta,
+          bankDelta,
+          buckets: 1,
+          type: 'PLAYTIME_REWARD',
+          reason: 'Spielzeit-Belohnung nach Account-Verknuepfung',
+          sourceRef: session.id,
+        });
+      } catch (error) {
+        if (!(error instanceof EconomyLedgerRangeError)) throw error;
+        // The central range check fails before creating a ledger entry. Consume
+        // all currently eligible buckets anyway: an unrepresentable automatic
+        // credit must not be retried forever or be paid retroactively after a
+        // later configuration/account change.
+        await persistProgress(tx, scope, session.id, link, eligibleBuckets);
+        return { credited, total };
+      }
       credited++;
       total += amount;
     }
