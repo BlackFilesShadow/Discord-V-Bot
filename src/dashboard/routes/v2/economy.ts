@@ -24,7 +24,7 @@ import { emitGuildEvent } from '../../socket/emitter';
 export const economyRouter = Router({ mergeParams: true });
 const ECONOMY_DELTA_MAX = 1_000_000_000_000_000n;
 const ECONOMY_DELTA_MIN = -ECONOMY_DELTA_MAX;
-const PLAYTIME_REWARD_MAX = 1_000_000_000n;
+const PLAYTIME_REWARD_MAX = 1_000_000_000_000_000;
 
 type RawDb = { $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T> };
 const rawDb = prisma as unknown as RawDb;
