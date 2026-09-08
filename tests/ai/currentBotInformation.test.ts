@@ -97,7 +97,8 @@ describe('current bot information surfaces', () => {
     expect(help).toContain('◀️ Zurueck');
     expect(help).toContain('📚 Katalog');
     expect(help).toContain("id: 'manufacturer'");
-    expect(help).toContain('Hersteller-Commands duerfen im Katalog auffindbar sein');
+    expect(help).toContain("names: new Set(['register', 'upload', 'mypackages', 'search', 'download'])");
+    expect(help).toContain('isManufacturer: true');
     expect(help).toContain('function detailEmbed(');
     expect(help).toContain('function commandSelect(');
     expect(help).toContain(".setCustomId('help_prev')");
