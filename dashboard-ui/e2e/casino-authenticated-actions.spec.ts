@@ -86,6 +86,10 @@ function findMutation(mutations: Mutation[], type: string) {
   return mutations.find(m => m.path.endsWith(`/casino/games/${type}`));
 }
 
+function casinoSaveButtons(page: Page) {
+  return page.getByRole('button', { name: 'Speichern', exact: true });
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -96,7 +100,7 @@ test.describe('Casino V3 authenticated dashboard contract', () => {
     await stubCasino(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
     await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Speichern' })).toHaveCount(8);
+    await expect(casinoSaveButtons(page)).toHaveCount(8);
     for (const type of TYPES) await expect(page.getByLabel(`${type} Gewinnchance`)).toBeVisible();
     await expect(page.getByLabel('SLOT Gewinnchance')).toHaveValue('35');
     await expect(page.getByLabel('SLOT Auszahlung')).toHaveValue('2.5');
@@ -113,7 +117,7 @@ test.describe('Casino V3 authenticated dashboard contract', () => {
     await page.getByLabel('BLACKJACK Gewinnchance').fill('40');
     await page.getByLabel('BLACKJACK Auszahlung').fill('2.1');
     await page.getByLabel('BLACKJACK Cooldown').fill('7');
-    await page.getByRole('button', { name: 'Speichern' }).nth(3).click();
+    await casinoSaveButtons(page).nth(3).click();
     await expect.poll(() => findMutation(mutations, 'BLACKJACK')).toBeTruthy();
     expect(findMutation(mutations, 'BLACKJACK')).toMatchObject({
       query: `?slot=${SLOT}`,
@@ -121,7 +125,7 @@ test.describe('Casino V3 authenticated dashboard contract', () => {
     });
 
     await page.getByLabel('ROULETTE Gewinnchance').fill('45');
-    await page.getByRole('button', { name: 'Speichern' }).nth(4).click();
+    await casinoSaveButtons(page).nth(4).click();
     await expect.poll(() => findMutation(mutations, 'ROULETTE')).toBeTruthy();
     expect(findMutation(mutations, 'ROULETTE')?.body).toHaveProperty('winChancePct', 45);
   });
@@ -136,7 +140,7 @@ test.describe('Casino V3 authenticated dashboard contract', () => {
   test('update errors surface to the user instead of being swallowed', async ({ page }) => {
     await stubCasino(page, { updateErrorType: 'DICE' });
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
-    await page.getByRole('button', { name: 'Speichern' }).nth(2).click();
+    await casinoSaveButtons(page).nth(2).click();
     await expect(page.getByText(/CASINO_UPDATE_BLOCKED/)).toBeVisible();
   });
 });
