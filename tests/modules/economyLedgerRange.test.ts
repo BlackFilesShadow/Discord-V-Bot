@@ -15,12 +15,14 @@ const INPUT = {
   type: 'GRANT',
 };
 
-function fullTx(snapshot: {
+type Snapshot = {
   walletBalance: bigint;
   bankBalance: bigint;
   lifetimeEarned: bigint;
   lifetimeSpent: bigint;
-}) {
+};
+
+function fullTx(snapshot: Snapshot | null) {
   let ledgerCreates = 0;
   let accountWrites = 0;
   let accountLocks = 0;
@@ -34,7 +36,7 @@ function fullTx(snapshot: {
       }
       if (query.includes('FROM "EconomyAccount"') && query.includes('FOR UPDATE')) {
         rangeReads++;
-        return [snapshot] as T;
+        return (snapshot ? [snapshot] : []) as T;
       }
       throw new Error(`unexpected query: ${query}`);
     },
@@ -62,11 +64,20 @@ function fullTx(snapshot: {
 }
 
 describe('central economy ledger bigint range fence', () => {
-  it('serializes the scoped account before reading the numeric snapshot', async () => {
+  it('uses only the row lock for an existing scoped account', async () => {
     const state = fullTx({ walletBalance: 0n, bankBalance: 0n, lifetimeEarned: 0n, lifetimeSpent: 0n });
     await bookLedgerEntryInTx(state.tx, { ...INPUT, walletDelta: 1n });
-    expect(state.accountLocks()).toBe(1);
+    expect(state.accountLocks()).toBe(0);
     expect(state.rangeReads()).toBe(1);
+  });
+
+  it('serializes a missing account and re-reads before first creation', async () => {
+    const state = fullTx(null);
+    await bookLedgerEntryInTx(state.tx, { ...INPUT, walletDelta: 1n });
+    expect(state.accountLocks()).toBe(1);
+    expect(state.rangeReads()).toBe(2);
+    expect(state.ledgerCreates()).toBe(1);
+    expect(state.accountWrites()).toBe(1);
   });
 
   it('rejects cumulative account overflow before ledger/account writes', async () => {
@@ -79,7 +90,7 @@ describe('central economy ledger bigint range fence', () => {
 
     await expect(bookLedgerEntryInTx(state.tx, { ...INPUT, walletDelta: 100n }))
       .rejects.toBeInstanceOf(EconomyLedgerRangeError);
-    expect(state.accountLocks()).toBe(1);
+    expect(state.accountLocks()).toBe(0);
     expect(state.rangeReads()).toBe(1);
     expect(state.ledgerCreates()).toBe(0);
     expect(state.accountWrites()).toBe(0);
@@ -95,7 +106,7 @@ describe('central economy ledger bigint range fence', () => {
 
     await expect(bookLedgerEntryInTx(state.tx, { ...INPUT, walletDelta: 100n }))
       .resolves.toEqual({ entryId: 'ledger-1' });
-    expect(state.accountLocks()).toBe(1);
+    expect(state.accountLocks()).toBe(0);
     expect(state.rangeReads()).toBe(1);
     expect(state.ledgerCreates()).toBe(1);
     expect(state.accountWrites()).toBe(1);
