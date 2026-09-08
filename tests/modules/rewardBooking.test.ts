@@ -23,13 +23,15 @@ const SCOPE = { guildId: GUILD, nitradoConnId: 'n' };
 const BASE_TIME = new Date('2026-09-08T10:00:00.000Z');
 
 function decision(id: string, userDiscordId: string, calculated: bigint, offsetSeconds = 0): PendingRewardRow {
+  const createdAt = new Date(BASE_TIME.getTime() + offsetSeconds * 1000);
   return {
     id,
     admEventId: `event-${id}`,
     userDiscordId,
     calculated,
     rewardRuleId: 'pvp:default',
-    createdAt: new Date(BASE_TIME.getTime() + offsetSeconds * 1000),
+    createdAt,
+    eventOccurredAt: createdAt,
   };
 }
 
@@ -46,7 +48,7 @@ function makeClient(decisions: PendingRewardRow[]) {
   const accounts = new Map<string, Account>();
   const status = new Map<string, DecisionState>();
   const ledger = new Map<string, LedgerRow>();
-  const eventTimes = new Map<string, Date | null>(decisions.map(row => [row.admEventId, row.createdAt]));
+  const eventTimes = new Map<string, Date | null>(decisions.map(row => [row.admEventId, row.eventOccurredAt]));
   let historicalPaid: HistoricalPaidReward[] = [];
   let pendingLeave = false;
   let queryLocks = 0;
@@ -86,19 +88,24 @@ function makeClient(decisions: PendingRewardRow[]) {
         queryLocks++;
         return [{ pg_advisory_xact_lock: null }];
       }
-      if (query.includes('FROM "AdmEvent"') && query.includes('LIMIT 1')) {
-        const admEventId = String(values[0]);
-        return eventTimes.has(admEventId) ? [{ occurredAt: eventTimes.get(admEventId) ?? null }] : [];
-      }
       if (query.includes('FROM "RewardDecision" d')) {
+        const rewardRuleId = String(values[2]);
+        const userDiscordId = String(values[3]);
         const timezone = String(values[4]);
         const eventOccurredAt = values[5] as Date;
         const cooldownSeconds = Number(values[6]);
         const currentDay = localDay(eventOccurredAt, timezone);
-        const paidToday = historicalPaid
+        const newlyPaid = decisions.flatMap(row => {
+          const state = status.get(row.id);
+          const occurredAt = eventTimes.get(row.admEventId);
+          if (row.rewardRuleId !== rewardRuleId || row.userDiscordId !== userDiscordId || state?.status !== 'PAID' || !occurredAt) return [];
+          return [{ occurredAt, paid: state.paid }];
+        });
+        const relevantPaid = [...historicalPaid, ...newlyPaid];
+        const paidToday = relevantPaid
           .filter(row => localDay(row.occurredAt, timezone) === currentDay)
           .reduce((sum, row) => sum + row.paid, 0n);
-        const cooldownConflict = cooldownSeconds > 0 && historicalPaid.some(row =>
+        const cooldownConflict = cooldownSeconds > 0 && relevantPaid.some(row =>
           Math.abs(row.occurredAt.getTime() - eventOccurredAt.getTime()) < cooldownSeconds * 1000,
         );
         return [{ paidToday, cooldownConflict }];
@@ -158,14 +165,24 @@ function makeClient(decisions: PendingRewardRow[]) {
   };
 
   const client: RewardBookingClient = {
+    $queryRawUnsafe: async <T = unknown>(query: string, ...values: unknown[]): Promise<T> => {
+      if (!query.includes('ORDER BY e."occurredAt" ASC NULLS LAST')) throw new Error(`unexpected root raw query: ${query}`);
+      const limit = Number(values[2]);
+      const rows = decisions
+        .filter(row => status.get(row.id)?.status === 'PENDING' && row.calculated > 0n)
+        .map(row => ({ ...row, eventOccurredAt: eventTimes.get(row.admEventId) ?? null }))
+        .sort((a, b) => {
+          const aTime = a.eventOccurredAt?.getTime() ?? Number.POSITIVE_INFINITY;
+          const bTime = b.eventOccurredAt?.getTime() ?? Number.POSITIVE_INFINITY;
+          return aTime - bTime || a.id.localeCompare(b.id);
+        })
+        .slice(0, limit);
+      return rows as T;
+    },
     $transaction: async <T>(fn: (trx: LedgerTx) => Promise<T>): Promise<T> => {
       const run = chain.then(() => fn(tx as unknown as LedgerTx));
       chain = run.then(() => undefined, () => undefined);
       return run;
-    },
-    rewardDecision: {
-      findMany: async () => decisions.filter(d => status.get(d.id)?.status === 'PENDING'),
-      update: rewardDecisionTx.update,
     },
   };
 
@@ -282,6 +299,24 @@ describe('bookPendingRewards', () => {
     const result = await bookPendingRewards(state.client, SCOPE, { rewardTarget: 'WALLET', dailyCap: 1_000n, timezone: 'Europe/Berlin' });
     expect(result).toEqual({ paid: 0, totalAmount: 0n, skipped: 1 });
     expect(state.status.get('d1')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_DAILY_CAP' });
+  });
+
+  it('processes delayed decisions by ADM event chronology before creation chronology', async () => {
+    const laterEventCreatedFirst = decision('later-event', USER_1, 500n, 0);
+    const earlierEventCreatedLater = decision('earlier-event', USER_1, 500n, 3_600);
+    const state = makeClient([laterEventCreatedFirst, earlierEventCreatedLater]);
+    state.setEventTime('later-event', new Date('2026-09-08T10:10:00.000Z'));
+    state.setEventTime('earlier-event', new Date('2026-09-08T10:00:00.000Z'));
+
+    const result = await bookPendingRewards(state.client, SCOPE, {
+      rewardTarget: 'WALLET',
+      dailyCap: 500n,
+      timezone: 'Europe/Berlin',
+    });
+
+    expect(result).toEqual({ paid: 1, totalAmount: 500n, skipped: 1 });
+    expect(state.status.get('earlier-event')).toMatchObject({ status: 'PAID', paid: 500n });
+    expect(state.status.get('later-event')).toMatchObject({ status: 'SKIPPED', reasonCode: 'SKIPPED_DAILY_CAP' });
   });
 
   it('skips a reward inside the configured event-time cooldown', async () => {
