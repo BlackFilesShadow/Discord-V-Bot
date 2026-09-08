@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  bookLedgerEntry,
   bookLedgerEntryInTx,
   EconomyLedgerRangeError,
   POSTGRES_BIGINT_MAX,
+  type LedgerClient,
   type LedgerTx,
 } from '../../src/modules/economy/ledger';
 
@@ -63,6 +65,57 @@ function fullTx(snapshot: Snapshot | null) {
   };
 }
 
+function saturatedPublicClient(existingId: string | null) {
+  let ledgerCreates = 0;
+  let accountWrites = 0;
+  let idempotencyReads = 0;
+  let transactions = 0;
+  const tx: LedgerTx = {
+    $queryRawUnsafe: async <T = unknown>(query: string): Promise<T> => {
+      if (query.includes('FROM "EconomyAccount"') && query.includes('FOR UPDATE')) {
+        return [{
+          walletBalance: POSTGRES_BIGINT_MAX,
+          bankBalance: 0n,
+          lifetimeEarned: POSTGRES_BIGINT_MAX,
+          lifetimeSpent: 0n,
+        }] as T;
+      }
+      throw new Error(`unexpected query: ${query}`);
+    },
+    $executeRawUnsafe: async () => 0,
+    economyLedgerEntry: {
+      create: async () => {
+        ledgerCreates++;
+        return { id: 'unexpected' };
+      },
+      findUnique: async args => {
+        idempotencyReads++;
+        expect(args.where.idempotencyKey).toBe(INPUT.idempotencyKey);
+        return existingId ? { id: existingId } : null;
+      },
+    },
+    economyAccount: {
+      upsert: async () => {
+        accountWrites++;
+        return {};
+      },
+    },
+  };
+  const client: LedgerClient = {
+    $transaction: async fn => {
+      transactions++;
+      return fn(tx);
+    },
+  };
+  return {
+    client,
+    ledgerCreates: () => ledgerCreates,
+    accountWrites: () => accountWrites,
+    idempotencyReads: () => idempotencyReads,
+    transactions: () => transactions,
+  };
+}
+
 describe('central economy ledger bigint range fence', () => {
   it('uses only the row lock for an existing scoped account', async () => {
     const state = fullTx({ walletBalance: 0n, bankBalance: 0n, lifetimeEarned: 0n, lifetimeSpent: 0n });
@@ -92,6 +145,26 @@ describe('central economy ledger bigint range fence', () => {
       .rejects.toBeInstanceOf(EconomyLedgerRangeError);
     expect(state.accountLocks()).toBe(0);
     expect(state.rangeReads()).toBe(1);
+    expect(state.ledgerCreates()).toBe(0);
+    expect(state.accountWrites()).toBe(0);
+  });
+
+  it('keeps an already committed public idempotency key idempotent at saturation', async () => {
+    const state = saturatedPublicClient('ledger-existing');
+    await expect(bookLedgerEntry(state.client, { ...INPUT, walletDelta: 1n }))
+      .resolves.toEqual({ booked: false });
+    expect(state.transactions()).toBe(2);
+    expect(state.idempotencyReads()).toBe(1);
+    expect(state.ledgerCreates()).toBe(0);
+    expect(state.accountWrites()).toBe(0);
+  });
+
+  it('does not hide a new impossible public credit behind the idempotency recovery lookup', async () => {
+    const state = saturatedPublicClient(null);
+    await expect(bookLedgerEntry(state.client, { ...INPUT, walletDelta: 1n }))
+      .rejects.toBeInstanceOf(EconomyLedgerRangeError);
+    expect(state.transactions()).toBe(2);
+    expect(state.idempotencyReads()).toBe(1);
     expect(state.ledgerCreates()).toBe(0);
     expect(state.accountWrites()).toBe(0);
   });
