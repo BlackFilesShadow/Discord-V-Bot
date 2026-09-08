@@ -40,22 +40,33 @@ const root = process.cwd();
 const read = (relative: string): string => fs.readFileSync(path.resolve(root, relative), 'utf8');
 const inventory = JSON.parse(read('docs/dashboard-surface-inventory.json')) as Inventory;
 
-// Stage 23 remains immutable historical evidence. Legal pages, the two
-// requested Page-2 Economy presentation tabs and the explicit Nitrado-drift
-// resolver were added intentionally later and are reviewed separately instead
-// of rewriting the historical inventory/inventoriedMainSha.
+// Stage 23 remains immutable historical evidence. Legal pages, the V3 slot
+// composition, requested Page-2 Economy presentation tabs and explicit
+// Nitrado-drift/reward routes were added intentionally later and are reviewed
+// separately instead of rewriting the historical inventory/inventoriedMainSha.
 const POST_STAGE_PUBLIC_PAGES = [
   'dashboard-ui/src/pages/legal/LegalLayout.tsx',
   'dashboard-ui/src/pages/legal/Privacy.tsx',
   'dashboard-ui/src/pages/legal/Terms.tsx',
+] as const;
+const POST_STAGE_SLOT_PAGES = [
+  'dashboard-ui/src/pages/ServerSlotV3.tsx',
 ] as const;
 const POST_STAGE_PUBLIC_ROUTES = [
   '<Route path="/legal/privacy" element={<Privacy />} />',
   '<Route path="/legal/terms" element={<Terms />} />',
 ] as const;
 const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino', 'radar'] as const;
-const POST_STAGE_V2_MOUNTS = ['/guilds/:guildId/nitrado-drift', '/guilds/:guildId/radar'] as const;
-const POST_STAGE_V2_APIS = ['/api/v2/guilds/:guildId/nitrado-drift', '/api/v2/guilds/:guildId/radar'] as const;
+const POST_STAGE_V2_MOUNTS = [
+  '/guilds/:guildId/nitrado-drift',
+  '/guilds/:guildId/radar',
+  '/guilds/:guildId/economy/rewards',
+] as const;
+const POST_STAGE_V2_APIS = [
+  '/api/v2/guilds/:guildId/nitrado-drift',
+  '/api/v2/guilds/:guildId/radar',
+  '/api/v2/guilds/:guildId/economy/rewards',
+] as const;
 
 function sortedUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort();
@@ -116,11 +127,13 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     expect(app).toContain('<Route path="secure-export" element={<SecureDevExport />} />');
     expect(app).toContain('DEV_TOOL_SLUGS.map');
     expect(app).toContain('<Route key={slug} path={slug} element={<Page />} />');
+    expect(app).toContain("const ServerSlot = lazyPage(() => import('./pages/ServerSlotV3'))");
   });
 
   test('tracks all live tabs, views, and DEV catalog entries with explicit post-stage Slot additions', () => {
     const server = read('dashboard-ui/src/pages/Server.tsx');
     const slot = read('dashboard-ui/src/pages/ServerSlot.tsx');
+    const slotV3 = read('dashboard-ui/src/pages/ServerSlotV3.tsx');
     const botAdmin = read('dashboard-ui/src/pages/BotAdmin.tsx');
     const devCatalog = read('dashboard-ui/src/lib/devToolsCatalog.ts');
 
@@ -135,19 +148,23 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     expect(inventory.devSpecialSlugs).toEqual(['command-center', 'secure-export']);
     expect(slot).toContain("['virtual-accounts', 'Virtuelle Konten', Banknote]");
     expect(slot).toContain("['bank-casino', 'Bank und Casino Funktionen', Dice5]");
+    expect(slotV3).toContain("['economy', 'Economy', Coins]");
+    expect(slotV3).toContain("['bank-casino', 'Bank und Casino Funktionen', Dice5]");
+    expect(slotV3).toContain('return <LegacyServerSlot />;');
   });
 
-  test('accounts for every routed page module including reviewed post-stage legal pages', () => {
+  test('accounts for every routed page module including reviewed post-stage pages', () => {
     const pageFiles = fs.readdirSync(path.resolve(root, 'dashboard-ui/src/pages'), { recursive: true })
       .map(value => String(value).replace(/\\/g, '/'))
       .filter(value => value.endsWith('.tsx'))
       .map(value => `dashboard-ui/src/pages/${value}`);
     const coveredPages = inventory.surfaces.flatMap(surface => surface.ui.map(value => value.split('#')[0]));
     const ignoredPages = inventory.ignoredUiModules.map(entry => entry.path);
-    expect(sortedUnique([...coveredPages, ...ignoredPages, ...POST_STAGE_PUBLIC_PAGES]).filter(value => value.includes('/pages/')))
+    expect(sortedUnique([...coveredPages, ...ignoredPages, ...POST_STAGE_PUBLIC_PAGES, ...POST_STAGE_SLOT_PAGES]).filter(value => value.includes('/pages/')))
       .toEqual(sortedUnique(pageFiles));
 
     for (const publicPage of POST_STAGE_PUBLIC_PAGES) expect(fs.existsSync(path.resolve(root, publicPage))).toBe(true);
+    for (const slotPage of POST_STAGE_SLOT_PAGES) expect(fs.existsSync(path.resolve(root, slotPage))).toBe(true);
     for (const ignored of inventory.ignoredUiModules) {
       expect(ignored.reason.length).toBeGreaterThan(20);
       expect(fs.existsSync(path.resolve(root, ignored.path))).toBe(true);
@@ -230,7 +247,7 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     const incompleteSurfaceIds = inventory.surfaces
       .filter(surface => surface.tests.status !== 'verified' || surface.mobile.status !== 'verified')
       .map(surface => surface.id);
-    expect(incompleteSurfaceIds.every(id => assignedSurfaceIds.has(id))).toBe(true);
+    expect(incompleteSurfaceIds.every(id => assignedSurfaceIds.has(id)).toBe(true);
     for (const surface of inventory.nonUiHttpSurfaces) {
       expect(inventory.serverMounts).toContain(surface.path);
       expect(surface.classification.length).toBeGreaterThan(10);
