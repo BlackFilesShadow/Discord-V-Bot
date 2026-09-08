@@ -76,15 +76,18 @@ describe('casino V3 hardening contracts', () => {
     expect(casino).not.toContain('const net = result.payout - args.bet');
   });
 
-  it('serializes configurable cooldowns in PostgreSQL and acknowledges Discord before money', () => {
+  it('serializes per-game cooldowns without falling audited V3 rounds back to shared legacy anchors', () => {
     const casino = read('src/commands/dashboard/casino.ts');
     expect(casino).toContain('pg_advisory_xact_lock(hashtextextended($1, 0))');
     expect(casino).toContain('config.cooldownSeconds * 1000');
+    expect(casino).toContain("WHEN NOT (r.\"result\" ? 'audit') THEN g.\"type\"::text");
+    expect(casino).toContain("r.\"result\"->'audit'->>'algorithmVersion' IN ($5, $6)");
+    expect(casino).not.toContain("COALESCE(r.\"result\"->'audit'->>'type', g.\"type\"::text)");
     expect(casino).toContain('await i.deferReply()');
     expect(casino).toContain('await i.editReply({');
   });
 
-  it('stores immutable V3 rules, random nonce and fails malformed audit snapshots closed', () => {
+  it('stores immutable V3 rules and verifies the complete stored round rather than payout alone', () => {
     const casino = read('src/commands/dashboard/casino.ts');
     expect(casino).not.toContain('SELECT COUNT(*)::bigint AS "count" FROM "CasinoRound"');
     expect(casino).toContain('randomNonce()');
@@ -94,6 +97,11 @@ describe('casino V3 hardening contracts', () => {
     expect(casino).toContain("kind: 'invalid'");
     expect(casino).toContain('Audit-Snapshot ungueltig');
     expect(casino).toContain('betBoundsMatch');
+    expect(casino).toContain('storedEmbeddedPayout');
+    expect(casino).toContain('storedDetails');
+    expect(casino).toContain('embeddedPayoutMatches');
+    expect(casino).toContain('detailsMatch = isDeepStrictEqual');
+    expect(casino).toContain('verified, hashMatches, payoutMatches, embeddedPayoutMatches, outcomeMatches, detailsMatch, betBoundsMatch');
   });
 
   it('aggregates logical V3 game types without a silent history cap', () => {
