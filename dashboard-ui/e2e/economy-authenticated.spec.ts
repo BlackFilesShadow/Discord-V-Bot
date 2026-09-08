@@ -117,7 +117,7 @@ test.describe('Economy authenticated E2E', () => {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Wirtschaft-Status')).toBeVisible();
-    await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Economy-Konfiguration' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Automatische DayZ-Rewards' })).toBeVisible();
     // Lotterie-Pots und Schwarzmarkt-Haendler sind virtuelle Konten und duerfen
     // nicht mehr zusaetzlich im Economy-Bereich doppelt auftauchen.
