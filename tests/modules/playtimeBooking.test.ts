@@ -5,7 +5,7 @@ import {
   type RewardLinkResolution,
   type UncreditedSession,
 } from '../../src/modules/economy/playtimeBooking';
-import type { LedgerTx } from '../../src/modules/economy/ledger';
+import { POSTGRES_BIGINT_MAX, type LedgerTx } from '../../src/modules/economy/ledger';
 
 interface Account { walletBalance: bigint; bankBalance: bigint; lifetimeEarned: bigint; lifetimeSpent: bigint }
 interface LedgerRow {
@@ -70,8 +70,14 @@ function makeClient(sessions: UncreditedSession[], links: Record<string, RewardL
           unlinkedAt: null,
         }] : []) as T;
       }
+      if (query.includes('FROM "EconomyAccount"') && query.includes('FOR UPDATE')) {
+        const key = `${String(values[0])}:${String(values[1])}:${String(values[2])}`;
+        const account = accounts.get(key);
+        return (account ? [{ ...account }] : []) as T;
+      }
       throw new Error(`unexpected raw query: ${query}`);
     },
+    $executeRawUnsafe: async () => 0,
     dataDeletionRequest: {
       findFirst: async () => pendingLeave ? { id: 'leave-1' } : null,
     },
@@ -198,6 +204,7 @@ function makeClient(sessions: UncreditedSession[], links: Record<string, RewardL
     cursors,
     setPendingLeave: (value: boolean) => { pendingLeave = value; },
     setResolveHook: (hook: typeof resolveHook) => { resolveHook = hook; },
+    seedAccount: (account: Account) => accounts.set(`${GUILD}:n:${USER}`, { ...account }),
   };
 }
 
@@ -286,6 +293,35 @@ describe('bookPlaytimeRewards lifecycle-safe', () => {
     links.p1 = link({ rewardEligibleFrom: new Date('2026-08-16T12:12:00Z'), identityHash: HASH_2 });
     await bookPlaytimeRewards(state.client, SCOPE, { perBucketAmount: 100n, rewardTarget: 'WALLET', now: new Date('2026-08-16T12:22:00Z') }, state.resolve);
     expect(state.accounts.get(`${GUILD}:n:${USER}`)!.walletBalance).toBe(200n);
+  });
+
+  it('consumes saturated eligible buckets without ledger writes or later retry', async () => {
+    const s = session({ disconnectedAt: null, status: 'OPEN' });
+    const state = makeClient([s], { p1: link() });
+    state.seedAccount({
+      walletBalance: POSTGRES_BIGINT_MAX - 50n,
+      bankBalance: 0n,
+      lifetimeEarned: POSTGRES_BIGINT_MAX - 50n,
+      lifetimeSpent: 0n,
+    });
+
+    const first = await bookPlaytimeRewards(state.client, SCOPE, {
+      perBucketAmount: 100n,
+      rewardTarget: 'WALLET',
+      now: NOW,
+    }, state.resolve);
+    expect(first).toEqual({ credited: 0, total: 0n });
+    expect(state.ledger.size).toBe(0);
+    expect(state.progress.get(`s1:${LINK_AT.getTime()}`)?.bucketsCredited).toBe(2);
+    expect(state.accounts.get(`${GUILD}:n:${USER}`)!.walletBalance).toBe(POSTGRES_BIGINT_MAX - 50n);
+
+    const second = await bookPlaytimeRewards(state.client, SCOPE, {
+      perBucketAmount: 100n,
+      rewardTarget: 'WALLET',
+      now: NOW,
+    }, state.resolve);
+    expect(second).toEqual({ credited: 0, total: 0n });
+    expect(state.ledger.size).toBe(0);
   });
 
   it('arbeitet mehr als 500 CLOSED-Sessions ohne Starvation ab', async () => {
