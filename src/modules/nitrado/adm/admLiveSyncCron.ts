@@ -77,6 +77,20 @@ export function shouldRestartReusedAdmFile(file: AdmFile, cursor: CursorFileStat
     && file.size === Number(cursor.processedByteOffset);
 }
 
+/**
+ * Chronology fence for rotated/backlogged ADM files. A newer remote file may
+ * only be ingested once the older candidate has reached its complete byte size.
+ * This keeps event-time ordering stable across polling ticks and prevents a
+ * newer kill from becoming payable while older source bytes are still pending.
+ */
+export function isAdmFileFullyConsumed(processedOffset: number, fileSize: number): boolean {
+  return Number.isSafeInteger(processedOffset)
+    && Number.isSafeInteger(fileSize)
+    && processedOffset >= 0
+    && fileSize >= 0
+    && processedOffset >= fileSize;
+}
+
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
@@ -245,7 +259,7 @@ async function ingestFile(
   timeZone: string | null,
   file: AdmFile,
   startOffset: number,
-): Promise<void> {
+): Promise<boolean> {
   if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error(`Ungueltige ADM-Dateigroesse fuer ${file.name}`);
   const sourceIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
   const remotePath = resolveAdmRemoteFilePath(profileDir, file);
@@ -298,9 +312,10 @@ async function ingestFile(
   if (offset < file.size && rangeReads >= MAX_RANGES_PER_FILE_PER_TICK) {
     logger.debug(
       `ADM-Live-Sync ${conn.id}: ${file.name} wird im naechsten Poll bei Byte ${offset}/${file.size} fortgesetzt `
-      + `(Range-Budget ${MAX_RANGES_PER_FILE_PER_TICK} erreicht).`,
+      + `(Range-Budget ${MAX_RANGES_PER_FILE_PER_TICK} erreicht); juengere ADM-Dateien warten auf diesen Chronologie-Fence.`,
     );
   }
+  return isAdmFileFullyConsumed(offset, file.size);
 }
 
 async function processConnection(scope: { id: string; guildId: string }): Promise<void> {
@@ -398,7 +413,7 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
         const startOffset = cursor && !shouldRestartReusedAdmFile(file, cursor)
           ? Number(cursor.processedByteOffset)
           : 0;
-        await ingestFile(
+        const fileComplete = await ingestFile(
           conn,
           client,
           profile.profileDir,
@@ -406,15 +421,21 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
           file,
           startOffset,
         );
+        // Do not let a newer rotated file overtake unconsumed bytes in this
+        // older file. Reward caps/cooldowns and all feeds then observe one
+        // monotonic source chronology rather than poll-budget timing.
+        if (!fileComplete) break;
       } catch (error) {
         if (isAdmBindingFenceError(error)) throw error;
         const message = safeError(error);
         firstFileError ??= `${file.name}: ${message}`;
         logger.warn(`ADM-Live-Sync ${conn.id}: Datei ${file.name} fehlgeschlagen: ${message}`);
-        // Ein offener globaler READ-Circuit kann die folgenden Dateien aktuell
-        // ohnehin nicht erreichen. Nicht noch sieben identische Fail-fast-Logs
-        // erzeugen; der naechste Poll versucht nach dem Cooldown erneut.
-        if (error instanceof NitradoCircuitOpenError) break;
+        // Even a non-circuit source failure fences newer files. Advancing past
+        // an unread older file would otherwise create an event-time inversion.
+        if (error instanceof NitradoCircuitOpenError) {
+          logger.debug(`ADM-Live-Sync ${conn.id}: READ-Circuit offen; Chronologie bleibt bei ${file.name} stehen.`);
+        }
+        break;
       }
     }
     await setSourceStatus(conn, firstFileError);
