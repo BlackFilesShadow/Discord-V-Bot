@@ -56,6 +56,10 @@ export interface LedgerTx {
   $executeRawUnsafe?: (query: string, ...values: unknown[]) => Promise<number>;
   economyLedgerEntry: {
     create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
+    findUnique?: (args: {
+      where: { idempotencyKey: string };
+      select: { id: true };
+    }) => Promise<{ id: string } | null>;
   };
   economyAccount: {
     upsert: (args: {
@@ -205,6 +209,17 @@ export async function bookLedgerEntryInTx(
   return { entryId: entry.id };
 }
 
+async function existingLedgerEntryId(client: LedgerClient, idempotencyKey: string): Promise<string | null> {
+  return client.$transaction(async tx => {
+    if (!tx.economyLedgerEntry.findUnique) return null;
+    const existing = await tx.economyLedgerEntry.findUnique({
+      where: { idempotencyKey },
+      select: { id: true },
+    });
+    return existing?.id ?? null;
+  });
+}
+
 /**
  * Bucht einen Ledger-Eintrag idempotent. Existiert der idempotencyKey bereits,
  * wird NICHTS veraendert und `{ booked: false }` zurueckgegeben. Andernfalls
@@ -220,6 +235,18 @@ export async function bookLedgerEntry(
     return { booked: true, entryId: result.entryId };
   } catch (e) {
     if (isUniqueViolation(e)) return { booked: false }; // bereits gebucht -> idempotent
+    if (e instanceof EconomyLedgerRangeError) {
+      // The cumulative range fence runs before the unique insert so automatic
+      // callers can catch a range error without leaving a ledger row behind.
+      // A retry of an already committed public idempotency key must nevertheless
+      // retain the historic `{ booked:false }` contract even if the account has
+      // since reached the BIGINT boundary.
+      try {
+        if (await existingLedgerEntryId(client, input.idempotencyKey)) return { booked: false };
+      } catch {
+        // Preserve the original range error if the recovery lookup itself fails.
+      }
+    }
     throw e;
   }
 }
