@@ -57,7 +57,12 @@ export interface LedgerTx {
   economyLedgerEntry: {
     create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
     findUnique?: (args: {
-      where: { idempotencyKey: string };
+      where: {
+        idempotencyKey: string;
+        guildId: string;
+        nitradoConnId: string;
+        userDiscordId: string;
+      };
       select: { id: true };
     }) => Promise<{ id: string } | null>;
   };
@@ -209,11 +214,16 @@ export async function bookLedgerEntryInTx(
   return { entryId: entry.id };
 }
 
-async function existingLedgerEntryId(client: LedgerClient, idempotencyKey: string): Promise<string | null> {
+async function existingLedgerEntryId(client: LedgerClient, input: LedgerEntryInput): Promise<string | null> {
   return client.$transaction(async tx => {
     if (!tx.economyLedgerEntry.findUnique) return null;
     const existing = await tx.economyLedgerEntry.findUnique({
-      where: { idempotencyKey },
+      where: {
+        idempotencyKey: input.idempotencyKey,
+        guildId: input.guildId,
+        nitradoConnId: input.nitradoConnId,
+        userDiscordId: input.userDiscordId,
+      },
       select: { id: true },
     });
     return existing?.id ?? null;
@@ -242,7 +252,7 @@ export async function bookLedgerEntry(
       // retain the historic `{ booked:false }` contract even if the account has
       // since reached the BIGINT boundary.
       try {
-        if (await existingLedgerEntryId(client, input.idempotencyKey)) return { booked: false };
+        if (await existingLedgerEntryId(client, input)) return { booked: false };
       } catch {
         // Preserve the original range error if the recovery lookup itself fails.
       }
