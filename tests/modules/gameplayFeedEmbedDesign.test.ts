@@ -74,7 +74,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     }), '#dc2626', SERVER).toJSON();
     expect(json.title).toBe('☣️ Wild Kill Report');
     expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Ursache', 'Pos:', 'Server', 'Ereigniszeit']);
-    expect(json.fields?.find(field => field.name === 'Ursache')?.value).toBe('Animal\_CanisLupus');
+    expect(json.fields?.find(field => field.name === 'Ursache')?.value).toBe('Animal\\_CanisLupus');
     expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
     expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
   });

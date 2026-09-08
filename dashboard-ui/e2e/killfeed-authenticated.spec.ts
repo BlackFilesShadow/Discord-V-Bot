@@ -151,7 +151,7 @@ test.describe('Authenticated Killfeed & Deathfeed separation', () => {
         channelId: CHANNEL_ID,
         categories: ['PVP'],
         showActorCoords: true,
-        showTargetCoords: true,
+        showTargetCoords: false,
         showTool: true,
         showDistance: true,
         embedColor: '#dc2626',
