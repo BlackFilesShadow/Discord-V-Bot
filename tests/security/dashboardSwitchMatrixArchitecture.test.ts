@@ -116,9 +116,10 @@ describe('stage 25 dashboard switch matrix architecture', () => {
     }
   });
 
-  test('keeps Switch usage restricted to the reviewed stage-25 surface set', () => {
+  test('keeps Switch usage restricted to the reviewed stage-25 surface set plus the reviewed V3 slot shell', () => {
     const reviewed = new Set([
       'dashboard-ui/src/pages/ServerSlot.tsx',
+      'dashboard-ui/src/pages/ServerSlotV3.tsx',
       'dashboard-ui/src/components/LeaveCleanupPanel.tsx',
       'dashboard-ui/src/components/FeedsTab.tsx',
       'dashboard-ui/src/components/EmbedBuilderTab.tsx',
@@ -159,5 +160,14 @@ describe('stage 25 dashboard switch matrix architecture', () => {
     expect(source).toContain('onChange={v => updateSettings.mutate({ whitelistActive: v })}');
     expect(source).toContain('onChange={v => updateSettings.mutate({ economyActive: v })}');
     expect(source).toContain('onChange={v => updateSettings.mutate({ permaOnly: v })}');
+  });
+
+  test('keeps V3 economy and casino toggles explicit and server-scoped', () => {
+    const source = read('dashboard-ui/src/pages/ServerSlotV3.tsx');
+    expect(source).toContain('label="Economy aktiviert"');
+    expect(source).toContain('label="ADM-Rewards aktiviert"');
+    expect(source).toContain('ariaLabel="PvP-Rewards aktiv"');
+    expect(source).toContain('ariaLabel={`Casino ${game.type} aktiv`}');
+    expect(source).toContain('?slot=${encodeURIComponent(slot)}');
   });
 });

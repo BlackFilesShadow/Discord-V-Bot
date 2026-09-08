@@ -38,12 +38,13 @@ describe('Stage 56 dashboard bundle codesplit', () => {
   it('App lazy-loads DEV + heavy routes and avoids catalog icon import in entry', () => {
     expect(app).toContain('lazyPage');
     expect(app).toContain("import('./pages/dev/");
-    expect(app).toContain("import('./pages/ServerSlot')");
+    expect(app).toContain("import('./pages/ServerSlotV3')");
     expect(app).toContain("import('./pages/BotAdmin')");
     expect(app).toContain("import('./pages/Dev')");
     expect(app).toContain('DEV_TOOL_SLUGS');
     expect(app).not.toMatch(/from ['"].*devToolsCatalog['"]/);
     expect(slugs).toContain('bot-status');
+    expect(r('dashboard-ui/src/pages/ServerSlotV3.tsx')).toContain("import LegacyServerSlot from './ServerSlot'");
   });
 
   it('vite manualChunks splits major vendors', () => {

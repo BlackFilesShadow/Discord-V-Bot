@@ -113,7 +113,7 @@ describe('ADM live safe Nitrado ranges', () => {
     );
   });
 
-  it('verwirft eine ignorierte Range fail-closed und verarbeitet die naechste ADM-Datei weiter', async () => {
+  it('verwirft eine ignorierte Range fail-closed und blockiert juengere ADM-Dateien am Chronologie-Fence', async () => {
     cursorFindFirst.mockResolvedValue({ lastModifiedAt: 100, fileName: 'older.ADM' });
     listDir.mockResolvedValue([
       {
@@ -139,25 +139,20 @@ describe('ADM live safe Nitrado ranges', () => {
 
     await runAdmLiveSyncOnce();
 
+    expect(downloadFileRange).toHaveBeenCalledTimes(1);
     expect(downloadFileRange).toHaveBeenCalledWith(
       BINDING.nitradoServerId,
       '/profiles/A-large.ADM',
       0,
       4048,
     );
-    expect(downloadFileRange).toHaveBeenCalledWith(
+    expect(downloadFileRange).not.toHaveBeenCalledWith(
       BINDING.nitradoServerId,
       '/profiles/B-good.ADM',
       0,
       3,
     );
-    expect(persistAdmEvents).toHaveBeenCalledWith(
-      expect.anything(),
-      { guildId: BINDING.guildId, nitradoConnId: BINDING.id },
-      expect.objectContaining({ fileName: 'B-good.ADM' }),
-      expect.objectContaining({ newOffset: 3 }),
-      expect.anything(),
-    );
+    expect(persistAdmEvents).not.toHaveBeenCalled();
     expect(recordSourceError).toHaveBeenCalledWith(
       { id: BINDING.id, guildId: BINDING.guildId },
       expect.stringContaining('A-large.ADM'),

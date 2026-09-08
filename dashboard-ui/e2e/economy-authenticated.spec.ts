@@ -36,18 +36,36 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/config`) {
       if (method === 'PUT') {
         configWrite = req.postDataJSON() as Record<string, unknown>;
+        const playtime = configWrite.playtimeRewardPer10Min ?? 2;
         return json(route, {
           enabled: configWrite.enabled ?? true,
           currencyName: configWrite.currencyName ?? 'Maeuse',
           emoji: configWrite.emoji ?? '🐭',
           startBalance: configWrite.startBalance ?? 500,
-          playtimeRewardPercent: configWrite.playtimeRewardPercent ?? 2,
+          playtimeRewardPer10Min: playtime,
+          playtimeRewardPercent: playtime,
           bankInterestPercent: configWrite.bankInterestPercent ?? 3,
           bankChannelId: configWrite.bankChannelId ?? null,
         });
       }
-      return json(route, { enabled: true, currencyName: 'Maeuse', emoji: '🐭', startBalance: 500, playtimeRewardPercent: 2, bankInterestPercent: 3, bankChannelId: null });
+      return json(route, {
+        enabled: true,
+        currencyName: 'Maeuse',
+        emoji: '🐭',
+        startBalance: 500,
+        playtimeRewardPer10Min: 2,
+        playtimeRewardPercent: 2,
+        bankInterestPercent: 3,
+        bankChannelId: null,
+      });
     }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/rewards`) return json(route, {
+      economyActive: true,
+      admRewardsEnabled: true,
+      timezone: 'Europe/Berlin',
+      pvp: { enabled: true, baseAmount: '100', rewardTarget: 'WALLET', dailyCap: null, cooldownSeconds: 0 },
+      playtime: { enabled: true, baseAmount: '2', rewardTarget: 'WALLET' },
+    });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy-scope/status`) return json(route, {
       required: false,
       state: { status: 'RESOLVED', primaryNitradoConnId: 'conn-economy-1', detectedActiveServerCount: 1, resolvedAt: '2026-08-19T06:00:00.000Z' },
@@ -56,7 +74,7 @@ async function stubAuthenticatedEconomy(page: Page, opts: { purchaseError?: bool
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/overview`) return json(route, {
       economy: { enabled: true, currencyName: 'Maeuse', emoji: '🐭', accounts: 12, links: 9, transactions: 44 },
       bank: { totalWallet: '12500', totalBank: '33000', interestPercent: 3, bankChannelId: null },
-      casino: { gamesConfigured: 4, gamesEnabled: 2, rounds: 8, totalBet: '5000', totalPayout: '4200', houseEdge: '800', stats: [] },
+      casino: { gamesConfigured: 8, gamesEnabled: 6, rounds: 8, totalBet: '5000', totalPayout: '4200', houseEdge: '800', stats: [] },
       recentTransactions: [{ id: 'ledger-1', userDiscordId: OTHER_USER, delta: '750', type: 'GRANT', reason: 'ADM-Reward', createdAt: '2026-08-19T06:10:00.000Z' }],
       coupling: { sharedCurrency: true, sharedBalance: true, directlyBooked: true, sharedModels: [], casinoStatsMovable: false, raceConditionsGuarded: true, centralTransactionService: 'ledger' },
     });
@@ -99,7 +117,8 @@ test.describe('Economy authenticated E2E', () => {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByText('Wirtschaft-Status')).toBeVisible();
-    await expect(page.getByText('Economy-Konfiguration')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Economy-Konfiguration' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Automatische DayZ-Rewards' })).toBeVisible();
     // Lotterie-Pots und Schwarzmarkt-Haendler sind virtuelle Konten und duerfen
     // nicht mehr zusaetzlich im Economy-Bereich doppelt auftauchen.
     await expect(page.getByRole('heading', { name: 'Schwarzmarkt' })).toHaveCount(0);
@@ -108,13 +127,13 @@ test.describe('Economy authenticated E2E', () => {
     await expect(page.getByText('Admin-Auszahlung', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Virtuelle Konten', exact: true, level: 2 })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Bank', exact: true })).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: 'Casino-Games' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toHaveCount(0);
 
-    const currencyInput = page.getByText('Waehrungsname').locator('..').locator('input');
+    const currencyInput = page.getByLabel('Währungsname');
     await currencyInput.fill('Chaoten-Dollar');
-    await page.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.getByRole('button', { name: 'Economy speichern', exact: true }).click();
     await expect.poll(writes.configWrite).not.toBeNull();
-    expect(writes.configWrite()).toMatchObject({ currencyName: 'Chaoten-Dollar', enabled: true, startBalance: 500, playtimeRewardPercent: 2 });
+    expect(writes.configWrite()).toMatchObject({ currencyName: 'Chaoten-Dollar', enabled: true, startBalance: 500, playtimeRewardPer10Min: 2 });
   });
 
   test('Page 2 buendelt Virtuelle Konten inklusive Lotterie und Schwarzmarkt, Bank/Casino bleibt getrennt', async ({ page }) => {
@@ -136,7 +155,7 @@ test.describe('Economy authenticated E2E', () => {
 
     await page.getByRole('button', { name: 'Bank und Casino Funktionen', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Bank', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Casino-Games' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toBeVisible();
     await expect(page.getByText('Admin-Auszahlung', { exact: true })).toHaveCount(0);
   });
 

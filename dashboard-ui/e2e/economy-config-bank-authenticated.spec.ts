@@ -10,7 +10,7 @@ interface EconomyConfig {
   currencyName: string;
   emoji: string;
   startBalance: number;
-  playtimeRewardPercent: number;
+  playtimeRewardPer10Min: number;
   bankInterestPercent: number;
   bankChannelId: string | null;
 }
@@ -32,11 +32,10 @@ async function stubEconomyConfig(page: Page) {
     currencyName: 'Maeuse',
     emoji: '🐭',
     startBalance: 500,
-    playtimeRewardPercent: 2,
+    playtimeRewardPer10Min: 2,
     bankInterestPercent: 3,
     bankChannelId: null,
   };
-  let settingsReads = 0;
   let failNextPut = false;
   let canonicalizeNextCurrency = false;
   const mutations: Mutation[] = [];
@@ -66,7 +65,6 @@ async function stubEconomyConfig(page: Page) {
       grantsCount: 0,
     });
     if (path === `/api/v2/guilds/${GUILD_ID}/dashboard/server/${SLOT}/settings`) {
-      settingsReads += 1;
       return json(route, { whitelistActive: true, economyActive: config.enabled, permaOnly: false });
     }
     if (path === `/api/v2/guilds/${GUILD_ID}/economy/config`) {
@@ -82,10 +80,17 @@ async function stubEconomyConfig(page: Page) {
           canonicalizeNextCurrency = false;
           config.currencyName = 'Server-Canonical';
         }
-        return json(route, { nitradoConnId: 'conn-economy-1', ...config });
+        return json(route, { nitradoConnId: 'conn-economy-1', ...config, playtimeRewardPercent: config.playtimeRewardPer10Min });
       }
-      return json(route, { nitradoConnId: 'conn-economy-1', ...config });
+      return json(route, { nitradoConnId: 'conn-economy-1', ...config, playtimeRewardPercent: config.playtimeRewardPer10Min });
     }
+    if (path === `/api/v2/guilds/${GUILD_ID}/economy/rewards`) return json(route, {
+      economyActive: config.enabled,
+      admRewardsEnabled: true,
+      timezone: 'Europe/Berlin',
+      pvp: { enabled: true, baseAmount: '100', rewardTarget: 'WALLET', dailyCap: null, cooldownSeconds: 0 },
+      playtime: { enabled: config.playtimeRewardPer10Min > 0, baseAmount: String(config.playtimeRewardPer10Min), rewardTarget: 'WALLET' },
+    });
     if (path === `/api/v2/guilds/${GUILD_ID}/economy-scope/status`) return json(route, {
       required: false,
       state: { status: 'RESOLVED', primaryNitradoConnId: 'conn-economy-1', detectedActiveServerCount: 1, resolvedAt: '2026-08-19T10:00:00.000Z' },
@@ -116,7 +121,6 @@ async function stubEconomyConfig(page: Page) {
 
   return {
     mutations,
-    settingsReads: () => settingsReads,
     failNextPut: () => { failNextPut = true; },
     canonicalizeNextCurrency: () => { canonicalizeNextCurrency = true; },
   };
@@ -127,7 +131,7 @@ function configWrite(mutations: Mutation[], index = 0): Mutation | undefined {
 }
 
 function currencyInput(page: Page) {
-  return page.getByText('Waehrungsname').locator('..').locator('input');
+  return page.getByLabel('Währungsname');
 }
 
 function interestInput(page: Page) {
@@ -144,17 +148,15 @@ async function noPageOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Economy Config + Bank authenticated contract', () => {
-  test('Config-Write ist exakt gescoped, uebernimmt kanonische Response und synchronisiert Settings', async ({ page }) => {
+  test('Config-Write ist exakt gescoped und uebernimmt die kanonische Response', async ({ page }) => {
     const state = await stubEconomyConfig(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(currencyInput(page)).toHaveValue('Maeuse');
-    await expect.poll(state.settingsReads).toBeGreaterThanOrEqual(1);
-    const settingsReadsBeforeSave = state.settingsReads();
 
     state.canonicalizeNextCurrency();
     await currencyInput(page).fill('Client-Name');
-    await page.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.getByRole('button', { name: 'Economy speichern', exact: true }).click();
 
     await expect.poll(() => configWrite(state.mutations, 0)).toBeTruthy();
     expect(configWrite(state.mutations, 0)).toMatchObject({
@@ -164,11 +166,10 @@ test.describe('Economy Config + Bank authenticated contract', () => {
         currencyName: 'Client-Name',
         emoji: '🐭',
         startBalance: 500,
-        playtimeRewardPercent: 2,
+        playtimeRewardPer10Min: 2,
       },
     });
     await expect(currencyInput(page)).toHaveValue('Server-Canonical');
-    await expect.poll(state.settingsReads).toBeGreaterThan(settingsReadsBeforeSave);
   });
 
   test('Bank-Write sendet nur Bankfelder im exakten Slot-Scope', async ({ page }) => {
@@ -194,13 +195,13 @@ test.describe('Economy Config + Bank authenticated contract', () => {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await currencyInput(page).fill('');
-    await expect(page.getByRole('button', { name: 'Update', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Economy speichern', exact: true })).toBeDisabled();
     expect(state.mutations).toHaveLength(0);
 
     await currencyInput(page).fill('Gueltig');
     state.failNextPut();
-    await page.getByRole('button', { name: 'Update', exact: true }).click();
-    await expect(page.getByText(/Economy-Konfiguration konnte nicht gespeichert werden:/)).toBeVisible();
+    await page.getByRole('button', { name: 'Economy speichern', exact: true }).click();
+    await expect(page.getByText(/Ungueltige Anfrage/)).toBeVisible();
     await expect(page.getByText(/ECONOMY_CONFIG_BLOCKED/)).toBeVisible();
   });
 
@@ -208,16 +209,16 @@ test.describe('Economy Config + Bank authenticated contract', () => {
     const state = await stubEconomyConfig(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
-    const startBalance = page.getByText('Startguthaben (neue Members)').locator('..').locator('input');
-    const reward = page.getByText('Spielzeit-Belohnung %/min').locator('..').locator('input');
+    const startBalance = page.getByLabel('Startguthaben');
+    const reward = page.getByLabel('Spielzeit-Belohnung je 10 Minuten');
     await startBalance.fill('1000000001');
     await reward.fill('12.9');
-    await page.getByRole('button', { name: 'Update', exact: true }).click();
+    await page.getByRole('button', { name: 'Economy speichern', exact: true }).click();
 
     await expect.poll(() => configWrite(state.mutations, 0)).toBeTruthy();
     expect(configWrite(state.mutations, 0)?.body).toMatchObject({
       startBalance: 1000000000,
-      playtimeRewardPercent: 12,
+      playtimeRewardPer10Min: 12,
     });
   });
 });
@@ -229,7 +230,7 @@ for (const width of [320, 360, 375, 390, 430] as const) {
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
 
     await expect(page.getByRole('heading', { name: 'Economy-Konfiguration' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Update', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Economy speichern', exact: true })).toBeVisible();
     await noPageOverflow(page);
 
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);

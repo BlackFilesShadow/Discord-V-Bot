@@ -8,7 +8,12 @@
 
 import { randomUUID } from 'node:crypto';
 import { config } from '../../config';
-import { bookLedgerEntry, type LedgerClient } from './ledger';
+import {
+  bookLedgerEntry,
+  EconomyLedgerRangeError,
+  POSTGRES_BIGINT_MAX,
+  type LedgerClient,
+} from './ledger';
 import { economySubjectKey } from './subjectKey';
 
 export const MAX_INTEREST_BASIS_POINTS = 10_000;
@@ -177,19 +182,30 @@ export async function runDailyInterestForServer(
     for (const a of accounts) {
       const interest = computeInterestBasisPoints(a.bankBalance, basisPoints);
       if (interest <= 0n) continue;
+      // BankInterestRun.totalCredited is PostgreSQL BIGINT. Never commit an
+      // account credit that would make the durable daily marker impossible to
+      // persist; otherwise a retry could observe booked ledger keys without a
+      // truthful run marker.
+      if (total > POSTGRES_BIGINT_MAX - interest) continue;
+
       const subjectKey = economySubjectKey(args.guildId, a.userDiscordId, config.security.encryptionKey);
-      const result = await bookLedgerEntry(client, {
-        idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${subjectKey}`,
-        guildId: args.guildId,
-        nitradoConnId: args.nitradoConnId,
-        userDiscordId: a.userDiscordId,
-        bankDelta: interest,
-        type: 'INTEREST',
-        reason: 'Bank-Zinsen',
-      });
-      if (result.booked) {
-        credited++;
-        total += interest;
+      try {
+        const result = await bookLedgerEntry(client, {
+          idempotencyKey: `interest:${args.guildId}:${args.nitradoConnId}:${args.runDate}:${subjectKey}`,
+          guildId: args.guildId,
+          nitradoConnId: args.nitradoConnId,
+          userDiscordId: a.userDiscordId,
+          bankDelta: interest,
+          type: 'INTEREST',
+          reason: 'Bank-Zinsen',
+        });
+        if (result.booked) {
+          credited++;
+          total += interest;
+        }
+      } catch (error) {
+        if (error instanceof EconomyLedgerRangeError) continue;
+        throw error;
       }
     }
 

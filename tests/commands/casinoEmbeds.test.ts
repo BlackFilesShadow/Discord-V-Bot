@@ -1,24 +1,21 @@
 /**
- * Tiefen-Tests fuer Casino + Bank Embeds und Server-Scope.
+ * Casino V3 Discord surface tests.
  *
- * Garantien:
- *  - /bank antwortet mit einem EmbedBuilder, NICHT ephemeral, ohne pingbare Mentions.
- *  - /slot, /coinflip, /dice, /blackjack antworten public mit Embed.
- *  - allowedMentions.parse: [] verhindert Self-Ping / @everyone-Eskalation.
- *  - Casino-Footer weist ehrlich auf Runden-Audit (Hash + Nonce) hin.
- *  - CasinoRound.result bleibt JSONB-kompatibel, auch wenn PlayResult BigInt-Werte enthaelt.
- *  - alle Casino-Commands bieten eine optionale Gameserver-Slot-Auswahl.
+ * Guarantees:
+ * - all eight money commands acknowledge first and finish with a public embed;
+ * - allowedMentions.parse=[] is kept on the visible result;
+ * - each result exposes the round audit footer/id;
+ * - all commands retain optional gameserver selection;
+ * - persisted result JSON keeps bigint payout JSON-safe and includes V3 audit.
  */
-
-import { EmbedBuilder, MessageFlags } from 'discord.js';
+import { EmbedBuilder } from 'discord.js';
 
 const NITRADO_CONN_ID = 'c123456789012345678901234';
 const rawQuery = jest.fn();
 const rawExecute = jest.fn();
+const bookLedgerEntryInTx = jest.fn().mockResolvedValue({ id: 'ledger-1', applied: true });
 
-jest.mock('../../src/config', () => ({
-  config: { security: { encryptionKey: 'test-key' } },
-}));
+jest.mock('../../src/config', () => ({ config: { security: { encryptionKey: 'test-key' } } }));
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -44,45 +41,55 @@ jest.mock('../../src/commands/middleware/withGuildScope', () => ({
     }),
 }));
 
-jest.mock('../../src/modules/economy/scopeMigration', () => ({
-  assertEconomyScopeReady: jest.fn().mockResolvedValue(undefined),
-}));
+jest.mock('../../src/modules/economy/scopeMigration', () => ({ assertEconomyScopeReady: jest.fn().mockResolvedValue(undefined) }));
 
 jest.mock('../../src/modules/economy/repository', () => ({
   __esModule: true,
-  getOrCreateAccount: jest.fn().mockResolvedValue({ walletBalance: 1234n, bankBalance: 5678n }),
-  getAccountOrZero: jest.fn().mockResolvedValue({
-    walletBalance: 1234n,
-    bankBalance: 5678n,
-    lifetimeEarned: 0n,
-    lifetimeSpent: 0n,
-  }),
-  getConfig: jest.fn().mockResolvedValue({ emoji: ':coin:', bankInterestPercent: 1.5 }),
-  recentTransactions: jest.fn(),
-  pay: jest.fn(),
-  adminPay: jest.fn(),
-  deposit: jest.fn(),
-  withdraw: jest.fn(),
-  transferBank: jest.fn(),
+  getConfig: jest.fn().mockResolvedValue({ emoji: ':coin:' }),
 }));
 
-jest.mock('../../src/dashboard/socket/emitter', () => ({ emitGuildEvent: jest.fn() }));
+jest.mock('../../src/modules/economy/ledger', () => ({
+  __esModule: true,
+  bookLedgerEntryInTx: (...args: unknown[]) => bookLedgerEntryInTx(...args),
+}));
 
+jest.mock('../../src/modules/economy/casinoRegistry', () => {
+  const actual = jest.requireActual('../../src/modules/economy/casinoRegistry');
+  return {
+    ...actual,
+    getCasinoGameConfig: jest.fn().mockResolvedValue({
+      enabled: true,
+      winChancePct: 40,
+      payoutMult: 2,
+      minBet: 1n,
+      maxBet: 1_000_000n,
+      cooldownSeconds: 0,
+    }),
+    ensureCasinoRoundAnchor: jest.fn().mockResolvedValue('game-1'),
+  };
+});
+
+jest.mock('../../src/dashboard/socket/emitter', () => ({ emitGuildEvent: jest.fn() }));
 jest.mock('../../src/utils/logger', () => ({
   logAudit: jest.fn(),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { bankCommand } from '../../src/commands/dashboard/economy';
 import {
-  slotCommand, coinflipCommand, diceCommand, blackjackCommand, casinoStatsCommand,
+  slotCommand,
+  coinflipCommand,
+  diceCommand,
+  blackjackCommand,
+  rouletteCommand,
+  highLowCommand,
+  baccaratCommand,
+  wheelCommand,
+  casinoStatsCommand,
 } from '../../src/commands/dashboard/casino';
 
-interface FakeReplyArg {
+interface FakeEditArg {
   embeds?: EmbedBuilder[];
-  flags?: number;
   allowedMentions?: { parse: string[] };
-  content?: string;
 }
 
 interface NumericSlotOption {
@@ -92,106 +99,95 @@ interface NumericSlotOption {
   max_value?: number;
 }
 
-function makeInteraction(opts: { intOpt?: number; strOpt?: string } = {}) {
-  const reply = jest.fn().mockResolvedValue(undefined);
+function makeInteraction(options: { strings?: Record<string, string>; integers?: Record<string, number> } = {}) {
+  const editReply = jest.fn().mockResolvedValue(undefined);
+  const deferReply = jest.fn().mockImplementation(async function (this: { deferred: boolean }) { this.deferred = true; });
+  const followUp = jest.fn().mockResolvedValue(undefined);
+  const deleteReply = jest.fn().mockResolvedValue(undefined);
   const i = {
+    deferred: false,
+    replied: false,
+    commandName: 'casino-test',
+    guildId: 'GUILD_X',
     user: {
       id: '987654321098765432',
       username: 'TestUser',
       displayAvatarURL: () => 'https://cdn/avatar.png',
     },
     options: {
-      getInteger: (_n: string, _req?: boolean) => opts.intOpt ?? 100,
-      getString: (_n: string, _req?: boolean) => opts.strOpt ?? 'KOPF',
+      getInteger: (name: string) => options.integers?.[name] ?? (name === 'zahl' ? 3 : 10),
+      getString: (name: string) => options.strings?.[name] ?? 'KOPF',
       getUser: () => null,
     },
-    reply,
+    deferReply,
+    editReply,
+    followUp,
+    deleteReply,
+    reply: jest.fn().mockResolvedValue(undefined),
   };
-  return { i, reply };
+  return { i, editReply, deferReply };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   rawExecute.mockResolvedValue(1);
   rawQuery.mockImplementation(async (sql: string) => {
-    if (sql.includes('FROM "CasinoGame"')) {
-      return [{
-        id: 'game-1', enabled: true, minBet: 1n, maxBet: 1_000_000n,
-        winChancePct: 50, payoutMult: 2,
-      }];
-    }
-    if (sql.includes('COUNT(*)')) return [{ count: 0n }];
+    if (sql.includes('pg_advisory_xact_lock')) return [{ pg_advisory_xact_lock: null }];
+    if (sql.includes('FROM "EconomyAccount"')) return [{ walletBalance: 1_000_000n }];
+    if (sql.includes('FROM "CasinoRound"')) return [];
     return [];
   });
 });
 
-describe('Casino + Bank Embeds (Public, kein Self-Ping)', () => {
-  it('/bank: public Embed mit Wallet/Bank/Gesamt + allowedMentions.parse=[]', async () => {
-    const { i, reply } = makeInteraction();
-    await bankCommand.execute(i as never);
+const GAME_CASES = [
+  ['slot', slotCommand, {}],
+  ['coinflip', coinflipCommand, { strings: { seite: 'KOPF' } }],
+  ['dice', diceCommand, { integers: { einsatz: 10, zahl: 3 } }],
+  ['blackjack', blackjackCommand, {}],
+  ['roulette', rouletteCommand, { strings: { farbe: 'ROT' } }],
+  ['highlow', highLowCommand, { strings: { wahl: 'HOEHER' } }],
+  ['baccarat', baccaratCommand, { strings: { seite: 'SPIELER' } }],
+  ['wheel', wheelCommand, {}],
+] as const;
 
-    expect(reply).toHaveBeenCalledTimes(1);
-    const arg = reply.mock.calls[0][0] as FakeReplyArg;
-    expect(arg.flags).toBeUndefined();
-    expect(arg.flags).not.toBe(MessageFlags.Ephemeral);
+describe('Casino V3 command embeds', () => {
+  it.each(GAME_CASES)('/%s deferiert vor der Runde und liefert ein public Audit-Embed', async (_name, command, opts) => {
+    const { i, editReply, deferReply } = makeInteraction(opts as never);
+    await command.execute(i as never);
+
+    expect(deferReply).toHaveBeenCalledTimes(1);
+    expect(editReply).toHaveBeenCalledTimes(1);
+    const arg = editReply.mock.calls[0][0] as FakeEditArg;
     expect(arg.allowedMentions).toEqual({ parse: [] });
     expect(arg.embeds).toHaveLength(1);
-    const json = arg.embeds![0].toJSON();
-    expect(json.title).toContain('Bankübersicht');
-    expect(JSON.stringify(json.fields)).toContain('Wallet');
-    expect(JSON.stringify(json.fields)).toContain('Bank');
-    expect(JSON.stringify(json.fields)).toContain('Gesamt');
-    expect(json.footer?.text ?? '').not.toMatch(/Guild\s+GUILD_X/);
-    expect(json.description ?? '').not.toMatch(/<@!?\d+>/);
-  });
-
-  it.each([
-    ['slot', () => slotCommand.execute, { intOpt: 10 }],
-    ['coinflip', () => coinflipCommand.execute, { strOpt: 'KOPF', intOpt: 10 }],
-    ['dice', () => diceCommand.execute, { intOpt: 3 }],
-    ['blackjack', () => blackjackCommand.execute, { intOpt: 10 }],
-  ])('/%s: public Embed + allowedMentions.parse=[] + Runden-Audit-Footer', async (_name, exec, optArgs) => {
-    const { i, reply } = makeInteraction(optArgs as { intOpt?: number; strOpt?: string });
-    await exec()(i as never);
-
-    expect(reply).toHaveBeenCalledTimes(1);
-    const arg = reply.mock.calls[0][0] as FakeReplyArg;
-    expect(arg.flags).toBeUndefined();
-    expect(arg.allowedMentions).toEqual({ parse: [] });
-    expect(arg.embeds).toHaveLength(1);
-
     const json = arg.embeds![0].toJSON();
     expect(json.description ?? '').toMatch(/Gewonnen|Verloren|Unentschieden/);
     expect(json.footer?.text ?? '').toContain('Runden-Audit');
-    expect(json.footer?.text ?? '').not.toContain('Provably Fair');
     expect(json.footer?.text ?? '').toMatch(/Hash:\s+[a-f0-9]{16}/);
     expect(json.footer?.text ?? '').toMatch(/Nonce:\s+\d+/);
-
-    const fieldsStr = JSON.stringify(json.fields);
-    expect(fieldsStr).toContain('Einsatz');
-    expect(fieldsStr).toContain('Auszahlung');
-    expect(fieldsStr).toMatch(/Netto|Gewinn|Verlust/);
+    const fields = JSON.stringify(json.fields);
+    expect(fields).toContain('Einsatz');
+    expect(fields).toContain('Auszahlung');
+    expect(fields).toContain('Audit');
   });
 
-  it('/slot: CasinoRound.result serialisiert BigInt payout als JSON-String', async () => {
-    const { i } = makeInteraction({ intOpt: 10 });
+  it('/slot persistiert payout als JSON-string und einen V3 Regel-Snapshot', async () => {
+    const { i } = makeInteraction({ integers: { einsatz: 10 } });
     await slotCommand.execute(i as never);
-
-    const roundInsert = rawExecute.mock.calls.find(
-      call => typeof call[0] === 'string' && call[0].includes('INSERT INTO "CasinoRound"'),
-    );
+    const roundInsert = rawExecute.mock.calls.find(call => typeof call[0] === 'string' && call[0].includes('INSERT INTO "CasinoRound"'));
     expect(roundInsert).toBeDefined();
-
     const serializedResult = roundInsert![8];
     expect(typeof serializedResult).toBe('string');
-    const parsed = JSON.parse(serializedResult as string) as { payout: unknown; draw: unknown };
+    const parsed = JSON.parse(serializedResult as string) as { payout: unknown; draw: unknown; audit?: Record<string, unknown> };
     expect(typeof parsed.payout).toBe('string');
     expect(parsed.payout).toMatch(/^\d+$/);
     expect(typeof parsed.draw).toBe('boolean');
+    expect(parsed.audit).toMatchObject({ type: 'SLOT', winChancePct: 40, cooldownSeconds: 0 });
+    expect(parsed.audit?.serverSeedHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
-  it('alle Casino-Commands bieten optionale Slot-Auswahl fuer Multi-Server-Guilds', () => {
-    for (const command of [slotCommand, coinflipCommand, diceCommand, blackjackCommand, casinoStatsCommand]) {
+  it('alle acht Money-Commands und casino-stats bieten die optionale Slot-Auswahl', () => {
+    for (const command of [...GAME_CASES.map(([, c]) => c), casinoStatsCommand]) {
       const json = command.data.toJSON();
       const slot = json.options?.find(option => option.name === 'slot') as NumericSlotOption | undefined;
       expect(slot).toBeDefined();

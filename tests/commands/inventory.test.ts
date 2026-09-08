@@ -116,9 +116,10 @@ describe('buildInventory summary', () => {
     expect(summary.remove).toBe(1);
     expect(summary.keep).toBe(3);
     // ping/admin-stats/dev-eval are migrated and autorole is removed; poll + slot remain.
+    // Both remaining commands also have intentional dashboard surfaces now.
     expect(summary.targetDiscord).toBe(2);
     expect(summary.movedToDashboard).toBe(3);
-    expect(summary.dashboardExtra).toBe(4);
+    expect(summary.dashboardExtra).toBe(5);
     expect(entries).toHaveLength(6);
   });
 

@@ -31,6 +31,7 @@ import { nitradoRouter } from './v2/nitrado';
 import { nitradoDriftRouter } from './v2/nitradoDrift';
 import { admSourceRouter } from './v2/admSource';
 import { economyRouter } from './v2/economy';
+import { economyRewardsRouter } from './v2/economyRewards';
 import { economyVirtualAccountTerminalDeletionRouter } from './v2/economyVirtualAccountTerminalDeletion';
 import { economyVirtualAccountTreasurySafetyRouter } from './v2/economyVirtualAccountTreasurySafety';
 import { economyVirtualAccountControlRouter } from './v2/economyVirtualAccountControl';
@@ -115,6 +116,9 @@ v2Router.use(
 );
 v2Router.use('/guilds/:guildId/economy/lottery', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyLotteryRouter);
 v2Router.use('/guilds/:guildId/economy/black-market', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyBlackMarketRouter);
+// Canonical ADM reward workflow sits before the general economy router so the
+// existing master gate and per-rule anti-farm settings are actually operable.
+v2Router.use('/guilds/:guildId/economy/rewards', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRewardsRouter);
 v2Router.use('/guilds/:guildId/economy', requireEconomyDashboardAccess, requireSafeDashboardEconomyScope, economyRouter);
 v2Router.use('/guilds/:guildId/economy-links', economyLinkRouter);
 v2Router.use('/guilds/:guildId/casino', requireCasinoDashboardAccess, requireSafeDashboardEconomyScope, casinoRouter);

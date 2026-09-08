@@ -1,20 +1,30 @@
 /**
  * Economy: Config + Accounts + Transactions — immer Guild+Gameserver-gescopt.
- * Der vorgeschaltete requireSafeDashboardEconomyScope setzt
- * req.guildScope.nitradoConnId nach Guild/Slot/Status-Pruefung.
  *
- * Kanonische Aktivierung ist ServerSettings.economyActive. Die historischen
- * EconomyConfig.enabled/EconomySlotConfig.enabled werden kompatibel synchron
- * gehalten, sind aber keine zweite Dashboard-Wahrheit mehr.
+ * Kanonische Aktivierung ist ServerSettings.economyActive. Legacy-Mirror bleiben
+ * kompatibel, aber die sichtbare Spielzeit-Belohnung schreibt seit V3 direkt die
+ * produktive EconomyRewardRule `playtime:default` statt eines toten Prozentfelds.
  */
 import { Router } from 'express';
 import prisma from '../../../database/prisma';
 import { requireGuildPermission } from '../../middleware/auth';
+import { getConfig, getAccountOrZero, recentTransactions } from '../../../modules/economy/repository';
 import {
-  getConfig, getAccountOrZero, recentTransactions,
-} from '../../../modules/economy/repository';
-import { getInterestBasisPoints, interestBasisPointsToPercent, parseInterestPercent, setInterestBasisPoints } from '../../../modules/economy/interestRate';
+  getInterestBasisPoints,
+  interestBasisPointsToPercent,
+  parseInterestPercent,
+  setInterestBasisPoints,
+} from '../../../modules/economy/interestRate';
 import { applyDashboardAdminPay } from '../../../modules/economy/dashboardAdminPay';
+import {
+  isCasinoGameKey,
+  listCasinoGameConfigs,
+  type CasinoGameKey,
+} from '../../../modules/economy/casinoRegistry';
+import {
+  CASINO_ALGORITHM_VERSION,
+  LEGACY_CASINO_ALGORITHM_VERSION,
+} from '../../../modules/economy/casinoRules';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
@@ -22,6 +32,8 @@ import { emitGuildEvent } from '../../socket/emitter';
 export const economyRouter = Router({ mergeParams: true });
 const ECONOMY_DELTA_MAX = 1_000_000_000_000_000n;
 const ECONOMY_DELTA_MIN = -ECONOMY_DELTA_MAX;
+const PLAYTIME_REWARD_MAX = 1_000_000_000_000_000;
+const LEGACY_CASINO_TYPES = new Set<CasinoGameKey>(['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK']);
 
 type RawDb = { $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T> };
 const rawDb = prisma as unknown as RawDb;
@@ -32,6 +44,12 @@ function scoped(req: Parameters<Parameters<typeof economyRouter.get>[1]>[0]) {
   return { scope, connId: scope.nitradoConnId };
 }
 
+function auditedCasinoTypeIsValid(type: string | null, algorithmVersion: string | null): type is CasinoGameKey {
+  if (!type || !isCasinoGameKey(type)) return false;
+  if (algorithmVersion === CASINO_ALGORITHM_VERSION) return true;
+  return algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && LEGACY_CASINO_TYPES.has(type);
+}
+
 async function economyEnabled(guildId: string, nitradoConnId: string): Promise<boolean> {
   const settings = await prisma.serverSettings.findUnique({
     where: { guildId_nitradoConnId: { guildId, nitradoConnId } },
@@ -40,14 +58,33 @@ async function economyEnabled(guildId: string, nitradoConnId: string): Promise<b
   return settings?.economyActive ?? false;
 }
 
-function configPayload(connId: string, cfg: Awaited<ReturnType<typeof getConfig>>, enabled: boolean, interestBasisPoints: number) {
+async function playtimeRewardAmount(guildId: string, nitradoConnId: string): Promise<number> {
+  const rule = await prisma.economyRewardRule.findUnique({
+    where: { guildId_nitradoConnId_ruleKey: { guildId, nitradoConnId, ruleKey: 'playtime:default' } },
+    select: { enabled: true, baseAmount: true },
+  });
+  if (!rule?.enabled || rule.baseAmount <= 0n) return 0;
+  const safe = rule.baseAmount > BigInt(PLAYTIME_REWARD_MAX) ? BigInt(PLAYTIME_REWARD_MAX) : rule.baseAmount;
+  return Number(safe);
+}
+
+function configPayload(
+  connId: string,
+  cfg: Awaited<ReturnType<typeof getConfig>>,
+  enabled: boolean,
+  interestBasisPoints: number,
+  playtimePer10Min: number,
+) {
   return {
     nitradoConnId: connId,
     currencyName: cfg.currencyName,
     emoji: cfg.emoji,
     enabled,
     startBalance: cfg.startBalance,
-    playtimeRewardPercent: cfg.playtimeRewardPercent,
+    // New canonical field. The old name is kept as a value-compatible alias for
+    // rolling clients; both now describe an amount per complete 10-minute bucket.
+    playtimeRewardPer10Min: playtimePer10Min,
+    playtimeRewardPercent: playtimePer10Min,
     bankInterestPercent: interestBasisPointsToPercent(interestBasisPoints),
     bankInterestBasisPoints: interestBasisPoints,
     bankChannelId: cfg.bankChannelId,
@@ -56,21 +93,27 @@ function configPayload(connId: string, cfg: Awaited<ReturnType<typeof getConfig>
 
 economyRouter.get('/config', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
-  const [cfg, enabled, interestBasisPoints] = await Promise.all([
+  const [cfg, enabled, interestBasisPoints, playtimePer10Min] = await Promise.all([
     getConfig(scope.guildId, connId),
     economyEnabled(scope.guildId, connId),
     getInterestBasisPoints(scope.guildId, connId),
+    playtimeRewardAmount(scope.guildId, connId),
   ]);
-  res.json(configPayload(connId, cfg, enabled, interestBasisPoints));
+  res.json(configPayload(connId, cfg, enabled, interestBasisPoints, playtimePer10Min));
 });
 
 economyRouter.put('/config', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const b = req.body ?? {};
-  const [current, currentEnabled, currentInterestBasisPoints] = await Promise.all([
+  const [current, currentEnabled, currentInterestBasisPoints, currentPlaytimePer10Min, currentPlaytimeRule] = await Promise.all([
     getConfig(scope.guildId, connId),
     economyEnabled(scope.guildId, connId),
     getInterestBasisPoints(scope.guildId, connId),
+    playtimeRewardAmount(scope.guildId, connId),
+    prisma.economyRewardRule.findUnique({
+      where: { guildId_nitradoConnId_ruleKey: { guildId: scope.guildId, nitradoConnId: connId, ruleKey: 'playtime:default' } },
+      select: { rewardTarget: true, dailyCap: true, cooldownSeconds: true },
+    }),
   ]);
 
   const patch: Record<string, unknown> = {};
@@ -78,7 +121,15 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
   if (typeof b.emoji === 'string' && b.emoji.length >= 1 && b.emoji.length <= 40) patch.emoji = b.emoji;
   if (typeof b.enabled === 'boolean') patch.enabled = b.enabled;
   if (typeof b.startBalance === 'number' && Number.isInteger(b.startBalance) && b.startBalance >= 0 && b.startBalance <= 1_000_000_000) patch.startBalance = b.startBalance;
-  if (typeof b.playtimeRewardPercent === 'number' && Number.isInteger(b.playtimeRewardPercent) && b.playtimeRewardPercent >= 0 && b.playtimeRewardPercent <= 1000) patch.playtimeRewardPercent = b.playtimeRewardPercent;
+
+  const requestedPlaytime = b.playtimeRewardPer10Min ?? b.playtimeRewardPercent;
+  if (requestedPlaytime !== undefined) {
+    if (typeof requestedPlaytime !== 'number' || !Number.isInteger(requestedPlaytime) || requestedPlaytime < 0 || requestedPlaytime > PLAYTIME_REWARD_MAX) {
+      res.status(400).json({ error: `playtimeRewardPer10Min muss eine ganze Zahl von 0 bis ${PLAYTIME_REWARD_MAX} sein.` });
+      return;
+    }
+    patch.playtimeRewardPer10Min = requestedPlaytime;
+  }
   if (Object.prototype.hasOwnProperty.call(b, 'bankInterestPercent')) {
     try { patch.bankInterestBasisPoints = parseInterestPercent(b.bankInterestPercent); }
     catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
@@ -90,12 +141,12 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
   }
 
   const interestBasisPoints = (patch.bankInterestBasisPoints as number | undefined) ?? currentInterestBasisPoints;
+  const playtimePer10Min = (patch.playtimeRewardPer10Min as number | undefined) ?? currentPlaytimePer10Min;
   const merged = {
     currencyName: (patch.currencyName as string | undefined) ?? current.currencyName,
     emoji: (patch.emoji as string | undefined) ?? current.emoji,
     enabled: (patch.enabled as boolean | undefined) ?? currentEnabled,
     startBalance: (patch.startBalance as number | undefined) ?? current.startBalance,
-    playtimeRewardPercent: (patch.playtimeRewardPercent as number | undefined) ?? current.playtimeRewardPercent,
     bankChannelId: Object.prototype.hasOwnProperty.call(patch, 'bankChannelId')
       ? (patch.bankChannelId as string | null)
       : current.bankChannelId,
@@ -111,7 +162,8 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
         emoji: merged.emoji,
         enabled: merged.enabled,
         startBalance: merged.startBalance,
-        playtimeRewardPercent: merged.playtimeRewardPercent,
+        // Compatibility mirror only; runtime reads EconomyRewardRule.
+        playtimeRewardPercent: playtimePer10Min,
         bankInterestPercent: Math.floor(interestBasisPoints / 100),
         bankChannelId: merged.bankChannelId,
       },
@@ -120,7 +172,7 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
         emoji: merged.emoji,
         enabled: merged.enabled,
         startBalance: merged.startBalance,
-        playtimeRewardPercent: merged.playtimeRewardPercent,
+        playtimeRewardPercent: playtimePer10Min,
         bankInterestPercent: Math.floor(interestBasisPoints / 100),
         bankChannelId: merged.bankChannelId,
       },
@@ -131,16 +183,37 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
       create: { guildId: scope.guildId, nitradoConnId: connId, economyActive: merged.enabled },
       update: { economyActive: merged.enabled },
     });
-    await tx.economySlotConfig.upsert({
+    const slotCfg = await tx.economySlotConfig.upsert({
       where: { guildId_nitradoConnId: { guildId: scope.guildId, nitradoConnId: connId } },
       create: { guildId: scope.guildId, nitradoConnId: connId, enabled: merged.enabled },
       update: { enabled: merged.enabled },
     });
+
+    if (Object.prototype.hasOwnProperty.call(patch, 'playtimeRewardPer10Min')) {
+      await tx.economyRewardRule.upsert({
+        where: { guildId_nitradoConnId_ruleKey: { guildId: scope.guildId, nitradoConnId: connId, ruleKey: 'playtime:default' } },
+        create: {
+          guildId: scope.guildId,
+          nitradoConnId: connId,
+          ruleKey: 'playtime:default',
+          enabled: playtimePer10Min > 0,
+          baseAmount: BigInt(playtimePer10Min),
+          rewardTarget: currentPlaytimeRule?.rewardTarget ?? slotCfg.rewardTarget,
+          dailyCap: currentPlaytimeRule?.dailyCap ?? null,
+          cooldownSeconds: currentPlaytimeRule?.cooldownSeconds ?? 0,
+        },
+        update: {
+          enabled: playtimePer10Min > 0,
+          baseAmount: BigInt(playtimePer10Min),
+        },
+      });
+    }
   });
 
-  const [cfg, savedInterestBasisPoints] = await Promise.all([
+  const [cfg, savedInterestBasisPoints, savedPlaytimePer10Min] = await Promise.all([
     getConfig(scope.guildId, connId),
     getInterestBasisPoints(scope.guildId, connId),
+    playtimeRewardAmount(scope.guildId, connId),
   ]);
   logAuditDb('ECONOMY_CONFIG_UPDATED', 'ECONOMY', {
     actorUserId: req.auth!.userId,
@@ -148,7 +221,7 @@ economyRouter.put('/config', requireGuildPermission('economy.manage'), async (re
     details: { nitradoConnId: connId, fields: Object.keys(patch), canonicalActivation: 'ServerSettings.economyActive' },
   });
   emitGuildEvent(scope.guildId, { type: 'settings.changed', payload: { guildId: scope.guildId, slotId: connId } });
-  res.json(configPayload(connId, cfg, merged.enabled, savedInterestBasisPoints));
+  res.json(configPayload(connId, cfg, merged.enabled, savedInterestBasisPoints, savedPlaytimePer10Min));
 });
 
 economyRouter.get('/accounts/:userDiscordId', requireGuildPermission('economy.view'), async (req, res) => {
@@ -216,14 +289,32 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
 
 interface OverviewAggregate { wallet: bigint | null; bank: bigint | null; count: bigint }
 interface OverviewTx { id: string; userDiscordId: string; delta: bigint; type: string; reason: string | null; createdAt: Date }
-interface OverviewCasinoAggregate { type: string; rounds: bigint; wins: bigint; draws: bigint; bet: bigint; payout: bigint }
-interface OverviewCasinoGame { type: string; enabled: boolean }
+interface OverviewCasinoAggregate {
+  type: string | null;
+  algorithmVersion: string | null;
+  hasAudit: boolean;
+  rounds: bigint;
+  wins: bigint;
+  draws: bigint;
+  bet: bigint;
+  payout: bigint;
+}
 
 /** GET /overview — ausschliesslich fuer den validierten Gameserver. */
 economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
   const { scope, connId } = scoped(req);
   const guildId = scope.guildId;
-  const [cfg, interestBasisPoints, enabled, accountAggRows, linkCountRows, txCountRows, recentTx, casinoStats, casinoGames] = await Promise.all([
+  const [
+    cfg,
+    interestBasisPoints,
+    enabled,
+    accountAggRows,
+    linkCountRows,
+    txCountRows,
+    recentTx,
+    casinoStats,
+    casinoGames,
+  ] = await Promise.all([
     getConfig(guildId, connId),
     getInterestBasisPoints(guildId, connId),
     economyEnabled(guildId, connId),
@@ -240,7 +331,9 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
       'SELECT "id", "userDiscordId", "delta", "type"::text AS type, "reason", "createdAt" FROM "EconomyTransaction" WHERE "guildId"=$1 AND "nitradoConnId"=$2 ORDER BY "createdAt" DESC LIMIT 10',
       String(guildId), String(connId)),
     rawDb.$queryRawUnsafe<OverviewCasinoAggregate[]>(
-      `SELECT g."type"::text AS "type",
+      `SELECT CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END AS "type",
+              CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END AS "algorithmVersion",
+              (r."result" ? 'audit') AS "hasAudit",
               COUNT(*)::bigint AS "rounds",
               COUNT(*) FILTER (WHERE r."result"->>'draw' = 'true')::bigint AS "draws",
               COUNT(*) FILTER (
@@ -255,16 +348,23 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
           AND g."guildId" = r."guildId"
           AND g."nitradoConnId" = r."nitradoConnId"
         WHERE r."guildId"=$1 AND r."nitradoConnId"=$2
-        GROUP BY g."type"`,
+        GROUP BY CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END,
+                 CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END,
+                 (r."result" ? 'audit')`,
       String(guildId), String(connId)),
-    rawDb.$queryRawUnsafe<OverviewCasinoGame[]>(
-      'SELECT "type"::text AS type, "enabled" FROM "CasinoGame" WHERE "guildId"=$1 AND "nitradoConnId"=$2',
-      String(guildId), String(connId)),
+    listCasinoGameConfigs(guildId, connId),
   ]);
 
+  // Global totals intentionally include malformed historical rows, but per-game
+  // statistics never assign an invalid audit to its compatibility anchor.
   const casinoRounds = casinoStats.reduce((sum, row) => sum + row.rounds, 0n);
   const casinoTotalBet = casinoStats.reduce((sum, row) => sum + row.bet, 0n);
   const casinoTotalPayout = casinoStats.reduce((sum, row) => sum + row.payout, 0n);
+  const classifiedCasinoStats = casinoStats.filter(row => (
+    row.hasAudit
+      ? auditedCasinoTypeIsValid(row.type, row.algorithmVersion)
+      : !!row.type && isCasinoGameKey(row.type)
+  ));
   const accAgg = accountAggRows[0] ?? { wallet: 0n, bank: 0n, count: 0n };
 
   res.json({
@@ -286,33 +386,37 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
     },
     casino: {
       gamesConfigured: casinoGames.length,
-      gamesEnabled: casinoGames.filter(g => g.enabled).length,
+      gamesEnabled: casinoGames.filter(g => g.config.enabled).length,
       rounds: Number(casinoRounds),
       totalBet: casinoTotalBet.toString(),
       totalPayout: casinoTotalPayout.toString(),
       houseEdge: (casinoTotalBet - casinoTotalPayout).toString(),
-      stats: casinoStats.map(b => ({
-        type: b.type,
-        rounds: Number(b.rounds),
-        wins: Number(b.wins),
-        draws: Number(b.draws),
-        losses: Number(b.rounds - b.wins - b.draws),
-        bet: b.bet.toString(),
-        payout: b.payout.toString(),
+      stats: classifiedCasinoStats.map(row => ({
+        type: row.type!,
+        rounds: Number(row.rounds),
+        wins: Number(row.wins),
+        draws: Number(row.draws),
+        losses: Number(row.rounds - row.wins - row.draws),
+        bet: row.bet.toString(),
+        payout: row.payout.toString(),
       })),
     },
     recentTransactions: recentTx.map(t => ({
-      id: t.id, userDiscordId: t.userDiscordId, delta: t.delta.toString(),
-      type: t.type, reason: t.reason, createdAt: t.createdAt,
+      id: t.id,
+      userDiscordId: t.userDiscordId,
+      delta: t.delta.toString(),
+      type: t.type,
+      reason: t.reason,
+      createdAt: t.createdAt,
     })),
     coupling: {
       sharedCurrency: true,
       sharedBalance: true,
-      directlyBooked: true,
-      sharedModels: ['EconomyAccount', 'EconomyTransaction'],
+      directlyBooked: false,
+      sharedModels: ['EconomyAccount', 'EconomyLedgerEntry', 'EconomyTransaction', 'CasinoRound'],
       casinoStatsMovable: true,
       raceConditionsGuarded: true,
-      centralTransactionService: 'src/modules/economy/repository.ts',
+      centralTransactionService: 'src/modules/economy/ledger.ts',
     },
   });
 });

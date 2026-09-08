@@ -59,6 +59,7 @@ const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
 const CURRENT_ADM_TIME_ZONE_CARD = 'dashboard-ui/src/components/AdmTimeZoneCard.tsx';
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_SERVER_SLOT = 'dashboard-ui/src/pages/ServerSlot.tsx';
+const CURRENT_SERVER_SLOT_V3 = 'dashboard-ui/src/pages/ServerSlotV3.tsx';
 const CURRENT_FUNCTION_HELP_BUTTON = 'dashboard-ui/src/components/ui/FunctionHelpButton.tsx';
 const CURRENT_RADAR_TAB = 'dashboard-ui/src/components/radar/ZoneRadarTab.tsx';
 const CURRENT_RADAR_EDITOR = 'dashboard-ui/src/components/radar/ZoneEditor.tsx';
@@ -74,6 +75,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_ADM_TIME_ZONE_CARD,
   CURRENT_GOODBYE_PANEL,
   CURRENT_SERVER_SLOT,
+  CURRENT_SERVER_SLOT_V3,
   CURRENT_FUNCTION_HELP_BUTTON,
   CURRENT_RADAR_TAB,
   CURRENT_RADAR_EDITOR,
@@ -235,6 +237,7 @@ describe('stage 24 dashboard button matrix architecture', () => {
       || button.file === CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       || button.file === CURRENT_RADAR_TAB
       || button.file === CURRENT_RADAR_EDITOR
+      || button.file === CURRENT_SERVER_SLOT_V3
       || (button.file === CURRENT_SERVER_SLOT && button.component === 'ServerSlot')
     ));
     expect(reviewed.length).toBeGreaterThan(10);
@@ -245,10 +248,14 @@ describe('stage 24 dashboard button matrix architecture', () => {
     }
 
     const directEconomyActions = reviewed.filter(button => (
-      button.file !== CURRENT_SERVER_SLOT && /\.mutate\(|\.refetch\(/.test(button.handler)
+      button.file !== CURRENT_SERVER_SLOT && button.file !== CURRENT_SERVER_SLOT_V3 && /\.mutate\(|\.refetch\(/.test(button.handler)
     ));
     expect(directEconomyActions.length).toBeGreaterThan(0);
     expect(directEconomyActions.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
+
+    const v3ActionButtons = reviewed.filter(button => button.file === CURRENT_SERVER_SLOT_V3 && button.tag === 'Button');
+    expect(v3ActionButtons.length).toBe(4);
+    expect(v3ActionButtons.every(button => button.hasDisabledGuard || button.hasLoadingGuard)).toBe(true);
   });
 
   test('reviewed drift controls stay explicit, named and guarded while historical evidence remains immutable', () => {

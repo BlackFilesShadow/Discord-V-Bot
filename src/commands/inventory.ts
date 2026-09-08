@@ -17,6 +17,7 @@ export interface CommandClassification {
 
 export const DASHBOARD_EXTRA = new Set<string>([
   'giveaway', 'poll', 'ticket', 'factions', 'balance', 'bank', 'pay', 'transfer', 'virtual-account', 'lottery', 'black-market',
+  'slot', 'coinflip', 'dice', 'blackjack', 'roulette', 'highlow', 'baccarat', 'wheel', 'casino-stats', 'casino-verify',
 ]);
 
 const ADMIN_EXTRA_NAMES = new Set<string>([
@@ -49,11 +50,12 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
 export const SPEC_KEEP_COMMANDS = new Set<string>([
   'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download', 'upload',
   'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll',
-  'search', 'ticket', 'balance', 'bank', 'blackjack', 'coinflip', 'deposit',
-  'dice', 'factions', 'join', 'leave',
+  'search', 'ticket', 'balance', 'bank',
+  'blackjack', 'coinflip', 'dice', 'slot', 'roulette', 'highlow', 'baccarat', 'wheel',
+  'deposit', 'factions', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info', 'link-panel',
   'force-link', 'force-unlink', 'confirm-action',
-  'pay', 'slot', 'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
+  'pay', 'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
   'whitelist-antrag', 'whitelist-add', 'whitelist-remove',
   'perm-add', 'perm-remove', 'perms',
   'server-ban', 'server-unban',

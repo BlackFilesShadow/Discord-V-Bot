@@ -50,9 +50,6 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
       );
     }
   } catch (error) {
-    // Ein historischer Backfill darf den Live-Postprocess nicht blockieren. Die
-    // alte parserVersion bleibt bei Fehlern bestehen und wird im naechsten Lauf
-    // erneut idempotent versucht.
     logger.warn(`ADM-Postprocess: Parser-Backfill fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
 
@@ -62,11 +59,6 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
     logger.warn(`ADM-Postprocess: PlayerSession-Aggregation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
 
-  // Admin-Force-Links duerfen bereits vor dem ersten ADM-Treffer existieren.
-  // Sobald der exakte Name auf diesem Gameserver eindeutig einer GUID zugeordnet
-  // werden kann, wird die echte HMAC gebunden. Economy-Hooks sind idempotent und
-  // werden auch fuer bereits gebundene Force-Links erneut sichergestellt, damit
-  // ein Crash zwischen GUID-Commit und Reward-Aktivierung selbstheilend bleibt.
   try {
     const reconciled = await reconcileAdminForcedLinks({
       scope: scopeRef,
@@ -89,12 +81,6 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
     logger.warn(`ADM-Postprocess: Admin-Force-Link-Reconciliation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
 
-  // Der normale /link-Pfad persistiert den sicheren Identity-Link und aktiviert
-  // direkt danach den Economy-State. Ein Prozessabbruch genau zwischen diesen
-  // beiden Commits darf den User aber nicht dauerhaft als "verknuepft, jedoch
-  // ohne Rewards" zuruecklassen. Der Reconciler betrachtet deshalb alle
-  // VERIFIED Links dieses Gameservers und repariert ausschliesslich fehlende,
-  // veraltete oder noch nicht fertig ausgewertete Economy-States.
   try {
     const repair = await reconcileVerifiedLinkEconomyEffects(
       scopeRef,
@@ -127,9 +113,8 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
       getRewardRule(prisma as unknown as RewardRuleClient, scopeRef, 'playtime:default'),
     ]);
 
-    // Seit Etappe 1 ist ServerSettings.economyActive die kanonische Wahrheit.
-    // EconomySlotConfig.enabled ist nur noch ein Kompatibilitaets-Mirror und
-    // darf einen abweichenden Runtime-Zustand nicht eigenstaendig aktivieren.
+    // ServerSettings.economyActive remains the canonical economy switch.
+    // admRewardsEnabled deliberately gates all automated ADM-originated money.
     const active = settings?.economyActive === true && slotCfg?.admRewardsEnabled === true;
     const resolveUserAt = (gameId: string, occurredAt: Date | null) => resolveRewardUserAt(
       scopeRef,
@@ -163,19 +148,25 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
       await bookPendingRewards(
         prisma as unknown as RewardBookingClient,
         scopeRef,
-        { rewardTarget: slotCfg.rewardTarget },
+        {
+          // Per-rule target is authoritative. Slot target remains compatibility
+          // fallback for older configurations without an explicit rule.
+          rewardTarget: pvpRule?.rewardTarget ?? slotCfg.rewardTarget,
+          dailyCap: pvpRule?.dailyCap ?? null,
+          cooldownSeconds: pvpRule?.cooldownSeconds ?? 0,
+          timezone: slotCfg.timezone,
+        },
       );
     }
 
-    // Immer ausfuehren: bei deaktivierter Economy/Regel werden vollstaendige
-    // Zeit-Buckets nur als verarbeitet markiert. Damit koennen sie nach einer
-    // spaeteren Aktivierung niemals rueckwirkend ausgezahlt werden.
+    // Always run playtime progress. When payout is disabled, completed buckets
+    // are consumed without money so later activation cannot back-pay history.
     await bookPlaytimeRewards(
       prisma as unknown as PlaytimeBookingClient,
       scopeRef,
       {
         perBucketAmount: effectiveBaseAmount(playtimeRule),
-        rewardTarget: slotCfg?.rewardTarget ?? 'WALLET',
+        rewardTarget: playtimeRule?.rewardTarget ?? slotCfg?.rewardTarget ?? 'WALLET',
         payoutEnabled: active,
       },
       resolvePlaytimeLink,
