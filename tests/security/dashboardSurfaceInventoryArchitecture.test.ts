@@ -247,7 +247,7 @@ describe('stage 23 dashboard surface inventory architecture', () => {
     const incompleteSurfaceIds = inventory.surfaces
       .filter(surface => surface.tests.status !== 'verified' || surface.mobile.status !== 'verified')
       .map(surface => surface.id);
-    expect(incompleteSurfaceIds.every(id => assignedSurfaceIds.has(id)).toBe(true);
+    expect(incompleteSurfaceIds.every(id => assignedSurfaceIds.has(id))).toBe(true);
     for (const surface of inventory.nonUiHttpSurfaces) {
       expect(inventory.serverMounts).toContain(surface.path);
       expect(surface.classification.length).toBeGreaterThan(10);
