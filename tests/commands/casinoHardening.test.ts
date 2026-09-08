@@ -76,13 +76,15 @@ describe('casino V3 hardening contracts', () => {
     expect(casino).not.toContain('const net = result.payout - args.bet');
   });
 
-  it('serializes per-game cooldowns without falling audited V3 rounds back to shared legacy anchors', () => {
+  it('serializes per-game cooldowns without falling audited V3 rounds back to shared or cross-scope legacy anchors', () => {
     const casino = read('src/commands/dashboard/casino.ts');
     expect(casino).toContain('pg_advisory_xact_lock(hashtextextended($1, 0))');
     expect(casino).toContain('config.cooldownSeconds * 1000');
     expect(casino).toContain("WHEN NOT (r.\"result\" ? 'audit') THEN g.\"type\"::text");
     expect(casino).toContain("r.\"result\"->'audit'->>'algorithmVersion' IN ($5, $6)");
     expect(casino).not.toContain("COALESCE(r.\"result\"->'audit'->>'type', g.\"type\"::text)");
+    expect(casino).toContain('AND g."guildId" = r."guildId"');
+    expect(casino).toContain('AND g."nitradoConnId" = r."nitradoConnId"');
     expect(casino).toContain('await i.deferReply()');
     expect(casino).toContain('await i.editReply({');
   });
@@ -123,6 +125,8 @@ describe('casino V3 hardening contracts', () => {
     expect(casinoRoute).not.toContain("COALESCE(r.\"result\"->'audit'->>'type', g.\"type\"::text)");
     expect(casinoRoute).toContain('AND g."guildId" = r."guildId"');
     expect(casinoRoute).toContain('AND g."nitradoConnId" = r."nitradoConnId"');
+    expect(casinoRoute).toContain('select: { type: true, guildId: true, nitradoConnId: true }');
+    expect(casinoRoute).toContain('r.game.guildId === scope.guildId && r.game.nitradoConnId === connId');
     expect(economyRoute).toContain('auditedCasinoTypeIsValid(row.type, row.algorithmVersion)');
     expect(economyRoute).toContain('classifiedCasinoStats');
     expect(economyRoute).not.toContain("COALESCE(r.\"result\"->'audit'->>'type', g.\"type\"::text)");
