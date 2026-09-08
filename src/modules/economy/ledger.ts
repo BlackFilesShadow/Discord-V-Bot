@@ -84,6 +84,19 @@ function accountLockKey(input: LedgerEntryInput): string {
   return `economy-account:${input.guildId}:${input.nitradoConnId}:${input.userDiscordId}`;
 }
 
+async function readAccountRangeRow(tx: LedgerTx, input: LedgerEntryInput): Promise<EconomyAccountRangeRow | null> {
+  const rows = await tx.$queryRawUnsafe!<EconomyAccountRangeRow[]>(
+    `SELECT "walletBalance", "bankBalance", "lifetimeEarned", "lifetimeSpent"
+       FROM "EconomyAccount"
+      WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3
+      FOR UPDATE`,
+    input.guildId,
+    input.nitradoConnId,
+    input.userDiscordId,
+  );
+  return rows[0] ?? null;
+}
+
 async function assertAccountRange(
   tx: LedgerTx,
   input: LedgerEntryInput,
@@ -104,38 +117,34 @@ async function assertAccountRange(
   // locks; those are not treated as a complete database transaction here.
   if (!tx.$queryRawUnsafe || !tx.$executeRawUnsafe) return;
 
-  // FOR UPDATE cannot lock a row that does not exist yet. The account-scoped
-  // advisory lock therefore serializes both first-account creation and later
-  // mutations before the numeric snapshot is read. All central-ledger callers
-  // mutate one scoped account per invocation, so this gives a stable lock order.
-  await tx.$queryRawUnsafe(
-    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
-    accountLockKey(input),
-  );
+  // Existing rows are serialized by their row lock alone. This deliberately
+  // preserves the lock order of callers (for example Casino already locks the
+  // account row before invoking the ledger) and avoids an unnecessary second
+  // lock class for the common path.
+  let current = await readAccountRangeRow(tx, input);
 
-  // Existing account rows are additionally row-locked before the ledger entry
-  // is created. The range decision is therefore part of the same transaction
-  // as the increment and never relies on a PostgreSQL overflow after a write.
-  const rows = await tx.$queryRawUnsafe<EconomyAccountRangeRow[]>(
-    `SELECT "walletBalance", "bankBalance", "lifetimeEarned", "lifetimeSpent"
-       FROM "EconomyAccount"
-      WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3
-      FOR UPDATE`,
-    input.guildId,
-    input.nitradoConnId,
-    input.userDiscordId,
-  );
-  const current = rows[0] ?? {
+  if (!current) {
+    // FOR UPDATE cannot lock a row that does not exist yet. Serialize only this
+    // first-account creation gap with a scoped advisory key, then re-read under
+    // FOR UPDATE in case another creator committed while we were waiting.
+    await tx.$queryRawUnsafe(
+      'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+      accountLockKey(input),
+    );
+    current = await readAccountRangeRow(tx, input);
+  }
+
+  const snapshot = current ?? {
     walletBalance: 0n,
     bankBalance: 0n,
     lifetimeEarned: 0n,
     lifetimeSpent: 0n,
   };
 
-  assertPostgresBigint(current.walletBalance + walletDelta, 'walletBalance');
-  assertPostgresBigint(current.bankBalance + bankDelta, 'bankBalance');
-  assertPostgresBigint(current.lifetimeEarned + earned, 'lifetimeEarned');
-  assertPostgresBigint(current.lifetimeSpent + spent, 'lifetimeSpent');
+  assertPostgresBigint(snapshot.walletBalance + walletDelta, 'walletBalance');
+  assertPostgresBigint(snapshot.bankBalance + bankDelta, 'bankBalance');
+  assertPostgresBigint(snapshot.lifetimeEarned + earned, 'lifetimeEarned');
+  assertPostgresBigint(snapshot.lifetimeSpent + spent, 'lifetimeSpent');
 }
 
 /**
