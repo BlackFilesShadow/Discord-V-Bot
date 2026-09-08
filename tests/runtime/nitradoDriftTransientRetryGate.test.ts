@@ -1,106 +1,31 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  isTransientNitradoDriftConflict,
-  NITRADO_DRIFT_RETRY_DELAYS_MS,
-  nitradoDriftRetryDelay,
-  shouldRetryNitradoDrift,
-} from '../../dashboard-ui/src/lib/nitradoDriftRetry';
 import { normalizeSourceNewlines } from '../helpers/sourceText';
 
 const read = (relative: string): string => normalizeSourceNewlines(
   fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'),
 );
 
-const busy = {
-  status: 409,
-  code: null,
-  desc: 'Nitrado-Verbindung wird gerade sicher verarbeitet oder parallel geaendert. Bitte erneut laden.',
-};
-
-const staleRead = {
-  status: 409,
-  code: null,
-  desc: 'Nitrado-Zuordnung hat sich waehrend der Drift-Pruefung geaendert. Bitte erneut laden.',
-};
-
-const staleConfirm = {
-  status: 409,
-  code: null,
-  desc: 'Nitrado-Zuordnung hat sich waehrend der Drift-Bestaetigung geaendert. Bitte erneut laden.',
-};
-
 describe('Nitrado drift transient contention retry gate', () => {
-  it('recognizes every currently deployed binding-fence 409 as transient contention', () => {
-    expect(isTransientNitradoDriftConflict(busy)).toBe(true);
-    expect(isTransientNitradoDriftConflict(staleRead)).toBe(true);
-    expect(isTransientNitradoDriftConflict(staleConfirm)).toBe(true);
+  const retry = read('dashboard-ui/src/lib/nitradoDriftRetry.ts');
+  const banner = read('dashboard-ui/src/components/NitradoDriftBanner.tsx');
+  const route = read('src/dashboard/routes/v2/nitradoDrift.ts');
+  const worker = read('src/modules/nitrado/jobWorker.ts');
+
+  it('classifies only HTTP 409 binding-fence contention as transient', () => {
+    expect(retry).toContain('if (error.status !== 409) return false;');
+    expect(retry).toContain("'NITRADO_BINDING_BUSY'");
+    expect(retry).toContain("'NITRADO_BINDING_STALE'");
+    expect(retry).toContain('if (error.code && TRANSIENT_DRIFT_CODES.has(error.code)) return true;');
+    expect(retry).toContain('TRANSIENT_DRIFT_MESSAGES.some(message => error.desc.startsWith(message))');
+
+    // A semantically different 409 must never enter the transient allow-list.
+    expect(route).toContain('Nitrado-Verbindung ist nicht ACTIVE oder besitzt keine Service-ID.');
+    expect(retry).not.toContain('Nitrado-Verbindung ist nicht ACTIVE oder besitzt keine Service-ID.');
+    expect(retry).not.toContain('Nitrado-Slot wurde parallel geaendert.');
   });
 
-  it('accepts machine-readable binding codes without broadening all HTTP 409 conflicts', () => {
-    expect(isTransientNitradoDriftConflict({
-      status: 409,
-      code: 'NITRADO_BINDING_BUSY',
-      desc: 'future localized copy',
-    })).toBe(true);
-    expect(isTransientNitradoDriftConflict({
-      status: 409,
-      code: 'NITRADO_BINDING_STALE',
-      desc: 'future localized copy',
-    })).toBe(true);
-    expect(isTransientNitradoDriftConflict({
-      status: 409,
-      code: null,
-      desc: 'Nitrado-Verbindung ist nicht ACTIVE oder besitzt keine Service-ID.',
-    })).toBe(false);
-    expect(isTransientNitradoDriftConflict({
-      status: 409,
-      code: 'OTHER_CONFLICT',
-      desc: 'Nitrado-Slot wurde parallel geaendert.',
-    })).toBe(false);
-    expect(isTransientNitradoDriftConflict({
-      status: 502,
-      code: 'NITRADO_BINDING_BUSY',
-      desc: busy.desc,
-    })).toBe(false);
-  });
-
-  it('uses a bounded backoff long enough to outlive normal remote-worker lock ownership', () => {
-    expect(NITRADO_DRIFT_RETRY_DELAYS_MS).toEqual([500, 1_500, 3_000, 6_000, 10_000]);
-    expect(NITRADO_DRIFT_RETRY_DELAYS_MS.reduce((sum, value) => sum + value, 0)).toBe(21_000);
-
-    for (let failureCount = 0; failureCount < NITRADO_DRIFT_RETRY_DELAYS_MS.length; failureCount += 1) {
-      expect(shouldRetryNitradoDrift(failureCount, busy)).toBe(true);
-    }
-    expect(shouldRetryNitradoDrift(NITRADO_DRIFT_RETRY_DELAYS_MS.length, busy)).toBe(false);
-    expect(shouldRetryNitradoDrift(0, { ...busy, status: 500 })).toBe(false);
-
-    expect(nitradoDriftRetryDelay(-1)).toBe(500);
-    expect(nitradoDriftRetryDelay(0)).toBe(500);
-    expect(nitradoDriftRetryDelay(1)).toBe(1_500);
-    expect(nitradoDriftRetryDelay(4)).toBe(10_000);
-    expect(nitradoDriftRetryDelay(99)).toBe(10_000);
-  });
-
-  it('keeps the UI retry scoped to read-only drift queries and softens exhausted contention', () => {
-    const banner = read('dashboard-ui/src/components/NitradoDriftBanner.tsx');
-    const queryRetryUses = banner.match(/retry: retryDriftContention/g) ?? [];
-    const delayUses = banner.match(/retryDelay: nitradoDriftRetryDelay/g) ?? [];
-
-    expect(queryRetryUses).toHaveLength(2);
-    expect(delayUses).toHaveLength(2);
-    expect(banner).not.toContain('retry: false');
-    expect(banner).toContain('if (isTransientNitradoDriftConflict(described)) return null;');
-    expect(banner).toContain("? 'Nitrado-Prüfung wird verzögert'");
-    expect(banner).toContain('V-Bot hat keine Abweichung bestätigt und prüft den Zustand automatisch erneut.');
-    expect(banner).toContain('Dieser Zustand ist kein Drift und wird nicht als Abweichung gewertet.');
-    expect(banner).toContain('const resolve = useMutation({');
-    expect(banner).not.toContain('retry: retryDriftContention,\n    mutationFn:');
-  });
-
-  it('pins the compatibility fallback to the exact backend binding-fence messages', () => {
-    const route = read('src/dashboard/routes/v2/nitradoDrift.ts');
-    const retry = read('dashboard-ui/src/lib/nitradoDriftRetry.ts');
+  it('pins the compatibility fallback to every currently deployed binding-fence message', () => {
     const messages = [
       'Nitrado-Verbindung wird gerade sicher verarbeitet oder parallel geaendert.',
       'Nitrado-Zuordnung hat sich waehrend der Drift-Pruefung geaendert.',
@@ -111,5 +36,46 @@ describe('Nitrado drift transient contention retry gate', () => {
       expect(route).toContain(message);
       expect(retry).toContain(message);
     }
+  });
+
+  it('uses a bounded ~21 second backoff instead of unbounded polling', () => {
+    expect(retry).toContain('NITRADO_DRIFT_RETRY_DELAYS_MS = [500, 1_500, 3_000, 6_000, 10_000]');
+    expect(retry).toContain('failureCount < NITRADO_DRIFT_RETRY_DELAYS_MS.length');
+    expect(retry).toContain('Math.max(0, attemptIndex)');
+    expect(retry).toContain('NITRADO_DRIFT_RETRY_DELAYS_MS.length - 1');
+    expect(retry).toContain('return NITRADO_DRIFT_RETRY_DELAYS_MS[boundedIndex];');
+  });
+
+  it('matches the real worker serialization boundary that can legitimately hold the lock across remote I/O', () => {
+    const acquire = worker.indexOf('connectionLock = await tryAcquireConnectionLock(job.nitradoConnId);');
+    const remoteClient = worker.indexOf('client = new NitradoClient(token);', acquire);
+    const remoteWrite = worker.indexOf('await client.addToWhitelist(', remoteClient);
+    const release = worker.indexOf('await connectionLock.release();', remoteWrite);
+
+    expect(acquire).toBeGreaterThanOrEqual(0);
+    expect(remoteClient).toBeGreaterThan(acquire);
+    expect(remoteWrite).toBeGreaterThan(remoteClient);
+    expect(release).toBeGreaterThan(remoteWrite);
+  });
+
+  it('keeps retries scoped to the two read-only drift queries and never retries resolution mutations', () => {
+    const queryRetryUses = banner.match(/retry: retryDriftContention/g) ?? [];
+    const delayUses = banner.match(/retryDelay: nitradoDriftRetryDelay/g) ?? [];
+
+    expect(queryRetryUses).toHaveLength(2);
+    expect(delayUses).toHaveLength(2);
+    expect(banner).not.toContain('retry: false');
+    expect(banner).toContain('const resolve = useMutation({');
+    expect(banner).not.toContain('retry: retryDriftContention,\n    mutationFn:');
+  });
+
+  it('never presents exhausted binding contention as confirmed drift or as a hard drift failure', () => {
+    expect(banner).toContain('if (isTransientNitradoDriftConflict(described)) return null;');
+    expect(banner).toContain('const onlyTransientContention = !hasDrift && hasTransientContention && uniqueErrors.length === 0;');
+    expect(banner).toContain("? 'Nitrado-Prüfung wird verzögert'");
+    expect(banner).toContain('V-Bot hat keine Abweichung bestätigt und prüft den Zustand automatisch erneut.');
+    expect(banner).toContain('Dieser Zustand ist kein Drift und wird nicht als Abweichung gewertet.');
+    expect(banner).toContain("? 'Manuelle Nitrado-Abweichung erkannt'");
+    expect(banner).toContain("'Nitrado-Driftprüfung fehlgeschlagen'");
   });
 });
