@@ -11,6 +11,18 @@
  * auf einen Legacy-/Guild-weiten Account zurueckfallen.
  */
 
+export const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+export const POSTGRES_BIGINT_MIN = -9_223_372_036_854_775_808n;
+
+export class EconomyLedgerRangeError extends Error {
+  readonly code = 'ECONOMY_LEDGER_RANGE';
+
+  constructor(field: string) {
+    super(`Economy-Zahlenbereich fuer ${field} ist ausgeschoepft.`);
+    this.name = 'EconomyLedgerRangeError';
+  }
+}
+
 export interface LedgerEntryInput {
   idempotencyKey: string;
   guildId: string;
@@ -31,7 +43,16 @@ export function computeLifetimeDeltas(walletDelta: bigint, bankDelta: bigint): {
   return { earned, spent };
 }
 
+interface EconomyAccountRangeRow {
+  walletBalance: bigint;
+  bankBalance: bigint;
+  lifetimeEarned: bigint;
+  lifetimeSpent: bigint;
+}
+
 export interface LedgerTx {
+  /** Prisma transaction clients expose this; optional keeps narrow unit-test clients valid. */
+  $queryRawUnsafe?: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
   economyLedgerEntry: {
     create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
   };
@@ -52,6 +73,56 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: string }).code === 'P2002';
 }
 
+function assertPostgresBigint(value: bigint, field: string): void {
+  if (value < POSTGRES_BIGINT_MIN || value > POSTGRES_BIGINT_MAX) {
+    throw new EconomyLedgerRangeError(field);
+  }
+}
+
+async function assertAccountRange(
+  tx: LedgerTx,
+  input: LedgerEntryInput,
+  walletDelta: bigint,
+  bankDelta: bigint,
+  earned: bigint,
+  spent: bigint,
+): Promise<void> {
+  // Deltas themselves must be representable even for lightweight test clients
+  // that intentionally do not expose raw SQL.
+  assertPostgresBigint(walletDelta, 'walletDelta');
+  assertPostgresBigint(bankDelta, 'bankDelta');
+  assertPostgresBigint(earned, 'lifetimeEarnedDelta');
+  assertPostgresBigint(spent, 'lifetimeSpentDelta');
+
+  if (!tx.$queryRawUnsafe) return;
+
+  // Existing account rows are locked before the ledger entry is created. This
+  // makes the range decision part of the same transaction as the increment and
+  // avoids relying on PostgreSQL's numeric-overflow exception after a write has
+  // already been attempted. Callers that already locked the same row simply
+  // reacquire their own transaction lock without changing lock order.
+  const rows = await tx.$queryRawUnsafe<EconomyAccountRangeRow[]>(
+    `SELECT "walletBalance", "bankBalance", "lifetimeEarned", "lifetimeSpent"
+       FROM "EconomyAccount"
+      WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3
+      FOR UPDATE`,
+    input.guildId,
+    input.nitradoConnId,
+    input.userDiscordId,
+  );
+  const current = rows[0] ?? {
+    walletBalance: 0n,
+    bankBalance: 0n,
+    lifetimeEarned: 0n,
+    lifetimeSpent: 0n,
+  };
+
+  assertPostgresBigint(current.walletBalance + walletDelta, 'walletBalance');
+  assertPostgresBigint(current.bankBalance + bankDelta, 'bankBalance');
+  assertPostgresBigint(current.lifetimeEarned + earned, 'lifetimeEarned');
+  assertPostgresBigint(current.lifetimeSpent + spent, 'lifetimeSpent');
+}
+
 /**
  * Transaktionsinterne Variante fuer fachliche State-Machines, die Claim + Geld
  * in EINER gemeinsamen DB-Transaktion committen muessen. Der Caller besitzt die
@@ -66,6 +137,8 @@ export async function bookLedgerEntryInTx(
   const walletDelta = input.walletDelta ?? 0n;
   const bankDelta = input.bankDelta ?? 0n;
   const { earned, spent } = computeLifetimeDeltas(walletDelta, bankDelta);
+
+  await assertAccountRange(tx, input, walletDelta, bankDelta, earned, spent);
 
   const entry = await tx.economyLedgerEntry.create({
     data: {
