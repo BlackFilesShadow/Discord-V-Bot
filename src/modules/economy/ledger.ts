@@ -51,8 +51,9 @@ interface EconomyAccountRangeRow {
 }
 
 export interface LedgerTx {
-  /** Prisma transaction clients expose this; optional keeps narrow unit-test clients valid. */
+  /** Full Prisma transaction clients expose both raw primitives. */
   $queryRawUnsafe?: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
+  $executeRawUnsafe?: (query: string, ...values: unknown[]) => Promise<number>;
   economyLedgerEntry: {
     create: (args: { data: Record<string, unknown> }) => Promise<{ id: string }>;
   };
@@ -88,13 +89,16 @@ async function assertAccountRange(
   spent: bigint,
 ): Promise<void> {
   // Deltas themselves must be representable even for lightweight test clients
-  // that intentionally do not expose raw SQL.
+  // that intentionally expose only the narrow ledger interface.
   assertPostgresBigint(walletDelta, 'walletDelta');
   assertPostgresBigint(bankDelta, 'bankDelta');
   assertPostgresBigint(earned, 'lifetimeEarnedDelta');
   assertPostgresBigint(spent, 'lifetimeSpentDelta');
 
-  if (!tx.$queryRawUnsafe) return;
+  // A real Prisma transaction exposes both raw primitives. Some unit-test
+  // clients intentionally expose only $queryRawUnsafe for their own domain
+  // locks; those are not treated as a complete database transaction here.
+  if (!tx.$queryRawUnsafe || !tx.$executeRawUnsafe) return;
 
   // Existing account rows are locked before the ledger entry is created. This
   // makes the range decision part of the same transaction as the increment and
