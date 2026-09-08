@@ -17,6 +17,12 @@ describe('Casino V3 config database scope gate', () => {
     expect(migration).toContain("USING ERRCODE = '23503'");
   });
 
+  it('serializes scoped writes and slot deletion on the same connection key', () => {
+    expect(migration).toContain("hashtextextended('casino-v3-conn:' || NEW.\"nitradoConnId\", 0)");
+    expect(migration).toContain("hashtextextended('casino-v3-conn:' || OLD.\"id\", 0)");
+    expect((migration.match(/pg_advisory_xact_lock/g) ?? [])).toHaveLength(2);
+  });
+
   it('removes only the exact Guild + connection configuration during slot deletion', () => {
     expect(migration).toContain('CREATE OR REPLACE FUNCTION "vbot_delete_casino_v3_config_for_connection"()');
     expect(migration).toContain('WHERE "guildId" = OLD."guildId"');
