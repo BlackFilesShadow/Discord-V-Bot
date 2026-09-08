@@ -343,7 +343,10 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
               COALESCE(SUM(r."bet"), 0)::bigint AS "bet",
               COALESCE(SUM(r."payout"), 0)::bigint AS "payout"
          FROM "CasinoRound" r
-         JOIN "CasinoGame" g ON g."id" = r."gameId"
+         JOIN "CasinoGame" g
+           ON g."id" = r."gameId"
+          AND g."guildId" = r."guildId"
+          AND g."nitradoConnId" = r."nitradoConnId"
         WHERE r."guildId"=$1 AND r."nitradoConnId"=$2
         GROUP BY CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END,
                  CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END,
