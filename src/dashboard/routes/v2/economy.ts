@@ -16,7 +16,15 @@ import {
   setInterestBasisPoints,
 } from '../../../modules/economy/interestRate';
 import { applyDashboardAdminPay } from '../../../modules/economy/dashboardAdminPay';
-import { listCasinoGameConfigs } from '../../../modules/economy/casinoRegistry';
+import {
+  isCasinoGameKey,
+  listCasinoGameConfigs,
+  type CasinoGameKey,
+} from '../../../modules/economy/casinoRegistry';
+import {
+  CASINO_ALGORITHM_VERSION,
+  LEGACY_CASINO_ALGORITHM_VERSION,
+} from '../../../modules/economy/casinoRules';
 import { asUserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
@@ -25,6 +33,7 @@ export const economyRouter = Router({ mergeParams: true });
 const ECONOMY_DELTA_MAX = 1_000_000_000_000_000n;
 const ECONOMY_DELTA_MIN = -ECONOMY_DELTA_MAX;
 const PLAYTIME_REWARD_MAX = 1_000_000_000_000_000;
+const LEGACY_CASINO_TYPES = new Set<CasinoGameKey>(['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK']);
 
 type RawDb = { $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T> };
 const rawDb = prisma as unknown as RawDb;
@@ -33,6 +42,12 @@ function scoped(req: Parameters<Parameters<typeof economyRouter.get>[1]>[0]) {
   const scope = req.guildScope!;
   if (!scope.nitradoConnId) throw new Error('Economy-Gameserver-Scope fehlt.');
   return { scope, connId: scope.nitradoConnId };
+}
+
+function auditedCasinoTypeIsValid(type: string | null, algorithmVersion: string | null): type is CasinoGameKey {
+  if (!type || !isCasinoGameKey(type)) return false;
+  if (algorithmVersion === CASINO_ALGORITHM_VERSION) return true;
+  return algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && LEGACY_CASINO_TYPES.has(type);
 }
 
 async function economyEnabled(guildId: string, nitradoConnId: string): Promise<boolean> {
@@ -274,7 +289,16 @@ economyRouter.post('/accounts/:userDiscordId/admin-pay', requireGuildPermission(
 
 interface OverviewAggregate { wallet: bigint | null; bank: bigint | null; count: bigint }
 interface OverviewTx { id: string; userDiscordId: string; delta: bigint; type: string; reason: string | null; createdAt: Date }
-interface OverviewCasinoAggregate { type: string; rounds: bigint; wins: bigint; draws: bigint; bet: bigint; payout: bigint }
+interface OverviewCasinoAggregate {
+  type: string | null;
+  algorithmVersion: string | null;
+  hasAudit: boolean;
+  rounds: bigint;
+  wins: bigint;
+  draws: bigint;
+  bet: bigint;
+  payout: bigint;
+}
 
 /** GET /overview — ausschliesslich fuer den validierten Gameserver. */
 economyRouter.get('/overview', requireGuildPermission('economy.view'), async (req, res) => {
@@ -307,7 +331,9 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
       'SELECT "id", "userDiscordId", "delta", "type"::text AS type, "reason", "createdAt" FROM "EconomyTransaction" WHERE "guildId"=$1 AND "nitradoConnId"=$2 ORDER BY "createdAt" DESC LIMIT 10',
       String(guildId), String(connId)),
     rawDb.$queryRawUnsafe<OverviewCasinoAggregate[]>(
-      `SELECT COALESCE(r."result"->'audit'->>'type', g."type"::text) AS "type",
+      `SELECT CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END AS "type",
+              CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END AS "algorithmVersion",
+              (r."result" ? 'audit') AS "hasAudit",
               COUNT(*)::bigint AS "rounds",
               COUNT(*) FILTER (WHERE r."result"->>'draw' = 'true')::bigint AS "draws",
               COUNT(*) FILTER (
@@ -319,14 +345,23 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
          FROM "CasinoRound" r
          JOIN "CasinoGame" g ON g."id" = r."gameId"
         WHERE r."guildId"=$1 AND r."nitradoConnId"=$2
-        GROUP BY COALESCE(r."result"->'audit'->>'type', g."type"::text)`,
+        GROUP BY CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END,
+                 CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END,
+                 (r."result" ? 'audit')`,
       String(guildId), String(connId)),
     listCasinoGameConfigs(guildId, connId),
   ]);
 
+  // Global totals intentionally include malformed historical rows, but per-game
+  // statistics never assign an invalid audit to its compatibility anchor.
   const casinoRounds = casinoStats.reduce((sum, row) => sum + row.rounds, 0n);
   const casinoTotalBet = casinoStats.reduce((sum, row) => sum + row.bet, 0n);
   const casinoTotalPayout = casinoStats.reduce((sum, row) => sum + row.payout, 0n);
+  const classifiedCasinoStats = casinoStats.filter(row => (
+    row.hasAudit
+      ? auditedCasinoTypeIsValid(row.type, row.algorithmVersion)
+      : !!row.type && isCasinoGameKey(row.type)
+  ));
   const accAgg = accountAggRows[0] ?? { wallet: 0n, bank: 0n, count: 0n };
 
   res.json({
@@ -353,8 +388,8 @@ economyRouter.get('/overview', requireGuildPermission('economy.view'), async (re
       totalBet: casinoTotalBet.toString(),
       totalPayout: casinoTotalPayout.toString(),
       houseEdge: (casinoTotalBet - casinoTotalPayout).toString(),
-      stats: casinoStats.map(row => ({
-        type: row.type,
+      stats: classifiedCasinoStats.map(row => ({
+        type: row.type!,
         rounds: Number(row.rounds),
         wins: Number(row.wins),
         draws: Number(row.draws),
