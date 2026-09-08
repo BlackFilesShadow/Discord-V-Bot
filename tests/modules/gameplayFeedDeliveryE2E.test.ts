@@ -69,19 +69,19 @@ const GUILD_ID = '111111111111111111';
 const CHANNEL_ID = '222222222222222222';
 const CONN_ID = 'conn-live-1';
 
-function feedConfig() {
+function feedConfig(kind: 'KILL' | 'DEATH' = 'KILL') {
   return {
     id: 'feed-1',
     guildId: GUILD_ID,
     nitradoConnId: CONN_ID,
-    kind: 'DEATH',
+    kind,
     channelId: CHANNEL_ID,
     isActive: true,
-    categories: ['PVP', 'SUICIDE', 'NPC', 'VEHICLE'],
+    categories: kind === 'KILL' ? ['PVP'] : ['SUICIDE', 'NPC', 'VEHICLE', 'OTHER'],
     showActorCoords: true,
-    showTargetCoords: true,
+    showTargetCoords: kind === 'KILL',
     showTool: true,
-    showDistance: true,
+    showDistance: kind === 'KILL',
     embedColor: '#dc2626',
     legacyKillfeedConfigId: null,
     cursorCreatedAt: new Date('2026-08-15T11:59:00.000Z'),
@@ -166,6 +166,24 @@ function pendingDelivery() {
   };
 }
 
+function genericDeath(id = 'generic-death-event-1') {
+  return {
+    id,
+    eventType: 'PLAYER_DIED',
+    occurredAt: new Date('2026-08-15T12:00:10.000Z'),
+    createdAt: new Date('2026-08-15T12:00:12.000Z'),
+    actorGameId: 'player-1',
+    actorName: 'Void__Architect',
+    targetGameId: null,
+    targetName: 'Bled out',
+    objectType: null,
+    toolOrWeapon: null,
+    distanceMeters: null,
+    actorPosition: '3005, 13205, 211.6',
+    targetPosition: null,
+  };
+}
+
 function bindDiscord(channelFetch: jest.Mock) {
   setDashboardClient({
     channels: { fetch: channelFetch },
@@ -186,9 +204,9 @@ beforeEach(() => {
 });
 
 describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
-  it('sendet einen neu gelesenen PvP-Kill im abgestimmten V-Kill-Layout mit Kartenlinks und Serveralias', async () => {
+  it('sendet einen neu gelesenen PvP-Kill ausschliesslich ueber KILL im abgestimmten V-Kill-Layout', async () => {
     const event = await persistedPvpEvent();
-    const config = feedConfig();
+    const config = feedConfig('KILL');
     const delivery = pendingDelivery();
     const send = jest.fn().mockResolvedValue({ id: 'discord-message-1' });
     const channelFetch = jest.fn().mockResolvedValue({
@@ -201,13 +219,16 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
 
     configFind.mockResolvedValue([config]);
     eventFindMany.mockResolvedValue([event]);
-    eventFindFirst.mockResolvedValue(event);
+    eventFindFirst.mockImplementation((args: { where?: { eventType?: unknown } }) => {
+      if (args?.where?.eventType === 'PLAYER_HIT') return null;
+      return event;
+    });
     deliveryFind.mockResolvedValue([delivery]);
 
     await runGameplayFeedsOnce();
 
-    expect(deliveryFind).toHaveBeenCalledWith(expect.objectContaining({ take: 1 }));
-
+    const scan = eventFindMany.mock.calls.find(call => call[0]?.where?.eventType?.in)?.[0];
+    expect(scan?.where?.eventType?.in).toEqual(['PLAYER_KILLED']);
     expect(deliveryCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         configId: config.id,
@@ -232,8 +253,7 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
       expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
     ]));
     const fieldNames = (embed.fields ?? []).map((field: { name: string }) => field.name);
-    expect(fieldNames).not.toContain('Opfer-Position');
-    expect(fieldNames).not.toContain('Killer-Position');
+    expect(fieldNames).not.toContain('Ereigniszeit');
     expect(embed.footer).toBeUndefined();
     expect(embed.timestamp).toBeUndefined();
     const expectedNonce = createHash('sha256')
@@ -259,54 +279,62 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
     }));
   });
 
-  it('nimmt den generischen PLAYER_DIED-Typ nicht mehr in den Discord-Deathfeed-Scan auf', async () => {
-    const config = feedConfig();
-    const suicide = {
-      id: 'suicide-event-1',
-      eventType: 'PLAYER_SUICIDE',
-      occurredAt: new Date('2026-08-15T12:00:10.000Z'),
-      createdAt: new Date('2026-08-15T12:00:11.000Z'),
-      actorGameId: 'player-1',
-      actorName: 'Void__Architect',
-      targetGameId: null,
-      targetName: null,
-      objectType: null,
-      toolOrWeapon: null,
-      distanceMeters: null,
-      actorPosition: '3005, 13205, 211.6',
-      targetPosition: null,
-    };
-    const genericDeath = {
-      ...suicide,
-      id: 'generic-death-event-1',
-      eventType: 'PLAYER_DIED',
-      createdAt: new Date('2026-08-15T12:00:12.000Z'),
-    };
-
+  it('nimmt alle nicht-PvP Todesarten inklusive PLAYER_DIED in den DEATH-Scan auf', async () => {
+    const config = feedConfig('DEATH');
+    const generic = genericDeath();
     configFind.mockResolvedValue([config]);
-    // Der Mock liefert absichtlich mehr als die echte DB-Query. categoryAllowed
-    // muss den retired Typ zusaetzlich fail-closed ablehnen.
-    eventFindMany.mockResolvedValue([suicide, genericDeath]);
+    eventFindMany.mockResolvedValue([generic]);
+    eventFindFirst.mockResolvedValue(null);
 
     await runGameplayFeedsOnce();
 
     const scan = eventFindMany.mock.calls.find(call => call[0]?.where?.eventType?.in)?.[0];
     expect(scan?.where?.eventType?.in).toEqual(expect.arrayContaining([
-      'PLAYER_KILLED', 'PLAYER_SUICIDE', 'NPC_KILL', 'VEHICLE_DEATH',
+      'PLAYER_SUICIDE', 'NPC_KILL', 'VEHICLE_DEATH', 'PLAYER_DIED',
     ]));
-    expect(scan?.where?.eventType?.in).not.toContain('PLAYER_DIED');
+    expect(scan?.where?.eventType?.in).not.toContain('PLAYER_KILLED');
+    expect(deliveryCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ admEventId: generic.id, status: 'PENDING' }),
+    });
+  });
+
+  it('unterdrueckt eine generische PLAYER_DIED-Duplicate-Zeile wenn derselbe Tod spezifisch belegt ist', async () => {
+    const config = feedConfig('DEATH');
+    const suicide = {
+      ...genericDeath('suicide-event-1'),
+      eventType: 'PLAYER_SUICIDE',
+      targetName: null,
+      createdAt: new Date('2026-08-15T12:00:11.000Z'),
+    };
+    const generic = genericDeath();
+
+    configFind.mockResolvedValue([config]);
+    eventFindMany.mockResolvedValue([suicide, generic]);
+    eventFindFirst.mockResolvedValue({ id: suicide.id });
+
+    await runGameplayFeedsOnce();
+
     expect(deliveryCreate).toHaveBeenCalledTimes(1);
     expect(deliveryCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ admEventId: suicide.id, status: 'PENDING' }),
     });
     expect(deliveryCreate).not.toHaveBeenCalledWith({
-      data: expect.objectContaining({ admEventId: genericDeath.id }),
+      data: expect.objectContaining({ admEventId: generic.id }),
     });
+    expect(eventFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        guildId: GUILD_ID,
+        nitradoConnId: CONN_ID,
+        actorGameId: 'player-1',
+        eventType: { in: expect.arrayContaining(['PLAYER_KILLED', 'PLAYER_SUICIDE', 'NPC_KILL', 'VEHICLE_DEATH']) },
+      }),
+      select: { id: true },
+    }));
   });
 
   it('macht einen temporaer nicht erreichbaren Discord-Channel retrybar statt den Kill zu verlieren', async () => {
     const event = await persistedPvpEvent();
-    const config = feedConfig();
+    const config = feedConfig('KILL');
     const delivery = pendingDelivery();
     bindDiscord(jest.fn().mockResolvedValue(null));
 
