@@ -13,7 +13,9 @@ import prisma from '../../../database/prisma';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import {
+  CASINO_ALGORITHM_VERSION,
   CASINO_GAME_TYPES,
+  LEGACY_CASINO_ALGORITHM_VERSION,
   MAX_CASINO_BET,
   assertCasinoEconomySafe,
   theoreticalCasinoRtpPct,
@@ -30,13 +32,16 @@ import {
 
 export const casinoRouter = Router({ mergeParams: true });
 const VALID_TYPES = new Set<string>(CASINO_GAME_TYPES);
+const LEGACY_TYPES = new Set<CasinoGameKey>(['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK']);
 
 type RawDb = {
   $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T>;
 };
 
 interface CasinoStatsAggregate {
-  type: string;
+  type: string | null;
+  algorithmVersion: string | null;
+  hasAudit: boolean;
   rounds: bigint;
   wins: bigint;
   draws: bigint;
@@ -54,12 +59,22 @@ function storedOutcome(result: unknown, payout: bigint): 'win' | 'draw' | 'loss'
   return payout > 0n ? 'win' : 'loss';
 }
 
-function logicalRoundType(result: unknown, legacyType: string): string {
+function auditedTypeIsValid(type: string | null, algorithmVersion: string | null): type is CasinoGameKey {
+  if (!type || !isCasinoGameKey(type)) return false;
+  if (algorithmVersion === CASINO_ALGORITHM_VERSION) return true;
+  return algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && LEGACY_TYPES.has(type);
+}
+
+function logicalRoundType(result: unknown, legacyType: string): string | null {
   if (result && typeof result === 'object' && !Array.isArray(result)) {
-    const audit = (result as Record<string, unknown>).audit;
-    if (audit && typeof audit === 'object' && !Array.isArray(audit)) {
-      const type = (audit as Record<string, unknown>).type;
-      if (typeof type === 'string' && isCasinoGameKey(type)) return type;
+    const row = result as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(row, 'audit')) {
+      const audit = row.audit;
+      if (!audit || typeof audit !== 'object' || Array.isArray(audit)) return null;
+      const auditRow = audit as Record<string, unknown>;
+      const type = typeof auditRow.type === 'string' ? auditRow.type : null;
+      const algorithmVersion = typeof auditRow.algorithmVersion === 'string' ? auditRow.algorithmVersion : null;
+      return auditedTypeIsValid(type, algorithmVersion) ? type : null;
     }
   }
   return legacyType;
@@ -211,7 +226,9 @@ casinoRouter.get('/stats', requireGuildPermission('casino.view'), async (req, re
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId!;
   const rows = await (prisma as unknown as RawDb).$queryRawUnsafe<CasinoStatsAggregate[]>(
-    `SELECT COALESCE(r."result"->'audit'->>'type', g."type"::text) AS "type",
+    `SELECT CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END AS "type",
+            CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END AS "algorithmVersion",
+            (r."result" ? 'audit') AS "hasAudit",
             COUNT(*)::bigint AS "rounds",
             COUNT(*) FILTER (WHERE r."result"->>'draw' = 'true')::bigint AS "draws",
             COUNT(*) FILTER (
@@ -223,15 +240,17 @@ casinoRouter.get('/stats', requireGuildPermission('casino.view'), async (req, re
        FROM "CasinoRound" r
        JOIN "CasinoGame" g ON g."id" = r."gameId"
       WHERE r."guildId" = $1 AND r."nitradoConnId" = $2
-      GROUP BY COALESCE(r."result"->'audit'->>'type', g."type"::text)`,
+      GROUP BY CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'type' ELSE g."type"::text END,
+               CASE WHEN r."result" ? 'audit' THEN r."result"->'audit'->>'algorithmVersion' ELSE NULL END,
+               (r."result" ? 'audit')`,
     String(scope.guildId), String(connId),
   );
   res.json({
     nitradoConnId: connId,
     stats: rows
-      .filter(row => isCasinoGameKey(row.type))
+      .filter(row => row.hasAudit ? auditedTypeIsValid(row.type, row.algorithmVersion) : !!row.type && isCasinoGameKey(row.type))
       .map(row => ({
-        type: row.type,
+        type: row.type!,
         wins: Number(row.wins),
         draws: Number(row.draws),
         losses: Number(row.rounds - row.wins - row.draws),
@@ -252,18 +271,22 @@ casinoRouter.get('/rounds', requireGuildPermission('casino.view'), async (req, r
   });
   res.json({
     nitradoConnId: connId,
-    rounds: rounds.map(r => ({
-      id: r.id,
-      type: logicalRoundType(r.result, r.game.type),
-      userDiscordId: r.userDiscordId,
-      outcome: storedOutcome(r.result, r.payout),
-      win: storedOutcome(r.result, r.payout) === 'win',
-      bet: r.bet.toString(),
-      payout: r.payout.toString(),
-      result: r.result,
-      serverSeedHash: createHash('sha256').update(r.serverSeed).digest('hex'),
-      nonce: r.nonce.toString(),
-      createdAt: r.createdAt,
-    })),
+    rounds: rounds.map(r => {
+      const type = logicalRoundType(r.result, r.game.type);
+      const outcome = storedOutcome(r.result, r.payout);
+      return {
+        id: r.id,
+        type: type ?? 'UNKNOWN',
+        userDiscordId: r.userDiscordId,
+        outcome,
+        win: outcome === 'win',
+        bet: r.bet.toString(),
+        payout: r.payout.toString(),
+        result: r.result,
+        serverSeedHash: createHash('sha256').update(r.serverSeed).digest('hex'),
+        nonce: r.nonce.toString(),
+        createdAt: r.createdAt,
+      };
+    }),
   });
 });
