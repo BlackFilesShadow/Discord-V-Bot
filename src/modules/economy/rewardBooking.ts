@@ -6,9 +6,10 @@
  * existing leave/race fences, V3 enforces EconomyRewardRule.dailyCap and
  * cooldownSeconds at the point where real money would be created.
  *
- * Limit semantics are based on the immutable ADM event timestamp, not on the
- * later RewardDecision processing timestamp. Delayed ingestion/reprocessing can
- * therefore never move a kill into another cap day or bypass a cooldown.
+ * Limit semantics and pending-order semantics are based on the immutable ADM
+ * event timestamp, not on the later RewardDecision processing timestamp.
+ * Delayed ingestion/reprocessing can therefore neither move a kill into another
+ * cap day nor let a later event consume the budget before an earlier event.
  */
 import { bookLedgerEntryInTx, type LedgerClient, type LedgerTx } from './ledger';
 import { leaveCleanupJobKey } from '../moderation/leaveCleanupSaga';
@@ -20,6 +21,7 @@ export interface PendingRewardRow {
   calculated: bigint;
   rewardRuleId: string;
   createdAt: Date;
+  eventOccurredAt: Date | null;
 }
 
 interface ExistingRewardLedgerRow {
@@ -31,10 +33,6 @@ interface ExistingRewardLedgerRow {
   bankDelta: bigint;
   type: string;
   sourceRef: string | null;
-}
-
-interface RewardEventTimeRow {
-  occurredAt: Date | null;
 }
 
 interface RewardLimitRow {
@@ -57,10 +55,7 @@ interface RewardBookingTx extends LedgerTx {
 }
 
 export interface RewardBookingClient extends LedgerClient {
-  rewardDecision: {
-    findMany: (args: unknown) => Promise<PendingRewardRow[]>;
-    update: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<unknown>;
-  };
+  $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
 }
 
 export interface RewardBookingScope {
@@ -114,21 +109,44 @@ function normalizePolicy(policy: RewardBookingPolicy) {
   return { dailyCap, cooldownSeconds, timezone };
 }
 
-async function rewardEventTime(
-  tx: RewardBookingTx,
+function normalizeLimit(limit: number | undefined): number {
+  if (limit === undefined) return 500;
+  if (!Number.isInteger(limit) || limit < 1) return 500;
+  return Math.min(limit, 5_000);
+}
+
+async function pendingRewardsByEventTime(
+  client: RewardBookingClient,
   scope: RewardBookingScope,
-  admEventId: string,
-): Promise<Date | null> {
-  const rows = await tx.$queryRawUnsafe<RewardEventTimeRow[]>(
-    `SELECT "occurredAt"
-       FROM "AdmEvent"
-      WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3
-      LIMIT 1`,
-    admEventId,
+  limit: number,
+): Promise<PendingRewardRow[]> {
+  return client.$queryRawUnsafe<PendingRewardRow[]>(
+    `SELECT d."id",
+            d."admEventId",
+            d."userDiscordId",
+            d."calculated",
+            d."rewardRuleId",
+            d."createdAt",
+            e."occurredAt" AS "eventOccurredAt"
+       FROM "RewardDecision" d
+       LEFT JOIN "AdmEvent" e
+         ON e."id"=d."admEventId"
+        AND e."guildId"=d."guildId"
+        AND e."nitradoConnId"=d."nitradoConnId"
+      WHERE d."guildId"=$1
+        AND d."nitradoConnId"=$2
+        AND d."status"='PENDING'::"RewardDecisionStatus"
+        AND d."userDiscordId" IS NOT NULL
+        AND d."calculated" > 0
+      ORDER BY e."occurredAt" ASC NULLS LAST,
+               e."sourceFile" ASC NULLS LAST,
+               e."sourceByteStart" ASC NULLS LAST,
+               d."id" ASC
+      LIMIT $3`,
     scope.guildId,
     scope.nitradoConnId,
+    limit,
   );
-  return rows[0]?.occurredAt ?? null;
 }
 
 async function rewardLimits(
@@ -245,7 +263,7 @@ async function finalizePendingReward(
       return decision.calculated;
     }
 
-    const eventOccurredAt = await rewardEventTime(tx, scope, decision.admEventId);
+    const eventOccurredAt = decision.eventOccurredAt;
     if (!eventOccurredAt) {
       await markSkipped(tx, decision.id, 'SKIPPED_INVALID_EVENT_TIME');
       return 0n;
@@ -309,17 +327,7 @@ export async function bookPendingRewards(
   scope: RewardBookingScope,
   opts: RewardBookingPolicy,
 ): Promise<{ paid: number; totalAmount: bigint; skipped: number }> {
-  const pending = await client.rewardDecision.findMany({
-    where: {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      status: 'PENDING',
-      userDiscordId: { not: null },
-      calculated: { gt: 0 },
-    },
-    orderBy: { createdAt: 'asc' },
-    take: opts.limit ?? 500,
-  });
+  const pending = await pendingRewardsByEventTime(client, scope, normalizeLimit(opts.limit));
 
   let paid = 0;
   let skipped = 0;
