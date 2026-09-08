@@ -570,7 +570,10 @@ async function playRound(args: {
       const previous = await queryOne<{ createdAt: Date }>(
         db,
         `SELECT r."createdAt" FROM "CasinoRound" r
-          JOIN "CasinoGame" g ON g."id" = r."gameId"
+          JOIN "CasinoGame" g
+            ON g."id" = r."gameId"
+           AND g."guildId" = r."guildId"
+           AND g."nitradoConnId" = r."nitradoConnId"
          WHERE r."guildId"=$1 AND r."nitradoConnId"=$2 AND r."userDiscordId"=$3
            AND CASE
                  WHEN NOT (r."result" ? 'audit') THEN g."type"::text
