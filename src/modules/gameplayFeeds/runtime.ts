@@ -32,6 +32,7 @@ import { buildFlagActivityCustomId } from './flagActivity';
 import {
   BUILD_EVENT_TYPES,
   DEATH_EVENT_TYPES,
+  KILL_EVENT_TYPES,
   categoryAllowed,
   deriveGameplayFeedView,
   type GameplayAdmEvent,
@@ -57,6 +58,13 @@ const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 1;
 const DELIVERY_SPACING_MS = 12_000;
 const PVP_ENRICHMENT_TIMEOUT_MS = 2_000;
+const GENERIC_DEATH_CORRELATION_MS = 2_500;
+const SPECIFIC_DEATH_EVENT_TYPES: AdmEventType[] = [
+  AdmEventType.PLAYER_KILLED,
+  AdmEventType.PLAYER_SUICIDE,
+  AdmEventType.NPC_KILL,
+  AdmEventType.VEHICLE_DEATH,
+];
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -72,7 +80,9 @@ function safeError(error: unknown): string {
 
 function eventTypes(kind: GameplayFeedKind): AdmEventType[] {
   if (kind === GameplayFeedKind.PLAYER_LIST || kind === GameplayFeedKind.FLAG) return [];
-  return (kind === GameplayFeedKind.DEATH ? [...DEATH_EVENT_TYPES] : [...BUILD_EVENT_TYPES]) as AdmEventType[];
+  if (kind === GameplayFeedKind.KILL) return [...KILL_EVENT_TYPES] as AdmEventType[];
+  if (kind === GameplayFeedKind.DEATH) return [...DEATH_EVENT_TYPES] as AdmEventType[];
+  return [...BUILD_EVENT_TYPES] as AdmEventType[];
 }
 
 function eventNonce(configId: string, eventId: string): string {
@@ -118,8 +128,36 @@ function flagRowToGameplayEvent(row: {
   };
 }
 
+/**
+ * DayZ can emit a specific final-death line and an additional generic
+ * PLAYER_DIED line for the same death. The generic event remains canonical in
+ * AdmEvent, but must not generate a second Discord death report. Correlation is
+ * intentionally strict: same gameserver, same stable game id and a tiny ADM
+ * event-time window. Without a resolved timestamp we do not guess/suppress.
+ */
+async function genericDeathIsShadowed(config: GameplayFeedConfig, event: GameplayAdmEvent): Promise<boolean> {
+  if (event.eventType !== AdmEventType.PLAYER_DIED || !event.actorGameId || !event.occurredAt) return false;
+  const occurredAt = event.occurredAt.getTime();
+  const sibling = await prisma.admEvent.findFirst({
+    where: {
+      guildId: config.guildId,
+      nitradoConnId: config.nitradoConnId,
+      id: { not: event.id },
+      actorGameId: event.actorGameId,
+      eventType: { in: SPECIFIC_DEATH_EVENT_TYPES },
+      occurredAt: {
+        gte: new Date(occurredAt - GENERIC_DEATH_CORRELATION_MS),
+        lte: new Date(occurredAt + GENERIC_DEATH_CORRELATION_MS),
+      },
+    },
+    select: { id: true },
+  });
+  return sibling !== null;
+}
+
 async function createDeliveryIfNeeded(config: GameplayFeedConfig, event: GameplayAdmEvent): Promise<void> {
   if (!categoryAllowed(config.kind, config.categories, event.eventType)) return;
+  if (config.kind === GameplayFeedKind.DEATH && await genericDeathIsShadowed(config, event)) return;
   try {
     await prisma.gameplayFeedDelivery.create({
       data: {
