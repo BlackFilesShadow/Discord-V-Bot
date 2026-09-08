@@ -104,4 +104,17 @@ describe('casino V3 hardening contracts', () => {
     expect(casinoRoute).not.toContain('take: 100_000');
     expect(economyRoute).not.toContain('LIMIT 100000');
   });
+
+  it('never re-labels a malformed audited V3 round through its shared legacy anchor', () => {
+    const casinoRoute = read('src/dashboard/routes/v2/casino.ts');
+    const economyRoute = read('src/dashboard/routes/v2/economy.ts');
+    expect(casinoRoute).toContain("Object.prototype.hasOwnProperty.call(row, 'audit')");
+    expect(casinoRoute).toContain("type: type ?? 'UNKNOWN'");
+    expect(casinoRoute).toContain('auditedTypeIsValid(row.type, row.algorithmVersion)');
+    expect(casinoRoute).toContain("CASE WHEN r.\"result\" ? 'audit'");
+    expect(casinoRoute).not.toContain("COALESCE(r.\"result\"->'audit'->>'type', g.\"type\"::text)");
+    expect(economyRoute).toContain('auditedCasinoTypeIsValid(row.type, row.algorithmVersion)');
+    expect(economyRoute).toContain('classifiedCasinoStats');
+    expect(economyRoute).not.toContain("COALESCE(r.\"result\"->'audit'->>'type', g.\"type\"::text)");
+  });
 });
