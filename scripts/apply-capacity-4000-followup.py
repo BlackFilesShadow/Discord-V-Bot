@@ -56,11 +56,12 @@ export async function loadRadarPlayerDirectory(
 
 radar = Path('src/dashboard/routes/v2/radar.ts')
 radar_text = radar.read_text(encoding='utf-8')
-radar_text = radar_text.replace(
-    "import { isValidBattleyeGuid } from '../../../utils/guid';",
-    "import { loadRadarPlayerDirectory } from '../../../modules/radar/playerDirectory';",
-    1,
-)
+if "import { loadRadarPlayerDirectory } from '../../../modules/radar/playerDirectory';" not in radar_text:
+    radar_text = radar_text.replace(
+        "import { isValidBattleyeGuid } from '../../../utils/guid';",
+        "import { isValidBattleyeGuid } from '../../../utils/guid';\nimport { loadRadarPlayerDirectory } from '../../../modules/radar/playerDirectory';",
+        1,
+    )
 old_radar_handler = """radarRouter.get('/players', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
   const sessions = await prisma.playerSession.findMany({
