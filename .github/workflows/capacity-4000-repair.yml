@@ -67,6 +67,7 @@ jobs:
           python3 scripts/apply-capacity-4000-followup.py
           python3 scripts/apply-capacity-4000-followup-fix.py
           python3 scripts/apply-capacity-4000-deepfix.py
+          python3 scripts/apply-capacity-4000-scopefix.py
       - name: Validate schema and deploy migrations
         run: |
           npx prisma generate
