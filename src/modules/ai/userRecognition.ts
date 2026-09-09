@@ -62,7 +62,8 @@ export async function resolveVerifiedGameIdentityRecognition(
 
   // The DB has an exact-scope unique key, but fail closed as defense in depth
   // if corrupted/legacy data or a test double ever violates that invariant.
-  if (links.length !== 1 || !links[0].identityHash) return null;
+  const verifiedIdentityHash = links[0]?.identityHash;
+  if (links.length !== 1 || !verifiedIdentityHash) return null;
   const link = links[0];
 
   // Do not cap the server-wide session history at 5,000 rows. On a busy server
@@ -71,7 +72,7 @@ export async function resolveVerifiedGameIdentityRecognition(
   const playerName = await findLatestIdentityPlayerName(
     client,
     { guildId, nitradoConnId },
-    link.identityHash,
+    verifiedIdentityHash,
     identitySecret,
   );
 

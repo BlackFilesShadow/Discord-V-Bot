@@ -1,6 +1,8 @@
+import type { Prisma } from '@prisma/client';
 import { identityHash } from './identity';
 
 export interface IdentitySessionRow {
+  id: string;
   gameId: string;
   playerName: string | null;
   connectedAt: Date | null;
@@ -9,7 +11,7 @@ export interface IdentitySessionRow {
 
 export interface IdentitySessionLookupClient {
   playerSession: {
-    findMany: (args: unknown) => Promise<IdentitySessionRow[]>;
+    findMany: (args: Prisma.PlayerSessionFindManyArgs) => Promise<IdentitySessionRow[]>;
   };
 }
 
@@ -25,11 +27,40 @@ function pageSize(value: number): number {
   return Math.max(1, Math.min(MAX_PAGE_SIZE, Math.trunc(value)));
 }
 
+function isNewerSession(candidate: IdentitySessionRow, current: IdentitySessionRow): boolean {
+  const candidateConnected = candidate.connectedAt?.getTime() ?? candidate.createdAt.getTime();
+  const currentConnected = current.connectedAt?.getTime() ?? current.createdAt.getTime();
+  if (candidateConnected !== currentConnected) return candidateConnected > currentConnected;
+  const candidateCreated = candidate.createdAt.getTime();
+  const currentCreated = current.createdAt.getTime();
+  if (candidateCreated !== currentCreated) return candidateCreated > currentCreated;
+  return candidate.id.localeCompare(current.id) > 0;
+}
+
+async function readIdentitySessionPage(
+  client: IdentitySessionLookupClient,
+  scope: IdentitySessionScope,
+  afterId: string | null,
+  take: number,
+): Promise<IdentitySessionRow[]> {
+  return client.playerSession.findMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      ...(afterId ? { id: { gt: afterId } } : {}),
+    },
+    select: { id: true, gameId: true, playerName: true, connectedAt: true, createdAt: true },
+    orderBy: { id: 'asc' },
+    take,
+  });
+}
+
 /**
- * Scans scoped PlayerSession history in stable pages and returns the latest
- * non-empty display name belonging to the linked identity. The old fixed
- * take:5000 made older, still-valid users lose their display-name recognition
- * once a busy server accumulated more than 5,000 newer sessions.
+ * Scans scoped PlayerSession history with immutable-id keyset pagination and
+ * returns the newest non-empty display name belonging to the linked identity.
+ * The old fixed take:5000 could hide older identities, while OFFSET pagination
+ * could shift under concurrent inserts. Keyset pages cannot skip pre-existing
+ * later rows; a newly inserted lower-key row is picked up on the next scan.
  */
 export async function findLatestIdentityPlayerName(
   client: IdentitySessionLookupClient,
@@ -39,19 +70,17 @@ export async function findLatestIdentityPlayerName(
   requestedPageSize = DEFAULT_PAGE_SIZE,
 ): Promise<string | null> {
   const take = pageSize(requestedPageSize);
-  for (let skip = 0; ; skip += take) {
-    const rows = await client.playerSession.findMany({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId },
-      select: { gameId: true, playerName: true, connectedAt: true, createdAt: true },
-      orderBy: [{ connectedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
-      skip,
-      take,
-    });
+  let afterId: string | null = null;
+  let latest: IdentitySessionRow | null = null;
+  for (;;) {
+    const rows = await readIdentitySessionPage(client, scope, afterId, take);
     for (const row of rows) {
-      if (!row.playerName?.trim()) continue;
-      if (identityHash(row.gameId, identitySecret) === targetIdentityHash) return row.playerName.trim();
+      const playerName = row.playerName?.trim();
+      if (!playerName || identityHash(row.gameId, identitySecret) !== targetIdentityHash) continue;
+      if (!latest || isNewerSession(row, latest)) latest = row;
     }
-    if (rows.length < take) return null;
+    if (rows.length < take) return latest?.playerName?.trim() || null;
+    afterId = rows[rows.length - 1].id;
   }
 }
 
@@ -59,7 +88,8 @@ export async function findLatestIdentityPlayerName(
  * Collects every historical display name belonging to one verified identity.
  * This is intentionally exhaustive: Goodbye whitelist cleanup must not classify
  * a linked user as NOT_LINKED merely because their relevant session is older
- * than a global history prefix. Only one page is retained in memory at a time.
+ * than a global history prefix. Only one bounded keyset page is retained in
+ * memory at a time.
  */
 export async function collectIdentityPlayerNames(
   client: IdentitySessionLookupClient,
@@ -70,19 +100,15 @@ export async function collectIdentityPlayerNames(
 ): Promise<Set<string>> {
   const take = pageSize(requestedPageSize);
   const names = new Set<string>();
-  for (let skip = 0; ; skip += take) {
-    const rows = await client.playerSession.findMany({
-      where: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId },
-      select: { gameId: true, playerName: true, connectedAt: true, createdAt: true },
-      orderBy: [{ connectedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
-      skip,
-      take,
-    });
+  let afterId: string | null = null;
+  for (;;) {
+    const rows = await readIdentitySessionPage(client, scope, afterId, take);
     for (const row of rows) {
       const playerName = row.playerName?.trim();
       if (!playerName) continue;
       if (identityHash(row.gameId, identitySecret) === targetIdentityHash) names.add(playerName);
     }
     if (rows.length < take) return names;
+    afterId = rows[rows.length - 1].id;
   }
 }
