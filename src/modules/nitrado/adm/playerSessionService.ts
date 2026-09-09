@@ -148,15 +148,26 @@ export async function aggregatePlayerSessions(
   scope: PlayerSessionScope,
   limit = 2000,
 ): Promise<{ upserted: number; closed: number; open: number }> {
-  const events = await client.admEvent.findMany({
-    where: {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      eventType: { in: ['PLAYER_CONNECTED', 'PLAYER_DISCONNECTED'] },
-    },
-    orderBy: { occurredAt: 'asc' },
-    take: limit,
-  });
+  // `limit` is a page size, not a total cap. A total `take: limit`
+  // permanently starves every connect/disconnect row behind that prefix once
+  // a busy server exceeds the cap (historically 2,000 rows). Page the complete
+  // canonical ADM stream, then run the unchanged pairing/idempotent upsert logic.
+  const pageSize = Math.max(1, Math.min(10_000, Math.trunc(limit)));
+  const events: SessionSourceEvent[] = [];
+  for (let skip = 0; ; skip += pageSize) {
+    const page = await client.admEvent.findMany({
+      where: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        eventType: { in: ['PLAYER_CONNECTED', 'PLAYER_DISCONNECTED'] },
+      },
+      orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      skip,
+      take: pageSize,
+    });
+    events.push(...page);
+    if (page.length < pageSize) break;
+  }
 
   const sessions = pairPlayerSessions(events);
   let upserted = 0, closed = 0, open = 0;
