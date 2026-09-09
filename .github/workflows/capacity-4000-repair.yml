@@ -28,7 +28,7 @@ jobs:
         run: |
           npm run lint
           npm run build:server
-          npm test -- --runInBand tests/utils/boundedConcurrency.test.ts tests/modules/playerListRoster.test.ts
+          npx jest --runInBand --coverage=false tests/utils/boundedConcurrency.test.ts tests/modules/playerListRoster.test.ts
       - name: Commit hardening
         run: |
           git config user.name 'github-actions[bot]'
