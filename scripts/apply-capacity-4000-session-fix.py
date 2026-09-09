@@ -9,8 +9,6 @@ text = text.replace("expect(rosterSection).toContain('AdmEventType.PLAYER_DISCON
 text = text.replace("expect(rosterSection).toContain('AdmEventType.PLAYER_POSITION');", "expect(rosterSection).toContain('PLAYER_POSITION');")
 roster_test.write_text(text, encoding='utf-8')
 
-# Correct the new SQL architecture test: currentPlayerList intentionally uses
-# parameterised SQL enum literals, not TypeScript enum members.
 sql_test = Path('tests/modules/playerListRosterSqlArchitecture.test.ts')
 sql_test.write_text("""import fs from 'node:fs';
 import path from 'node:path';
@@ -31,16 +29,9 @@ describe('PLAYER_LIST SQL capacity architecture', () => {
 });
 """, encoding='utf-8')
 
-# Critical 4k fix: the old fixed take:2000 permanently starved all later
-# connect/disconnect rows. Keep the existing pairing/upsert business logic
-# unchanged and make only the source read exhaustive via stable keyset pages.
-# Keyset paging by immutable primary key avoids OFFSET window shifts while ADM
-# ingestion is still appending rows. pairPlayerSessions already performs the
-# canonical per-player time/byte ordering afterwards, so database read order is
-# not part of the business semantics.
 service = Path('src/modules/nitrado/adm/playerSessionService.ts')
 service_text = service.read_text(encoding='utf-8')
-old = """  const events = await client.admEvent.findMany({
+original = """  const events = await client.admEvent.findMany({
     where: {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
@@ -52,7 +43,30 @@ old = """  const events = await client.admEvent.findMany({
 
   const sessions = pairPlayerSessions(events);
 """
-new = """  // `limit` is a page size, not a total cap. A total `take: limit`
+offset_version = """  // `limit` is a page size, not a total cap. A total `take: limit`
+  // permanently starves every connect/disconnect row behind that prefix once
+  // a busy server exceeds the cap (historically 2,000 rows). Page the complete
+  // canonical ADM stream, then run the unchanged pairing/idempotent upsert logic.
+  const pageSize = Math.max(1, Math.min(10_000, Math.trunc(limit)));
+  const events: SessionSourceEvent[] = [];
+  for (let skip = 0; ; skip += pageSize) {
+    const page = await client.admEvent.findMany({
+      where: {
+        guildId: scope.guildId,
+        nitradoConnId: scope.nitradoConnId,
+        eventType: { in: ['PLAYER_CONNECTED', 'PLAYER_DISCONNECTED'] },
+      },
+      orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+      skip,
+      take: pageSize,
+    });
+    events.push(...page);
+    if (page.length < pageSize) break;
+  }
+
+  const sessions = pairPlayerSessions(events);
+"""
+keyset_version = """  // `limit` is a page size, not a total cap. A total `take: limit`
   // permanently starves every connect/disconnect row behind that prefix once
   // a busy server exceeds the cap (historically 2,000 rows). Page the complete
   // canonical ADM stream by immutable primary key. This is deliberately keyset
@@ -79,10 +93,13 @@ new = """  // `limit` is a page size, not a total cap. A total `take: limit`
 
   const sessions = pairPlayerSessions(events);
 """
-if new not in service_text:
-    if old not in service_text:
+if keyset_version not in service_text:
+    if offset_version in service_text:
+        service_text = service_text.replace(offset_version, keyset_version, 1)
+    elif original in service_text:
+        service_text = service_text.replace(original, keyset_version, 1)
+    else:
         raise SystemExit('player session aggregate anchor missing')
-    service_text = service_text.replace(old, new, 1)
 service.write_text(service_text, encoding='utf-8')
 
 capacity = Path('tests/modules/playerSessionCapacity4000.test.ts')
@@ -187,8 +204,6 @@ describe('PlayerSession 4000-player capacity', () => {
     const result = await aggregatePlayerSessions(client, { guildId: 'g', nitradoConnId: 'n' }, 2);
     expect(result.closed).toBe(4);
     expect(stored.size).toBe(4);
-    // The newly inserted lower-key row is intentionally picked up on the next
-    // complete aggregation pass; it cannot shift/skips any pre-existing row.
     expect(stored.has('a-late-row')).toBe(false);
   });
 });
