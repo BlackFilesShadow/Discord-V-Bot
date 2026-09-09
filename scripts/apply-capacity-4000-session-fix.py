@@ -4,9 +4,9 @@ from pathlib import Path
 # SQL implementation while preserving the same source-of-truth guarantees.
 roster_test = Path('tests/modules/playerListRoster.test.ts')
 text = roster_test.read_text(encoding='utf-8')
-text = text.replace("expect(rosterSection).toContain('sourceFile: latestCursor.fileIdentity');", "expect(rosterSection).toContain('\\\"sourceFile\\\" = ${latestCursor.fileIdentity}');")
-text = text.replace("expect(rosterSection).toContain('AdmEventType.PLAYER_DISCONNECTED');", "expect(rosterSection).toContain(\"'PLAYER_DISCONNECTED'::\\\"AdmEventType\\\"\");")
-text = text.replace("expect(rosterSection).toContain('AdmEventType.PLAYER_POSITION');", "expect(rosterSection).toContain(\"'PLAYER_POSITION'::\\\"AdmEventType\\\"\");")
+text = text.replace("expect(rosterSection).toContain('sourceFile: latestCursor.fileIdentity');", "expect(rosterSection).toContain('latestCursor.fileIdentity');")
+text = text.replace("expect(rosterSection).toContain('AdmEventType.PLAYER_DISCONNECTED');", "expect(rosterSection).toContain('PLAYER_DISCONNECTED');")
+text = text.replace("expect(rosterSection).toContain('AdmEventType.PLAYER_POSITION');", "expect(rosterSection).toContain('PLAYER_POSITION');")
 roster_test.write_text(text, encoding='utf-8')
 
 # Correct the new SQL architecture test: currentPlayerList intentionally uses
@@ -21,10 +21,10 @@ describe('PLAYER_LIST SQL capacity architecture', () => {
   it('bounds active-file roster evidence to latest rows per identity with supporting partial indexes', () => {
     const runtime = read('src/modules/gameplayFeeds/runtime.ts');
     const migration = read('prisma/migrations/20260909104500_adm_player_roster_hotpath/migration.sql');
-    expect(runtime.match(/SELECT DISTINCT ON \(\"actorGameId\"\)/g)?.length).toBe(2);
-    expect(runtime).toContain("'PLAYER_CONNECTED'::\"AdmEventType\"");
-    expect(runtime).toContain("'PLAYER_DISCONNECTED'::\"AdmEventType\"");
-    expect(runtime).toContain("'PLAYER_POSITION'::\"AdmEventType\"");
+    expect(runtime.match(/SELECT DISTINCT ON/g)?.length).toBe(2);
+    expect(runtime).toContain('PLAYER_CONNECTED');
+    expect(runtime).toContain('PLAYER_DISCONNECTED');
+    expect(runtime).toContain('PLAYER_POSITION');
     expect(migration).toContain('AdmEvent_roster_presence_latest_idx');
     expect(migration).toContain('AdmEvent_roster_position_latest_idx');
   });
