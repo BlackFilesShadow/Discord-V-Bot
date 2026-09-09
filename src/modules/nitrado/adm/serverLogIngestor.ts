@@ -29,6 +29,8 @@ export interface IngestResult {
   wasReset: boolean;
 }
 
+const ADM_PERSIST_BATCH_SIZE = 250;
+
 function parseCompleteChunk(
   content: string,
   absoluteOffset: number,
@@ -140,6 +142,21 @@ function isFlagEvent(event: RawAdmEvent): boolean {
   return event.eventType === 'FLAG_RAISED' || event.eventType === 'FLAG_LOWERED';
 }
 
+async function persistRowsInBatches(
+  createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }>,
+  rows: unknown[],
+): Promise<number> {
+  let inserted = 0;
+  for (let offset = 0; offset < rows.length; offset += ADM_PERSIST_BATCH_SIZE) {
+    const created = await createMany({
+      data: rows.slice(offset, offset + ADM_PERSIST_BATCH_SIZE),
+      skipDuplicates: true,
+    });
+    inserted += created.count;
+  }
+  return inserted;
+}
+
 export async function persistAdmEvents(
   client: AdmPersistClient,
   scope: AdmEventScope,
@@ -199,16 +216,15 @@ export async function persistAdmEvents(
     }));
 
   return client.$transaction(async (tx) => {
-    let inserted = 0;
-    if (rows.length > 0) {
-      const created = await tx.admEvent.createMany({ data: rows, skipDuplicates: true });
-      inserted = created.count;
-    }
+    const inserted = rows.length > 0
+      ? await persistRowsInBatches(args => tx.admEvent.createMany(args), rows)
+      : 0;
+
     if (flagRows.length > 0) {
       if (!tx.flagActivityEvent) {
         throw new Error('FlagActivityEvent-Persistenz ist fuer ein erkanntes Flaggenereignis nicht verfuegbar');
       }
-      await tx.flagActivityEvent.createMany({ data: flagRows, skipDuplicates: true });
+      await persistRowsInBatches(args => tx.flagActivityEvent!.createMany(args), flagRows);
     }
     await tx.admSourceCursor.upsert({
       where: {
