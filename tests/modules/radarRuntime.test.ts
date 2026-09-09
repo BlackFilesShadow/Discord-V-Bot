@@ -297,8 +297,8 @@ describe('Radar-Worker', () => {
       'Username', 'Koordinaten X/Z', 'Erkannt durch ADM',
     ]));
     expect(fields.map(field => field.name)).not.toContain('ADM-Hoehe');
-    expect(fields.find(field => field.name === 'Koordinaten X/Z')?.value).toContain('X: 100.0 · Z: 200.0');
-    expect(fields.find(field => field.name === 'Koordinaten X/Z')?.value).toContain('iZurvive öffnen');
+    expect(fields.find(field => field.name === 'Koordinaten X/Z')?.value)
+      .toBe('[X: 100.0 · Z: 200.0](https://www.izurvive.com/chernarusplus/#location=100;200;6)');
     expect(radarEventUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'radar-event-1', status: 'SENDING' }),
       data: expect.objectContaining({ status: 'SENT', messageId: 'discord-message-1' }),
