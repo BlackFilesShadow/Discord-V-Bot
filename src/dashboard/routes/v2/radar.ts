@@ -5,6 +5,7 @@ import { requireGuildPermission } from '../../middleware/auth';
 import prisma from '../../../database/prisma';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { isValidBattleyeGuid } from '../../../utils/guid';
+import { loadRadarPlayerDirectory } from '../../../modules/radar/playerDirectory';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { emitGuildEvent } from '../../socket/emitter';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
@@ -272,20 +273,7 @@ radarRouter.get('/config', requireGuildPermission('radar.view'), async (req, res
 
 radarRouter.get('/players', requireGuildPermission('radar.manage'), async (req, res) => {
   const scope = await scopeFor(req, res); if (!scope) return;
-  const sessions = await prisma.playerSession.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: scope.connId, playerName: { not: null } },
-    select: { gameId: true, playerName: true },
-    orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
-    take: 2000,
-  });
-  const gameIds = new Set<string>();
-  const players = sessions.flatMap(session => {
-    const gameId = session.gameId.trim();
-    const playerName = session.playerName?.trim();
-    if (!playerName || !isValidBattleyeGuid(gameId) || gameIds.has(gameId)) return [];
-    gameIds.add(gameId);
-    return [{ gameId, playerName }];
-  });
+  const players = await loadRadarPlayerDirectory(scope.guildId, scope.connId);
   res.json({ players });
 });
 

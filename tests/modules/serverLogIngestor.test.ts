@@ -200,7 +200,7 @@ describe('serverLogIngestor — atomare Persistierung', () => {
     );
 
     expect(result.inserted).toBe(600);
-    expect(batchSizes).toEqual([250, 250, 100]);
+    expect(batchSizes).toEqual([100, 100, 100, 100, 100, 100]);
     expect(cursorWrites).toBe(1);
   });
 

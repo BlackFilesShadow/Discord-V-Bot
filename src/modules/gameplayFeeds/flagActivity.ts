@@ -250,9 +250,12 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
         guildId: event.guildId,
         nitradoConnId: event.nitradoConnId,
         connectedAt: { gte: before, lte: eventAt },
+        disconnectedAt: { gte: before },
+        durationSeconds: { lte: SHORT_SESSION_SECONDS },
+        status: 'CLOSED',
       },
-      orderBy: { connectedAt: 'asc' },
-      take: 100,
+      orderBy: [{ durationSeconds: 'asc' }, { connectedAt: 'asc' }, { id: 'asc' }],
+      take: MAX_OTHER_SESSIONS + 1,
     }),
   ]);
 
@@ -272,7 +275,6 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
     },
     select: { actorGameId: true, actorPosition: true, occurredAt: true },
     orderBy: { occurredAt: 'asc' },
-    take: 1000,
   });
   const nearest = nearestPositions(positionRows, eventAt);
 

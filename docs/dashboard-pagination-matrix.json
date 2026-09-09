@@ -184,7 +184,7 @@
       "tieBreaker": "id",
       "limitPlusOne": true,
       "hasMore": true,
-      "nextCursor": "none-hard-cap",
+      "nextCursor": "approvedAt+gameId-keyset",
       "searchFilter": "guildId required",
       "scope": "bot-admin guildId",
       "legacyBefore": "n/a",

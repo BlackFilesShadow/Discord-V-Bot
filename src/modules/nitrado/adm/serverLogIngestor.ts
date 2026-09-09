@@ -29,7 +29,7 @@ export interface IngestResult {
   wasReset: boolean;
 }
 
-const ADM_PERSIST_BATCH_SIZE = 250;
+const ADM_PERSIST_BATCH_SIZE = 100;
 
 function parseCompleteChunk(
   content: string,
