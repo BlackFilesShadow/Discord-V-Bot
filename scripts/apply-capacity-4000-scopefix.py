@@ -19,25 +19,22 @@ old = """  const limit = 1000;
 """
 new = """  const limit = 1000;
   const rows = await prisma.whitelistEntry.findMany({
-    // Keep Guild + Gameserver scope explicit in both keyset branches. Besides
-    // being easier to audit, this satisfies the repository's fail-closed scope
-    // lint rule instead of hiding guildId inside an object spread.
-    where: cursor ? {
+    // Keep the tenant scope as direct properties of the where object. The
+    // repository's fail-closed scope lint intentionally requires guildId to be
+    // statically visible here; only the keyset continuation predicate is
+    // optional on the first page.
+    where: {
       guildId: scope.guildId,
       nitradoConnId: connId,
       syncState: { not: 'PENDING_REMOVE' },
-      OR: [
+      OR: cursor ? [
         { approvedAt: { lt: cursor.approvedAt } },
         { approvedAt: cursor.approvedAt, gameId: { gt: cursor.gameId } },
-      ],
-    } : {
-      guildId: scope.guildId,
-      nitradoConnId: connId,
-      syncState: { not: 'PENDING_REMOVE' },
+      ] : undefined,
     },
 """
 if new not in text:
     if old not in text:
-        raise SystemExit('whitelist explicit scope anchor missing')
+        raise SystemExit('whitelist direct scope anchor missing')
     text = text.replace(old, new, 1)
 route.write_text(text, encoding='utf-8')
