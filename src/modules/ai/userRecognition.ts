@@ -1,18 +1,13 @@
-import { identityHash } from '../linking/identity';
+import {
+  findLatestIdentityPlayerName,
+  type IdentitySessionLookupClient,
+} from '../linking/sessionIdentityLookup';
 
-export interface AiRecognitionClient {
+export interface AiRecognitionClient extends IdentitySessionLookupClient {
   gameIdentityLink: {
     findMany: (args: unknown) => Promise<Array<{
       identityHash: string | null;
       verifiedAt: Date | null;
-    }>>;
-  };
-  playerSession: {
-    findMany: (args: unknown) => Promise<Array<{
-      gameId: string;
-      playerName: string | null;
-      connectedAt: Date | null;
-      createdAt: Date;
     }>>;
   };
 }
@@ -70,25 +65,22 @@ export async function resolveVerifiedGameIdentityRecognition(
   if (links.length !== 1 || !links[0].identityHash) return null;
   const link = links[0];
 
-  const sessions = await client.playerSession.findMany({
-    where: { guildId, nitradoConnId },
-    select: { gameId: true, playerName: true, connectedAt: true, createdAt: true },
-    orderBy: [{ connectedAt: 'desc' }, { createdAt: 'desc' }],
-    take: 5000,
-  });
-
-  // Reconstruct only a display name. Neither the clear gameId nor its HMAC is
-  // returned. If no historical session can be mapped, the verified link itself
-  // is still valid recognition, just without a player-name label.
-  const matching = sessions.filter(session => identityHash(session.gameId, identitySecret) === link.identityHash);
-  const latestNamed = matching.find(session => !!session.playerName?.trim());
+  // Do not cap the server-wide session history at 5,000 rows. On a busy server
+  // that prefix can contain only newer users. The paged lookup keeps the same
+  // latest-name semantics while retaining only one bounded page in memory.
+  const playerName = await findLatestIdentityPlayerName(
+    client,
+    { guildId, nitradoConnId },
+    link.identityHash,
+    identitySecret,
+  );
 
   return {
     state: 'VERIFIED',
     guildId,
     nitradoConnId,
     userDiscordId,
-    playerName: latestNamed?.playerName?.trim().slice(0, 64) || null,
+    playerName: playerName?.slice(0, 64) || null,
     verifiedAt: link.verifiedAt ?? null,
   };
 }
