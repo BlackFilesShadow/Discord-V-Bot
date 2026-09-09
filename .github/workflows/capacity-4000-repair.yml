@@ -8,10 +8,46 @@ on:
 permissions:
   contents: write
 
+env:
+  NODE_VERSION: '22'
+  NODE_OPTIONS: '--max-old-space-size=4096'
+  DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+  DISCORD_TOKEN: test-token
+  DISCORD_CLIENT_ID: test-client-id
+  DISCORD_CLIENT_SECRET: test-secret
+  BOT_OWNER_ID: '123456789012345678'
+  ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  SESSION_SECRET: test-session-secret
+  DASHBOARD_URL: http://localhost:3000
+
 jobs:
   patch:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v5
         with:
@@ -19,7 +55,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - name: Apply capacity hardening
@@ -27,7 +63,14 @@ jobs:
           python3 scripts/apply-capacity-4000-patch.py
           python3 scripts/apply-capacity-4000-hotpath.py
           python3 scripts/apply-capacity-4000-session-fix.py
-      - name: Verify patch
+          python3 scripts/apply-capacity-4000-followup.py
+      - name: Validate schema and deploy migrations
+        run: |
+          npx prisma generate
+          npx prisma validate
+          npx prisma migrate deploy
+          npx prisma migrate status
+      - name: Verify targeted 4000-player regressions
         run: |
           npm run lint
           npm run build:server
@@ -37,12 +80,40 @@ jobs:
             tests/modules/playerListRosterCapacity.test.ts \
             tests/modules/playerListRosterSqlArchitecture.test.ts \
             tests/modules/playerSessionService.test.ts \
-            tests/modules/playerSessionCapacity4000.test.ts
+            tests/modules/playerSessionCapacity4000.test.ts \
+            tests/modules/capacity4000FollowupArchitecture.test.ts
+      - name: Live PostgreSQL 4000-player ingest and directory probe
+        run: npm run perf:players-4000
+      - name: Stage 47 live data-plane baseline
+        run: npm run perf:data-plane-47
+        env:
+          REDIS_URL: redis://localhost:6379
+          STAGE47_REQUIRE_LIVE: '1'
+          STAGE47_EXACT_SHA: ${{ github.sha }}
+      - name: Stage 48 AI and Nitrado loopback baseline
+        run: npm run perf:ai-nitrado-48
+        env:
+          STAGE48_REQUIRE_LAB: '1'
+          STAGE48_EXACT_SHA: ${{ github.sha }}
+      - name: Stage 50 production dashboard and PostgreSQL load test
+        run: npm run perf:load-50
+        env:
+          STAGE50_REQUIRE_LIVE: '1'
+          STAGE50_EXACT_SHA: ${{ github.sha }}
+      - name: Full Jest regression suite
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM --kill-after=30s 10m npx jest --runInBand --coverage=false 2>&1 | tee capacity-full-jest.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then exit 1; fi
+          [ "$status" -eq 0 ]
       - name: Commit hardening
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src tests scripts prisma package.json
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'perf(capacity): harden 4000-player roster and sessions'
+          git commit -m 'perf(capacity): complete 4000-player hardening'
           git push origin HEAD:perf/4000-player-capacity-hardening
