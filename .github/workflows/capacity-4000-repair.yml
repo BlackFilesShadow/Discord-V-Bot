@@ -68,6 +68,7 @@ jobs:
           python3 scripts/apply-capacity-4000-followup-fix.py
           python3 scripts/apply-capacity-4000-deepfix.py
           python3 scripts/apply-capacity-4000-scopefix.py
+          python3 scripts/apply-capacity-4000-regressionfix.py
       - name: Validate schema and deploy migrations
         run: |
           npx prisma generate
@@ -81,6 +82,7 @@ jobs:
           npm --prefix dashboard-ui run build
           npx jest --runInBand --coverage=false \
             tests/utils/boundedConcurrency.test.ts \
+            tests/modules/serverLogIngestor.test.ts \
             tests/modules/playerListRoster.test.ts \
             tests/modules/playerListRosterCapacity.test.ts \
             tests/modules/playerListRosterSqlArchitecture.test.ts \
