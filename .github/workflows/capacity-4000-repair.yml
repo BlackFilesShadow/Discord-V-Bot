@@ -110,6 +110,11 @@ jobs:
         env:
           STAGE50_REQUIRE_LIVE: '1'
           STAGE50_EXACT_SHA: ${{ github.sha }}
+      - name: Reset PostgreSQL test database before full Jest
+        shell: bash
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          npx prisma migrate deploy
       - name: Full Jest regression suite
         shell: bash
         run: |
