@@ -97,7 +97,7 @@ function coordinateField(map: RadarMap, event: RadarZoneEvent): string {
   const z = Number(event.y).toFixed(1);
   const label = `X: ${x} · Z: ${z}`;
   const url = dayzIzurviveUrl(map, { x: Number(event.x), y: Number(event.y) });
-  return url ? `${label}\n[iZurvive öffnen](${url})` : label;
+  return url ? `[${label}](${url})` : label;
 }
 
 export function buildRadarEmbed(
