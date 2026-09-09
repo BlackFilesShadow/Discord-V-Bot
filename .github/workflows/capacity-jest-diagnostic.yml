@@ -70,6 +70,7 @@ jobs:
           python3 scripts/apply-capacity-4000-followup-fix.py
           python3 scripts/apply-capacity-4000-deepfix.py
           python3 scripts/apply-capacity-4000-scopefix.py
+          python3 scripts/apply-capacity-4000-regressionfix.py
       - name: Prepare database
         run: |
           npx prisma generate
