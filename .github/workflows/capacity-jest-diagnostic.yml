@@ -1,0 +1,116 @@
+name: Capacity Jest diagnostic
+
+on:
+  push:
+    branches:
+      - perf/4000-player-capacity-hardening
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  NODE_OPTIONS: '--max-old-space-size=4096'
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: perf/4000-player-capacity-hardening
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Configure test environment
+        shell: bash
+        run: |
+          echo 'DATABASE_URL=postgresql://test:test@localhost:5432/discord_v_bot_test' >> "$GITHUB_ENV"
+          echo 'DISCORD_TOKEN=test-token' >> "$GITHUB_ENV"
+          echo 'DISCORD_CLIENT_ID=test-client-id' >> "$GITHUB_ENV"
+          echo 'DISCORD_CLIENT_SECRET=test-secret' >> "$GITHUB_ENV"
+          echo 'BOT_OWNER_ID=123456789012345678' >> "$GITHUB_ENV"
+          echo "ENCRYPTION_KEY=$(node -e \"process.stdout.write('0'.repeat(64))\")" >> "$GITHUB_ENV"
+          echo 'SESSION_SECRET=test-session-secret' >> "$GITHUB_ENV"
+          echo 'DASHBOARD_URL=http://localhost:3000' >> "$GITHUB_ENV"
+          echo 'REDIS_URL=redis://localhost:6379' >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Apply capacity hardening
+        run: |
+          python3 scripts/apply-capacity-4000-patch.py
+          python3 scripts/apply-capacity-4000-hotpath.py
+          python3 scripts/apply-capacity-4000-session-fix.py
+          python3 scripts/apply-capacity-4000-followup.py
+          python3 scripts/apply-capacity-4000-followup-fix.py
+          python3 scripts/apply-capacity-4000-deepfix.py
+          python3 scripts/apply-capacity-4000-scopefix.py
+      - name: Prepare database
+        run: |
+          npx prisma generate
+          npx prisma migrate deploy
+      - name: Run Full Jest quietly
+        id: jest
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          timeout --signal=TERM --kill-after=30s 10m npx jest --runInBand --coverage=false --json --outputFile=jest-results.json >jest-output.log 2>&1
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Print concise Jest failures
+        if: always()
+        shell: bash
+        env:
+          JEST_STATUS: ${{ steps.jest.outputs.status }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const status = Number(process.env.JEST_STATUS || 1);
+          if (!fs.existsSync('jest-results.json')) {
+            const raw = fs.existsSync('jest-output.log') ? fs.readFileSync('jest-output.log', 'utf8') : 'No Jest output available';
+            console.log('JEST_DIAGNOSTIC_NO_JSON');
+            console.log(raw.slice(-16000));
+            process.exit(status || 1);
+          }
+          const result = JSON.parse(fs.readFileSync('jest-results.json', 'utf8'));
+          console.log(`JEST_SUMMARY suites_failed=${result.numFailedTestSuites} tests_failed=${result.numFailedTests} suites_total=${result.numTotalTestSuites} tests_total=${result.numTotalTests}`);
+          for (const suite of result.testResults || []) {
+            const failed = (suite.assertionResults || []).filter(test => test.status === 'failed');
+            if (suite.status !== 'failed' && failed.length === 0 && !suite.failureMessage) continue;
+            console.log(`FAILED_SUITE ${suite.name}`);
+            for (const test of failed) {
+              console.log(`FAILED_TEST ${[...(test.ancestorTitles || []), test.title].join(' > ')}`);
+              const messages = Array.isArray(test.failureMessages) ? test.failureMessages : [];
+              for (const message of messages) console.log(String(message).slice(0, 5000));
+            }
+            if (failed.length === 0 && suite.failureMessage) console.log(String(suite.failureMessage).slice(0, 5000));
+          }
+          if (status !== 0 || result.numFailedTestSuites > 0 || result.numFailedTests > 0) process.exit(status || 1);
+          NODE
