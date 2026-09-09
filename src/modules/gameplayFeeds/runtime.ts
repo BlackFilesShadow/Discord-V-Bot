@@ -24,6 +24,7 @@ import {
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import { forEachBounded } from '../../utils/boundedConcurrency';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
 import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
@@ -58,6 +59,7 @@ const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 1;
 const DELIVERY_SPACING_MS = 12_000;
 const PVP_ENRICHMENT_TIMEOUT_MS = 2_000;
+const CONFIG_SWEEP_CONCURRENCY = 4;
 const GENERIC_DEATH_CORRELATION_MS = 2_500;
 const SPECIFIC_DEATH_EVENT_TYPES: AdmEventType[] = [
   AdmEventType.PLAYER_KILLED,
@@ -832,7 +834,7 @@ export async function runGameplayFeedsOnce(): Promise<void> {
       where: { isActive: true },
       orderBy: { createdAt: 'asc' },
     });
-    for (const config of configs) await processConfig(config);
+    await forEachBounded(configs, CONFIG_SWEEP_CONCURRENCY, processConfig);
   } catch (error) {
     logger.error('GameplayFeed-Worker Fehler:', error as Error);
   } finally {

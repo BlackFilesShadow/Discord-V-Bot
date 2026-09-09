@@ -5,6 +5,7 @@ import prisma from '../../database/prisma';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitRadarEvent } from '../../dashboard/socket/emitter';
 import { logger } from '../../utils/logger';
+import { forEachBounded } from '../../utils/boundedConcurrency';
 import { safeEmbedField } from '../../utils/embedSanitize';
 import { isValidBattleyeGuid } from '../../utils/guid';
 import {
@@ -32,6 +33,7 @@ const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 10;
 const LEASE_MS = 60_000;
 const MAX_DELIVERY_ATTEMPTS = 8;
+const CONFIG_SWEEP_CONCURRENCY = 3;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -446,7 +448,7 @@ export async function runRadarRuntimeOnce(): Promise<void> {
       },
     });
     const configs = await prisma.radarConfig.findMany({ orderBy: { createdAt: 'asc' } });
-    for (const config of configs) await processConfig(config);
+    await forEachBounded(configs, CONFIG_SWEEP_CONCURRENCY, processConfig);
   } catch (error) {
     logger.error('Radar-Worker Fehler:', error as Error);
   } finally {

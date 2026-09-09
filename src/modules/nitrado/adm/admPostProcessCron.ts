@@ -9,6 +9,7 @@
 import prisma from '../../../database/prisma';
 import { config } from '../../../config';
 import { logger } from '../../../utils/logger';
+import { forEachBounded } from '../../../utils/boundedConcurrency';
 import { asGuildId, asNitradoConnId } from '../../../types/scope';
 import { runPvpRewardShadow, type RewardEngineClient } from './rewardEngine';
 import { aggregatePlayerSessions, type PlayerSessionClient } from './playerSessionService';
@@ -24,6 +25,7 @@ import { reconcileVerifiedLinkEconomyEffects } from '../../linking/linkEconomyRe
 import { identityHash } from '../../linking/identity';
 
 const INTERVAL_MS = 60_000;
+const CONNECTION_SWEEP_CONCURRENCY = 3;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
@@ -185,7 +187,7 @@ export async function runAdmPostProcessOnce(): Promise<void> {
       where: { status: 'ACTIVE', nitradoServerId: { not: null } },
       select: { id: true, guildId: true },
     });
-    for (const connection of connections) await processConnection(connection);
+    await forEachBounded(connections, CONNECTION_SWEEP_CONCURRENCY, processConnection);
   } catch (error) {
     logger.error('ADM-V2-Postprocess Fehler:', error as Error);
   } finally {
