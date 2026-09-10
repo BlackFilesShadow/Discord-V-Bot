@@ -8,6 +8,7 @@ import { extractSteamAppId, extractTwitchLogin } from './urlResolver';
 import { getTwitchCreds, getYouTubeKey } from './feedCredentials';
 import { entriesAfterMarker, fetchFeedDocument, type FeedEntry } from './feedDocument';
 import { getSteamNews, getTwitchStream, getYouTubeEntries } from './platformClients';
+import { feedConfigurationAction } from './feedConfigurationPolicy';
 
 export async function createFeed(
   name: string,
@@ -205,12 +206,32 @@ async function processFeed(client: Client, feedId: string, ignoreBackoff = false
     const previous = feedBackoff.get(feedId)?.count ?? 0;
     const count = previous + 1;
     const delayMs = Math.min(60_000 * 2 ** Math.min(count - 1, 5), 30 * 60_000);
-    feedBackoff.set(feedId, { count, until: Date.now() + delayMs });
-    if (isFeedConfigurationError(error)) {
-      logger.warn(`Feed ${feedId}: Konfiguration unvollstaendig/ungueltig; Retry nach Backoff. ${error instanceof Error ? error.message : String(error)}`);
+    const configurationError = isFeedConfigurationError(error);
+    const action = feedConfigurationAction(error, count);
+
+    if (configurationError && action === 'AUTO_DISABLE') {
+      try {
+        const disabled = await prisma.feed.updateMany({
+          where: { id: feedId, isActive: true },
+          data: { isActive: false },
+        });
+        feedBackoff.delete(feedId);
+        if (disabled.count === 1) {
+          logger.warn(`Feed ${feedId}: nach ${count} nicht erreichbaren Ziel-Channel-Pruefungen automatisch deaktiviert. Twitch-Feeds bleiben von dieser Automatik ausgenommen.`);
+        }
+      } catch (disableError) {
+        feedBackoff.set(feedId, { count, until: Date.now() + delayMs });
+        logger.error(`Feed ${feedId}: automatische Deaktivierung nach permanentem Konfigurationsfehler fehlgeschlagen:`, disableError);
+      }
     } else {
-      logger.error(`Feed-Verarbeitung fehlgeschlagen (${feedId}):`, error);
+      feedBackoff.set(feedId, { count, until: Date.now() + delayMs });
+      if (configurationError) {
+        logger.warn(`Feed ${feedId}: Konfiguration unvollstaendig/ungueltig; Retry nach Backoff. ${error instanceof Error ? error.message : String(error)}`);
+      } else {
+        logger.error(`Feed-Verarbeitung fehlgeschlagen (${feedId}):`, error);
+      }
     }
+
     if (propagateError) throw error;
   } finally {
     processingFeeds.delete(feedId);

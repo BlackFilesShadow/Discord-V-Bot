@@ -52,10 +52,17 @@ function sortKey(e: SessionSourceEvent): [number, bigint] {
 }
 
 /**
- * Reine Paarung: connect -> naechstes disconnect je Spieler. Ein erneutes
- * connect ohne zwischenzeitliches disconnect schliesst die vorherige offene
- * Sitzung nicht kuenstlich (sie bleibt OPEN, durationSeconds 0). Ein disconnect
- * ohne offenes connect wird ignoriert (kein Sitzungsanfang bekannt).
+ * Reine Paarung: connect -> naechstes disconnect je Spieler.
+ *
+ * Ein erneutes Connect ohne zwischenzeitliches Disconnect ist harte Evidenz,
+ * dass die vorherige Connect-Instanz nicht mehr die aktuelle Sitzung sein kann.
+ * Diese superseded Sitzung wird deshalb konservativ CLOSED geschrieben, aber
+ * bewusst mit Dauer/Buckets 0: ohne echtes Disconnect wird keine Spielzeit
+ * erfunden und niemals nachtraeglich Geld gutgeschrieben. `disconnectedAt` ist
+ * lediglich die beobachtete obere Grenze (Zeitpunkt des Folge-Connects),
+ * `disconnectEventId` bleibt null.
+ *
+ * Ein disconnect ohne offenes connect wird ignoriert (kein Sitzungsanfang bekannt).
  */
 export function pairPlayerSessions(events: SessionSourceEvent[]): PairedSession[] {
   const byPlayer = new Map<string, SessionSourceEvent[]>();
@@ -78,7 +85,7 @@ export function pairPlayerSessions(events: SessionSourceEvent[]): PairedSession[
     let open: SessionSourceEvent | null = null;
     for (const e of list) {
       if (e.eventType === 'PLAYER_CONNECTED') {
-        if (open) out.push(openSession(gameId, open)); // vorheriges connect blieb offen
+        if (open) out.push(closeSupersededSession(gameId, open, e));
         open = e;
       } else if (open) { // PLAYER_DISCONNECTED mit offenem connect
         out.push(closeSession(gameId, open, e));
@@ -101,6 +108,24 @@ function openSession(gameId: string, connect: SessionSourceEvent): PairedSession
     durationSeconds: 0,
     bucketsEarned: 0,
     status: 'OPEN',
+  };
+}
+
+function closeSupersededSession(
+  gameId: string,
+  connect: SessionSourceEvent,
+  nextConnect: SessionSourceEvent,
+): PairedSession {
+  return {
+    gameId,
+    playerName: connect.actorName,
+    connectEventId: connect.id,
+    disconnectEventId: null,
+    connectedAt: connect.occurredAt,
+    disconnectedAt: nextConnect.occurredAt,
+    durationSeconds: 0,
+    bucketsEarned: 0,
+    status: 'CLOSED',
   };
 }
 
@@ -140,8 +165,8 @@ export interface PlayerSessionClient {
 /**
  * Baut/aktualisiert PlayerSessions aus den Connect/Disconnect-Events eines
  * Slots. Idempotent ueber connectEventId (unique). Eine zuvor OPEN gebuchte
- * Sitzung wird beim spaeteren Auftauchen ihres Disconnects auf CLOSED
- * aktualisiert; bucketsCredited bleibt unangetastet (kein Reset).
+ * Sitzung wird beim spaeteren Auftauchen ihres Disconnects oder eines neuen
+ * Connects auf CLOSED aktualisiert; bucketsCredited bleibt unangetastet (kein Reset).
  */
 export async function aggregatePlayerSessions(
   client: PlayerSessionClient,
