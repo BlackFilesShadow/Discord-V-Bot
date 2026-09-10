@@ -45,8 +45,6 @@ SET
   "maxAttempts" = GREATEST(j."maxAttempts", 8),
   "nextRunAt" = CURRENT_TIMESTAMP,
   "lastError" = NULL,
-  "leaseToken" = NULL,
-  "leaseUntil" = NULL,
   "updatedAt" = CURRENT_TIMESTAMP
 WHERE j."operation" = 'RESTART_IF_DOWN'
   AND j."status" = 'DEAD'
