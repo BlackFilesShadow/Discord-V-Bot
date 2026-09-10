@@ -136,8 +136,10 @@ async function serializeAccount(guildId: GuildId, connId: NitradoConnId, account
   };
 }
 
-// Generic control list contains only accounts owned by the generic virtual-account
-// feature. The Serverbank is CUSTOM-backed but domain-owned and therefore excluded.
+// The mounted workspace endpoint feeds both the generic virtual-account list and
+// the dedicated Serverbank editor. The CUSTOM-backed Serverbank must therefore
+// remain readable here, while LOTTERY/BLACK_MARKET stay in their own panels and
+// all Serverbank mutations remain protected by the domain guards below.
 economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuildPermission('economy.view'), async (req, res) => {
   const scope = req.guildScope!;
   const connId = scope.nitradoConnId;
@@ -149,7 +151,12 @@ economyVirtualAccountTerminalDeletionRouter.get('/control/accounts', requireGuil
   ]);
   const liveAccounts = accounts.filter(account => !deletedIds.has(account.id) && account.status !== 'ARCHIVED');
   const serialized = await Promise.all(liveAccounts.map(account => serializeAccount(scope.guildId, connId, account.id)));
-  res.json({ accounts: serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS') });
+  res.json({
+    accounts: serialized.filter(account => (
+      account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS'
+        || account.capabilities.managedBy === 'SERVER_BANK'
+    )),
+  });
 });
 
 // Read-only registry includes every domain-owned account, including the CUSTOM-
