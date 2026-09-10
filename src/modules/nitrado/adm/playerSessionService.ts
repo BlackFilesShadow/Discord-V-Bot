@@ -164,9 +164,12 @@ export interface PlayerSessionClient {
 
 /**
  * Baut/aktualisiert PlayerSessions aus den Connect/Disconnect-Events eines
- * Slots. Idempotent ueber connectEventId (unique). Eine zuvor OPEN gebuchte
- * Sitzung wird beim spaeteren Auftauchen ihres Disconnects oder eines neuen
- * Connects auf CLOSED aktualisiert; bucketsCredited bleibt unangetastet (kein Reset).
+ * Slots. Idempotent ueber connectEventId (unique). Eine Session darf dabei nur
+ * monoton von OPEN -> CLOSED wechseln. Ein bereits CLOSED persistierter Satz
+ * wird niemals wieder auf OPEN zurueckgesetzt, selbst wenn der kanonische
+ * Eventstrom fuer genau diesen Connect weiterhin keinen Disconnect enthaelt.
+ * Das ist wichtig fuer konservative stale-session Hygiene ausserhalb dieses
+ * reinen Event-Pairings. bucketsCredited bleibt unangetastet (kein Reset).
  */
 export async function aggregatePlayerSessions(
   client: PlayerSessionClient,
@@ -201,6 +204,14 @@ export async function aggregatePlayerSessions(
   const sessions = pairPlayerSessions(events);
   let upserted = 0, closed = 0, open = 0;
   for (const s of sessions) {
+    const closingUpdate = {
+      playerName: s.playerName,
+      disconnectEventId: s.disconnectEventId,
+      disconnectedAt: s.disconnectedAt,
+      durationSeconds: s.durationSeconds,
+      bucketsEarned: s.bucketsEarned,
+      status: s.status,
+    };
     await client.playerSession.upsert({
       where: { connectEventId: s.connectEventId },
       create: {
@@ -216,15 +227,12 @@ export async function aggregatePlayerSessions(
         bucketsEarned: s.bucketsEarned,
         status: s.status,
       },
-      // Nur die Sitzungs-Endedaten aktualisieren; bucketsCredited NICHT anfassen.
-      update: {
-        playerName: s.playerName,
-        disconnectEventId: s.disconnectEventId,
-        disconnectedAt: s.disconnectedAt,
-        durationSeconds: s.durationSeconds,
-        bucketsEarned: s.bucketsEarned,
-        status: s.status,
-      },
+      // CLOSED ist terminal. Fuer eine weiterhin berechnete OPEN-Session werden
+      // nur nicht-terminale Metadaten aktualisiert; ein externer Hygiene-Close
+      // wird dadurch beim naechsten Postprocess nicht wieder aufgerissen.
+      update: s.status === 'CLOSED'
+        ? closingUpdate
+        : { playerName: s.playerName },
     });
     upserted++;
     if (s.status === 'CLOSED') closed++; else open++;
