@@ -68,10 +68,11 @@ describe('virtual account terminal removal regression', () => {
     expect(deletion).toContain('aktiven Fachvorgang');
   });
 
-  it('never lists terminally deleted or domain-owned accounts in generic control and permanently rejects restore', () => {
+  it('never lists terminally deleted accounts, keeps lottery/market out of control, and permanently rejects restore', () => {
     expect(terminal).toContain('listDeletedVirtualAccountIds');
     expect(terminal).toContain('const liveAccounts = accounts.filter(account => !deletedIds.has(account.id) && account.status !== \'ARCHIVED\');');
-    expect(terminal).toContain("serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS')");
+    expect(terminal).toContain("account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS'");
+    expect(terminal).toContain("account.capabilities.managedBy === 'SERVER_BANK'");
     expect(terminal).toContain("serialized.filter(account => account.capabilities.managedBy !== 'VIRTUAL_ACCOUNTS')");
     expect(terminal).toContain("post('/control/accounts/:accountId/restore'");
     expect(terminal).toContain('res.status(410)');
@@ -79,9 +80,10 @@ describe('virtual account terminal removal regression', () => {
     expect(deletion).toContain('return false;');
   });
 
-  it('blocks direct mutations against deleted IDs and live domain-owned accounts', () => {
+  it('blocks direct mutations against deleted IDs and live domain-owned accounts except the explicit Serverbank configuration handoff', () => {
     expect(terminal).toContain('async function rejectDeletedOrDomainOwnedMutation');
     expect(terminal).toContain('Dieses Konto wurde dauerhaft gelöscht und kann nicht mehr verändert werden.');
+    expect(terminal).toContain("if (owner === 'SERVER_BANK' && req.method === 'PUT')");
     expect(terminal).toContain("owner && owner !== 'VIRTUAL_ACCOUNTS'");
     expect(terminal).toContain('Systemkonten werden ausschließlich über ihre Fachfunktion verwaltet.');
     expect(terminal).toContain("put('/control/accounts/:accountId'");
