@@ -43,7 +43,13 @@ async function sendNotice(client: Client, args: { guildId: string; nitradoConnId
   let notice: { id: string };
   try {
     notice = await prisma.nitradoDriftNotice.create({
-      data: { ...args, channelId },
+      data: {
+        guildId: args.guildId,
+        nitradoConnId: args.nitradoConnId,
+        kind: args.kind,
+        subjectKey: args.subjectKey,
+        channelId,
+      },
       select: { id: true },
     });
   } catch (error) {
@@ -77,11 +83,21 @@ async function sendNotice(client: Client, args: { guildId: string; nitradoConnId
 }
 
 export async function notifyNitradoWhitelistDrift(client: Client, args: { guildId: string; nitradoConnId: string; gameId: string }): Promise<void> {
-  await sendNotice(client, { ...args, kind: 'WHITELIST', subjectKey: args.gameId });
+  await sendNotice(client, {
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    kind: 'WHITELIST',
+    subjectKey: args.gameId,
+  });
 }
 
 export async function notifyNitradoBanDrift(client: Client, args: { guildId: string; nitradoConnId: string; banId: string }): Promise<void> {
-  await sendNotice(client, { ...args, kind: 'BAN', subjectKey: args.banId });
+  await sendNotice(client, {
+    guildId: args.guildId,
+    nitradoConnId: args.nitradoConnId,
+    kind: 'BAN',
+    subjectKey: args.banId,
+  });
 }
 
 export async function clearNitradoDriftNotice(client: Client | undefined, guildId: string, nitradoConnId: string, kind: DriftKind, subjectKey: string): Promise<void> {
