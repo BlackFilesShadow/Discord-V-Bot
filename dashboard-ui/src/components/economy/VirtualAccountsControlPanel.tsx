@@ -798,7 +798,7 @@ export function VirtualAccountsControlPanel({ guildId, slot, openTreasuryConfigu
         })}
       </div>
 
-      <LegacyAdminPayout guildId={guildId} slot={slot} accounts={rows} onDone={setMessage} />
+      <LegacyAdminPayout guildId={guildId} slot={slot} accounts={listRows} onDone={setMessage} />
     </Card>
   );
 }
