@@ -30,13 +30,16 @@ describe('4,000-player follow-up capacity architecture', () => {
     expect(bans).not.toContain('Promise.all(items.map');
   });
 
-  it('Flag activity selects the semantically relevant short sessions and cannot truncate nearest positions at 1,000 global samples', () => {
+  it('Flag activity bounds reconnect overscan, deduplicates by player identity and cannot truncate nearest positions at 1,000 global samples', () => {
     const flag = read('src/modules/gameplayFeeds/flagActivity.ts');
     const migration = read('prisma/migrations/20260909104500_adm_player_roster_hotpath/migration.sql');
 
     expect(flag).toContain("durationSeconds: { lte: SHORT_SESSION_SECONDS }");
     expect(flag).toContain("status: 'CLOSED'");
-    expect(flag).toContain('take: MAX_OTHER_SESSIONS + 1');
+    expect(flag).toContain('const MAX_OTHER_SESSION_CANDIDATES = MAX_OTHER_SESSIONS * 16');
+    expect(flag).toContain('take: MAX_OTHER_SESSION_CANDIDATES');
+    expect(flag).toContain('const byGameId = new Map<string, FlagActivitySessionRow>()');
+    expect(flag).toContain('if (directGameId && session.gameId === directGameId) continue');
     expect(flag).not.toContain('take: 100,');
     expect(flag).not.toContain('take: 1000');
     expect(migration).toContain('AdmEvent_flag_activity_position_idx');
