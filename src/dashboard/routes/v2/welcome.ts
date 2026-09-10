@@ -25,6 +25,7 @@ import { resolveCustomEmotes } from '../../../modules/ai/emoteResolver';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb } from '../../../utils/logger';
+import { validateSupportedImageUpload } from '../../../utils/imageUploadMagic';
 import { emitGuildEvent } from '../../socket/emitter';
 import { config } from '../../../config';
 
@@ -307,6 +308,10 @@ welcomeRouter.post(
     if (file.size > MAX_IMAGE_BYTES) {
       res.status(400).json({ error: `Datei zu gross (max ${MAX_IMAGE_BYTES / 1024 / 1024} MB).` }); return;
     }
+    const imageValidation = validateSupportedImageUpload(file);
+    if (!imageValidation.ok) {
+      res.status(400).json({ error: imageValidation.error }); return;
+    }
 
     const dir = path.join(WELCOME_UPLOADS_BASE, scope.guildId);
     await fs.mkdir(dir, { recursive: true });
@@ -357,7 +362,6 @@ welcomeRouter.post('/autoroles', requireGuildPermission('welcome.manage'), async
   if (!client) { res.status(503).json({ error: 'Bot nicht bereit.' }); return; }
   const guild = client.guilds.cache.get(scope.guildId);
   if (!guild) { res.status(404).json({ error: 'Bot ist nicht in dieser Guild.' }); return; }
-
   const role = guild.roles.cache.get(body.roleId);
   if (!role) { res.status(400).json({ error: 'Rolle gehoert nicht zu diesem Server.' }); return; }
   if (role.id === guild.id) { res.status(400).json({ error: '@everyone kann nicht als Auto-Rolle gesetzt werden.' }); return; }
