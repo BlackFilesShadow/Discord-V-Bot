@@ -25,6 +25,8 @@ import prisma from '../database/prisma';
 import { metricsRegistry } from '../utils/metrics';
 import type { Client } from 'discord.js';
 import { createMutationOriginGuard } from './middleware/mutationOrigin';
+import { requireAuth } from './middleware/auth';
+import { requireActivePersistentSession } from './middleware/activePersistentSession';
 
 /**
  * Express `trust proxy`-Wert aus der Konfiguration parsen.
@@ -165,14 +167,21 @@ export async function startDashboard(
     message: { error: 'rate_limited', message: 'Zu viele Anfragen. Bitte kurz warten.' },
   });
 
-  // verify-Hook sichert die Original-Rohbytes (req.rawBody), damit der
-  // Webhook-Endpunkt die HMAC-Signatur ueber den ungeparsten Body pruefen
-  // kann (F-001). Ohne das wuerde express.json() den Stream konsumieren und
-  // die Signaturpruefung liefe gegen re-serialisiertes JSON -> stets 401/400.
-  app.use(express.json({
+  // Der oeffentliche Webhook besitzt absichtlich einen eigenen Raw-Parser mit
+  // 512-KiB-Limit. Der globale 10-MiB-JSON-Parser darf seinen Stream deshalb
+  // nicht vorher konsumieren; alle anderen JSON-Routen behalten unveraendert
+  // den bisherigen Parser samt rawBody-Verifikation.
+  const jsonBodyParser = express.json({
     limit: '10mb',
     verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; },
-  }));
+  });
+  app.use((req, res, next) => {
+    if (req.path === '/webhooks' || req.path.startsWith('/webhooks/')) {
+      next();
+      return;
+    }
+    jsonBodyParser(req, res, next);
+  });
   app.use(express.urlencoded({ extended: true }));
 
   // Session (Sektion 12: Session-Management)
@@ -249,21 +258,26 @@ export async function startDashboard(
   // /auth/status (vom Frontend gepollt) und /auth/logout bleiben frei.
   app.use('/auth/login', loginLimiter);
   app.use('/auth/callback', loginLimiter);
-  app.use('/auth/2fa', loginLimiter);
+  // 2FA muss vor Abschluss des zweiten Faktors erreichbar bleiben, aber die
+  // darunterliegende persistente Anwendungssession darf nicht widerrufen,
+  // abgelaufen oder von einem Legacy-Cookie ohne sessionToken stammen.
+  app.use('/auth/2fa', loginLimiter, requireActivePersistentSession);
   app.use('/auth', authRouter);
   // Webhook-Endpunkt OHNE Session-Auth (eigene HMAC-Pruefung im Router).
-  // Die HMAC-Pruefung nutzt req.rawBody (vom verify-Hook des globalen
-  // JSON-Parsers gesichert), daher ist die Mount-Reihenfolge unkritisch.
+  // Der globale JSON-Parser ueberspringt /webhooks bewusst; damit besitzt der
+  // lokale Raw-Parser den Stream und erzwingt sein 512-KiB-Limit vor HMAC/JSON.
   app.use('/webhooks', apiLimiter, webhookRouter);
   // Discord-Setup-Diagnose: MUSS vor /api stehen, sonst greift apiRouter
   // mit requireAuth zuerst und blockt den Owner-Self-Service.
   app.use('/api/health', apiLimiter, discordHealthRouter);
+  // v2 ist eine eigene API-Grenze: genau ein Limiter hier und genau der eine
+  // kanonische requireAuth in v2Router. Vor /api mounten, damit Express-Prefix-
+  // Matching den Legacy-Router nicht zusaetzlich ueber /api/v2 laufen laesst.
+  app.use('/api/v2', apiLimiter, v2Router);
   app.use('/api', apiLimiter, apiRouter);
-  // Hinweis: /api/v2 wird bereits durch den /api-apiLimiter oben gezaehlt.
-  // Kein zweites Mount, sonst dekrementiert das Limit pro Request doppelt
-  // (-> verfruehte 429s fuer unauthentifizierte Polls).
-  app.use('/api/v2', v2Router);
-  app.use('/test', apiLimiter, testRouter);
+  // Produktions-Testoberflaeche behaelt ihre bestehende ADMIN/DEVELOPER-Logik,
+  // erbt davor aber denselben persistenten Session-/2FA-Guard wie v2.
+  app.use('/test', apiLimiter, requireAuth, testRouter);
   // Public Web-Transcripts (KEINE Auth — UUID-basierte unguessable URL).
   // MUSS vor dem SPA-Fallback liegen, sonst frisst React den Pfad.
   app.use('/transcripts', apiLimiter, transcriptsRouter);
