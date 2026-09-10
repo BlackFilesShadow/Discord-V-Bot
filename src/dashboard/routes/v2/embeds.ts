@@ -28,6 +28,7 @@ import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { logAuditDb } from '../../../utils/logger';
+import { validateSupportedImageUpload } from '../../../utils/imageUploadMagic';
 import { emitGuildEvent } from '../../socket/emitter';
 import { config } from '../../../config';
 import {
@@ -510,6 +511,10 @@ embedsRouter.post(
     }
     if (file.size > MAX_IMAGE_BYTES) {
       res.status(400).json({ error: `Datei zu gross (max ${MAX_IMAGE_BYTES / 1024 / 1024} MB).` }); return;
+    }
+    const imageValidation = validateSupportedImageUpload(file);
+    if (!imageValidation.ok) {
+      res.status(400).json({ error: imageValidation.error }); return;
     }
 
     const dir = path.join(EMBED_UPLOADS_BASE, scope.guildId);

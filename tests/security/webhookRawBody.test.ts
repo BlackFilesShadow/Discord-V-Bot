@@ -11,6 +11,7 @@ process.env.SESSION_SECRET ||= 'test-session-secret';
  * - Timestamp muss frisch sein.
  * - derselbe authentisierte Request darf persistent nur einmal zugestellt werden.
  * - bei Downstream-Fehlern wird der Replay-Claim freigegeben, damit ein echter Retry moeglich bleibt.
+ * - der oeffentliche Webhook behält seine eigene 512-KiB-Ingress-Grenze.
  */
 
 import crypto from 'crypto';
@@ -72,10 +73,17 @@ const fakeClient = {
 
 function makeApp() {
   const app = express();
-  app.use(express.json({
+  const jsonBodyParser = express.json({
     limit: '10mb',
     verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; },
-  }));
+  });
+  app.use((req, res, next) => {
+    if (req.path === '/webhooks' || req.path.startsWith('/webhooks/')) {
+      next();
+      return;
+    }
+    jsonBodyParser(req, res, next);
+  });
   app.use('/webhooks', webhookRouter);
   app.post('/echo', (req, res) => { res.json({ received: req.body }); });
   return app;
@@ -109,6 +117,20 @@ describe('F-001/F-002 — Webhook raw body, signed timestamp and replay protecti
     expect(res.status).toBe(200);
     expect(channelSend).toHaveBeenCalledTimes(1);
     expect(prismaMock.idempotencyKey.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('lehnt Bodies oberhalb der deklarierten 512-KiB-Grenze vor der Zustellung ab', async () => {
+    const body = JSON.stringify({ title: 'x'.repeat(513 * 1024) });
+    const timestamp = nowTimestamp();
+    const res = await request(makeApp())
+      .post(`/webhooks/feed/${FEED_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-V-Webhook-Timestamp', timestamp)
+      .set('X-V-Webhook-Signature', sign(body, timestamp))
+      .send(body);
+    expect(res.status).toBe(413);
+    expect(channelSend).not.toHaveBeenCalled();
+    expect(prismaMock.feed.findUnique).not.toHaveBeenCalled();
   });
 
   it('lehnt einen manipulierten Body ab (401)', async () => {
