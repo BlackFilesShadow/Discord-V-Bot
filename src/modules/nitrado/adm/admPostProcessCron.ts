@@ -17,7 +17,7 @@ import { runAdmParserBackfill, type AdmParserBackfillClient } from './admParserB
 import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../../economy/rewardRules';
 import { getSlotEconomyConfig, type SlotConfigClient } from '../../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewardBooking';
-import { bookPlaytimeRewards, type PlaytimeBookingClient } from '../../economy/playtimeBooking';
+import { bookPlaytimeRewardsWithLiveRoster } from '../../economy/playtimeLiveRosterGuard';
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
 import { resolveRewardIdentity, resolveRewardUserAt, applySuccessfulLinkEconomyEffects } from '../../linking/linkRewards';
 import { reconcileAdminForcedLinks } from '../../linking/adminForceLink';
@@ -161,10 +161,11 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
       );
     }
 
-    // Always run playtime progress. When payout is disabled, completed buckets
-    // are consumed without money so later activation cannot back-pay history.
-    await bookPlaytimeRewards(
-      prisma as unknown as PlaytimeBookingClient,
+    // OPEN-Spielzeit darf nur anhand derselben aktuellen ADM-Roster-Wahrheit
+    // fortgeschrieben werden wie die PLAYER_LIST. Historische/verwaiste OPEN-
+    // Sessions koennen dadurch niemals bis `now` weiterverdienen. CLOSED-
+    // Sessions laufen unveraendert ueber den persistenten Reward-Cursor.
+    await bookPlaytimeRewardsWithLiveRoster(
       scopeRef,
       {
         perBucketAmount: effectiveBaseAmount(playtimeRule),
