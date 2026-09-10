@@ -11,6 +11,7 @@ const CUSTOM_ID_PREFIX = 'flagshort:v1:';
 const CORRELATION_WINDOW_MS = 10 * 60_000;
 const SHORT_SESSION_SECONDS = 15 * 60;
 const MAX_OTHER_SESSIONS = 8;
+const MAX_OTHER_SESSION_CANDIDATES = MAX_OTHER_SESSIONS * 16;
 
 function signature(eventId: string): string {
   return createHmac('sha256', config.security.encryptionKey)
@@ -86,7 +87,7 @@ async function hasFlagFeedPermission(interaction: ButtonInteraction): Promise<bo
     || delegated.permissions.has('dashboard.access');
 }
 
-type SessionRow = {
+export type FlagActivitySessionRow = {
   id: string;
   gameId: string;
   playerName: string | null;
@@ -113,8 +114,73 @@ function nearestPositions(rows: PositionRow[], eventAt: Date): Map<string, strin
   return new Map(Array.from(out.entries()).map(([id, value]) => [id, value.position]));
 }
 
-function sessionDetails(
-  session: SessionRow,
+function sessionDistanceToEventMs(session: FlagActivitySessionRow, eventAt: Date): number {
+  const eventMs = eventAt.getTime();
+  const connectedMs = session.connectedAt?.getTime() ?? null;
+  const disconnectedMs = session.disconnectedAt?.getTime() ?? null;
+
+  if (connectedMs !== null && connectedMs > eventMs) return connectedMs - eventMs;
+  if (disconnectedMs !== null && disconnectedMs < eventMs) return eventMs - disconnectedMs;
+  return 0;
+}
+
+function isMoreRelevantSession(
+  candidate: FlagActivitySessionRow,
+  current: FlagActivitySessionRow,
+  eventAt: Date,
+): boolean {
+  const candidateDistance = sessionDistanceToEventMs(candidate, eventAt);
+  const currentDistance = sessionDistanceToEventMs(current, eventAt);
+  if (candidateDistance !== currentDistance) return candidateDistance < currentDistance;
+
+  const candidateConnected = candidate.connectedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const currentConnected = current.connectedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+  if (candidateConnected !== currentConnected) return candidateConnected > currentConnected;
+
+  return candidate.id.localeCompare(current.id) < 0;
+}
+
+/**
+ * Pro DayZ-Spieler darf im Korrelations-Embed hoechstens eine Session auftauchen.
+ * Die stabile Identitaet ist gameId, nicht Session-ID oder sichtbarer Spielername.
+ */
+export function selectRelevantFlagSessions(
+  candidates: FlagActivitySessionRow[],
+  eventAt: Date,
+  directGameId: string | null,
+  limit = MAX_OTHER_SESSIONS,
+): FlagActivitySessionRow[] {
+  const byGameId = new Map<string, FlagActivitySessionRow>();
+
+  for (const session of candidates) {
+    if (directGameId && session.gameId === directGameId) continue;
+    if (session.status !== 'CLOSED' || !session.disconnectedAt) continue;
+    if (session.durationSeconds > SHORT_SESSION_SECONDS) continue;
+
+    const current = byGameId.get(session.gameId);
+    if (!current || isMoreRelevantSession(session, current, eventAt)) {
+      byGameId.set(session.gameId, session);
+    }
+  }
+
+  return Array.from(byGameId.values())
+    .sort((a, b) => {
+      const distanceDelta = sessionDistanceToEventMs(a, eventAt) - sessionDistanceToEventMs(b, eventAt);
+      if (distanceDelta !== 0) return distanceDelta;
+
+      const durationDelta = a.durationSeconds - b.durationSeconds;
+      if (durationDelta !== 0) return durationDelta;
+
+      const aConnected = a.connectedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+      const bConnected = b.connectedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+      if (aConnected !== bConnected) return bConnected - aConnected;
+      return a.id.localeCompare(b.id);
+    })
+    .slice(0, Math.max(0, limit));
+}
+
+export function formatFlagSessionDetails(
+  session: FlagActivitySessionRow,
   eventAt: Date,
   flagPosition: string | null,
   nearestPosition: string | null,
@@ -132,17 +198,26 @@ function sessionDetails(
     ].join('\n');
   }
 
-  const before = session.connectedAt
-    ? Math.max(0, Math.round((eventAt.getTime() - session.connectedAt.getTime()) / 1000))
-    : null;
-  const after = Math.max(0, Math.round((session.disconnectedAt.getTime() - eventAt.getTime()) / 1000));
+  const eventMs = eventAt.getTime();
+  const connectedMs = session.connectedAt?.getTime() ?? null;
+  const disconnectedMs = session.disconnectedAt.getTime();
+  const sessionEndedBeforeEvent = disconnectedMs < eventMs;
+
+  const relationLines = sessionEndedBeforeEvent
+    ? [`Disconnect → Flagge: ${durationLabel((eventMs - disconnectedMs) / 1000)}`]
+    : [
+        connectedMs === null
+          ? null
+          : `Connect → Flagge: ${durationLabel((eventMs - connectedMs) / 1000)}`,
+        `Flagge → Disconnect: ${durationLabel((disconnectedMs - eventMs) / 1000)}`,
+      ];
+
   return [
     `Online gekommen: ${discordTime(session.connectedAt)}`,
     `Flaggenereignis: ${discordTime(eventAt)}`,
     `Offline gegangen: ${discordTime(session.disconnectedAt)}`,
     `Gesamte Session: **${durationLabel(session.durationSeconds)}**`,
-    before === null ? null : `Connect → Flagge: ${durationLabel(before)}`,
-    `Flagge → Disconnect: ${durationLabel(after)}`,
+    ...relationLines,
     distanceLabel(horizontalDistanceMeters(nearestPosition, flagPosition)),
   ].filter(Boolean).join('\n');
 }
@@ -249,20 +324,24 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
       where: {
         guildId: event.guildId,
         nitradoConnId: event.nitradoConnId,
+        ...(event.actorGameId ? { gameId: { not: event.actorGameId } } : {}),
         connectedAt: { gte: before, lte: eventAt },
         disconnectedAt: { gte: before },
         durationSeconds: { lte: SHORT_SESSION_SECONDS },
         status: 'CLOSED',
       },
-      orderBy: [{ durationSeconds: 'asc' }, { connectedAt: 'asc' }, { id: 'asc' }],
-      take: MAX_OTHER_SESSIONS + 1,
+      orderBy: [{ connectedAt: 'desc' }, { id: 'asc' }],
+      take: MAX_OTHER_SESSION_CANDIDATES,
     }),
   ]);
 
-  const byId = new Map<string, SessionRow>();
-  if (directSession) byId.set(directSession.id, directSession as SessionRow);
-  for (const session of nearbySessions as SessionRow[]) byId.set(session.id, session);
-  const sessions = Array.from(byId.values());
+  const direct = directSession as FlagActivitySessionRow | null;
+  const shortOthers = selectRelevantFlagSessions(
+    nearbySessions as FlagActivitySessionRow[],
+    eventAt,
+    event.actorGameId,
+  );
+  const sessions = direct ? [direct, ...shortOthers] : shortOthers;
 
   const gameIds = Array.from(new Set(sessions.map(session => session.gameId)));
   const positionRows = gameIds.length === 0 ? [] : await prisma.admEvent.findMany({
@@ -278,25 +357,17 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
   });
   const nearest = nearestPositions(positionRows, eventAt);
 
-  const direct = directSession as SessionRow | null;
   const directPosition = event.actorPosition || (direct ? nearest.get(direct.gameId) : null) || null;
   embed.addFields({
     name: '🎯 Direkt im ADM geloggter Spieler',
     value: safeEmbedField([
       `**${event.actorName || direct?.playerName || 'Unbekannt'}**`,
       direct
-        ? sessionDetails(direct, eventAt, event.flagPosition, directPosition)
+        ? formatFlagSessionDetails(direct, eventAt, event.flagPosition, directPosition)
         : `Aktion: ${event.action === 'RAISED' ? 'Flagge hochgezogen' : 'Flagge heruntergelassen'}\n${distanceLabel(horizontalDistanceMeters(directPosition, event.flagPosition))}\nKeine passende PlayerSession zum Ereignis gefunden.`,
     ].join('\n'), 1024),
     inline: false,
   });
-
-  const shortOthers = sessions
-    .filter(session => session.id !== direct?.id)
-    .filter(session => session.status === 'CLOSED' && session.disconnectedAt && session.durationSeconds <= SHORT_SESSION_SECONDS)
-    .filter(session => session.disconnectedAt!.getTime() >= before.getTime())
-    .sort((a, b) => a.durationSeconds - b.durationSeconds)
-    .slice(0, MAX_OTHER_SESSIONS);
 
   if (shortOthers.length === 0) {
     embed.addFields({
@@ -308,7 +379,7 @@ export async function handleFlagActivityButton(interaction: ButtonInteraction): 
     for (const session of shortOthers) {
       embed.addFields({
         name: `⚠️ Kurzzeit-Session · ${safeEmbedField(session.playerName || 'Unbekannter Spieler', 200)}`,
-        value: safeEmbedField(sessionDetails(
+        value: safeEmbedField(formatFlagSessionDetails(
           session,
           eventAt,
           event.flagPosition,
