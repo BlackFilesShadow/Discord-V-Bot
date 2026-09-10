@@ -27,6 +27,7 @@ jest.mock('../../src/utils/logger', () => ({
 import { Prisma } from '@prisma/client';
 import {
   KEEP_ONLINE_DEAD_RETRY_COOLDOWN_MS,
+  KEEP_ONLINE_MAX_ATTEMPTS,
   runKeepOnlinePollOnce,
 } from '../../src/modules/nitrado/permaOnlyCron';
 import { KEEP_ONLINE_DISABLED_JOB_REASON } from '../../src/modules/nitrado/keepOnlineJobs';
@@ -106,9 +107,10 @@ describe('Nitrado-1H — Keep-Online DEAD retry cooldown', () => {
     });
   });
 
-  it('erzeugt nach freiem Cooldown genau einen neuen begrenzten Auto-Start-Job', async () => {
+  it('erzeugt nach freiem Cooldown genau einen Auto-Start-Job mit Breaker-tauglichem Retry-Budget', async () => {
     await runKeepOnlinePollOnce();
 
+    expect(KEEP_ONLINE_MAX_ATTEMPTS).toBe(8);
     expect(transactionMock).toHaveBeenCalledWith(
       expect.any(Function),
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -122,7 +124,7 @@ describe('Nitrado-1H — Keep-Online DEAD retry cooldown', () => {
         payload: {},
         status: 'PENDING',
         attempts: 0,
-        maxAttempts: 3,
+        maxAttempts: KEEP_ONLINE_MAX_ATTEMPTS,
         nextRunAt: NOW,
       },
     });

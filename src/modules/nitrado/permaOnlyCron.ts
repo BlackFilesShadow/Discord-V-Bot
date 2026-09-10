@@ -10,6 +10,9 @@
  *   Auto-Start-Jobs fuer einen begrenzten Cooldown. Bewusste Cancellation beim
  *   Deaktivieren von Keep-Online zaehlt nicht als Fehler und blockiert spaetere
  *   Reaktivierung nicht.
+ * - RESTART_IF_DOWN verwendet acht Versuche. Drei Versuche konnten bei einem
+ *   kurzzeitig offenen Nitrado-Circuit-Breaker bereits vor dessen Cooldown-Ende
+ *   erschoepft sein und einen eigentlich transienten Zustand zu DEAD machen.
  * - Der Check+Insert laeuft SERIALIZABLE, damit zwei Prozesse nicht beide
  *   denselben Job enqueuen koennen (NIT-009).
  * - Ob wirklich gestartet werden darf entscheidet der Worker anhand des
@@ -24,6 +27,7 @@ import { KEEP_ONLINE_DISABLED_JOB_REASON } from './keepOnlineJobs';
 const POLL_INTERVAL_MS = 3 * 60 * 1000;
 const INITIAL_DELAY_MS = 60_000;
 export const KEEP_ONLINE_DEAD_RETRY_COOLDOWN_MS = 60 * 60 * 1000;
+export const KEEP_ONLINE_MAX_ATTEMPTS = 8;
 
 let timer: NodeJS.Timeout | null = null;
 let initialTimer: NodeJS.Timeout | null = null;
@@ -66,7 +70,7 @@ async function enqueueIfMissing(slot: { id: string; guildId: string }): Promise<
           payload: {},
           status: 'PENDING',
           attempts: 0,
-          maxAttempts: 3,
+          maxAttempts: KEEP_ONLINE_MAX_ATTEMPTS,
           nextRunAt: new Date(),
         },
       });
