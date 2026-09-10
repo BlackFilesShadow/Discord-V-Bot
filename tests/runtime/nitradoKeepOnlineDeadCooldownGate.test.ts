@@ -41,6 +41,7 @@ describe('Nitrado-1H keep-online DEAD retry cooldown gate', () => {
     expect(source.slice(blockerRead, create)).toContain("operation: 'RESTART_IF_DOWN'");
     expect(source.slice(blockerRead, create)).toContain("status: 'DEAD'");
     expect(source.slice(blockerRead, create)).toContain('updatedAt: { gte: deadCutoff }');
-    expect(source.slice(create)).toContain('maxAttempts: 3');
+    expect(source).toContain('export const KEEP_ONLINE_MAX_ATTEMPTS = 8');
+    expect(source.slice(create)).toContain('maxAttempts: KEEP_ONLINE_MAX_ATTEMPTS');
   });
 });
