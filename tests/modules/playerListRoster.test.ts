@@ -148,9 +148,9 @@ describe('Online List live roster truth', () => {
       .split('async function processPlayerListConfig')[0];
 
     expect(rosterSection).toContain('admSourceCursor.findFirst');
-    expect(rosterSection).toContain('sourceFile: latestCursor.fileIdentity');
-    expect(rosterSection).toContain('AdmEventType.PLAYER_DISCONNECTED');
-    expect(rosterSection).toContain('AdmEventType.PLAYER_POSITION');
+    expect(rosterSection).toContain('latestCursor.fileIdentity');
+    expect(rosterSection).toContain('PLAYER_DISCONNECTED');
+    expect(rosterSection).toContain('PLAYER_POSITION');
     expect(rosterSection).toContain('resolveOnlinePresence(presenceEvents, positions)');
     expect(rosterSection).not.toContain('playerSession.findMany');
   });

@@ -12,6 +12,7 @@ import prisma from '../../../database/prisma';
 import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logger, logAudit } from '../../../utils/logger';
+import { forEachBounded } from '../../../utils/boundedConcurrency';
 import { NitradoClient } from '../nitradoClient';
 import { NitradoCircuitOpenError } from '../circuitBreaker';
 import {
@@ -52,6 +53,9 @@ const BASELINE_TAIL_BYTES = NITRADO_SAFE_SEEK_BYTES;
 // 8 Ranges (= 32.384 Byte) verarbeitet; der Cursor setzt im naechsten Poll fort.
 const MAX_RANGES_PER_FILE_PER_TICK = 8;
 const MAX_FILES_PER_TICK = 8;
+// Independent server scopes may progress concurrently. Three workers stay well
+// below the Prisma pool (10) while avoiding a serial multi-server sweep stall.
+const CONNECTION_SWEEP_CONCURRENCY = 3;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
@@ -468,7 +472,7 @@ export async function runAdmLiveSyncOnce(): Promise<void> {
       where: { status: 'ACTIVE', nitradoServerId: { not: null } },
       select: { id: true, guildId: true },
     });
-    for (const connection of connections) await processConnection(connection);
+    await forEachBounded(connections, CONNECTION_SWEEP_CONCURRENCY, processConnection);
   } catch (error) {
     logger.error('ADM-Live-Sync Fehler:', error as Error);
   } finally {

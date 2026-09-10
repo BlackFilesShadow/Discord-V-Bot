@@ -5,7 +5,7 @@ const SECRET = 'ai-17-test-secret-with-enough-entropy';
 
 function client(args?: {
   links?: Array<{ identityHash: string | null; verifiedAt: Date | null }>;
-  sessions?: Array<{ gameId: string; playerName: string | null; connectedAt: Date | null; createdAt: Date }>;
+  sessions?: Array<{ id: string; gameId: string; playerName: string | null; connectedAt: Date | null; createdAt: Date }>;
 }) {
   return {
     gameIdentityLink: {
@@ -23,6 +23,7 @@ describe('AI-17 verified user recognition', () => {
     const db = client({
       links: [{ identityHash: hash, verifiedAt: new Date('2026-08-17T08:00:00Z') }],
       sessions: [{
+        id: 'session-1',
         gameId: 'dayz-guid-1',
         playerName: 'Void_Architect',
         connectedAt: new Date('2026-08-17T07:00:00Z'),
@@ -86,7 +87,7 @@ describe('AI-17 verified user recognition', () => {
     const hash = identityHash('secret-guid', SECRET);
     const db = client({
       links: [{ identityHash: hash, verifiedAt: null }],
-      sessions: [{ gameId: 'secret-guid', playerName: 'PlayerOne', connectedAt: null, createdAt: new Date() }],
+      sessions: [{ id: 'session-secret', gameId: 'secret-guid', playerName: 'PlayerOne', connectedAt: null, createdAt: new Date() }],
     });
     const result = await resolveVerifiedGameIdentityRecognition(db, {
       guildId: 'g', nitradoConnId: 'n', userDiscordId: 'u', identitySecret: SECRET,

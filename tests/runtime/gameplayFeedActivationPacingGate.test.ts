@@ -32,10 +32,10 @@ describe('Gameplay feed activation, pacing and Online List architecture gate', (
   it('builds Online List from current ADM presence truth without stale PlayerSession or another Nitrado poller', () => {
     expect(runtime).not.toContain('prisma.playerSession.findMany');
     expect(runtime).toContain('prisma.admSourceCursor.findFirst');
-    expect(runtime).toContain('sourceFile: latestCursor.fileIdentity');
-    expect(runtime).toContain('AdmEventType.PLAYER_CONNECTED');
-    expect(runtime).toContain('AdmEventType.PLAYER_DISCONNECTED');
-    expect(runtime).toContain('AdmEventType.PLAYER_POSITION');
+    expect(runtime).toContain('AND "sourceFile" = ${latestCursor.fileIdentity}');
+    expect(runtime).toContain("'PLAYER_CONNECTED'::\"AdmEventType\"");
+    expect(runtime).toContain("'PLAYER_DISCONNECTED'::\"AdmEventType\"");
+    expect(runtime).toContain("'PLAYER_POSITION'::\"AdmEventType\"");
     expect(runtime).toContain('resolveOnlinePresence(presenceEvents, positions)');
     expect(runtime).toContain('attachCurrentPositions(online, positions)');
     expect(runtime).toContain('playerListNonce(config.id, stateHash, postKey)');

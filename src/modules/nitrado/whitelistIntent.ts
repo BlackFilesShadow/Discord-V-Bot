@@ -146,7 +146,6 @@ async function hasAuthorizedVerifiedLeaveRemoveIntent(
       details: { path: ['guildId'], equals: guildId },
     },
     select: { discordId: true, details: true },
-    take: 500,
   });
   const activeDiscordIds = [...new Set(
     leaveRequests

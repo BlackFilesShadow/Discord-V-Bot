@@ -4,6 +4,7 @@ import prisma from '../../../database/prisma';
 import { config } from '../../../config';
 import { decrypt } from '../../../utils/security';
 import { logAuditDb, logger } from '../../../utils/logger';
+import { forEachBounded } from '../../../utils/boundedConcurrency';
 import { emitGuildEvent } from '../../socket/emitter';
 import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
@@ -136,7 +137,6 @@ nitradoDriftRouter.get('/whitelist', requireGuildPermission('whitelist.manage'),
     where: { guildId: scope.guildId, nitradoConnId: connId, syncState: 'SYNCED' },
     select: { id: true, gameId: true, source: true, approvedAt: true, lastSyncedAt: true },
     orderBy: [{ approvedAt: 'desc' }, { gameId: 'asc' }],
-    take: 1000,
   });
 
   const firstMissing = local.filter(row => !remote.has(norm(row.gameId)));
@@ -187,9 +187,11 @@ nitradoDriftRouter.get('/whitelist', requireGuildPermission('whitelist.manage'),
   // Discord-Entscheidung.
   const client = tryGetDashboardClient();
   if (client) {
-    await Promise.all(items.map(item => notifyNitradoWhitelistDrift(client, {
-      guildId: String(scope.guildId), nitradoConnId: String(connId), gameId: item.gameId,
-    }).catch(error => logger.warn(`Whitelist-Driftmeldung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`))));
+    await forEachBounded(items, 4, async item => {
+      await notifyNitradoWhitelistDrift(client, {
+        guildId: String(scope.guildId), nitradoConnId: String(connId), gameId: item.gameId,
+      }).catch(error => logger.warn(`Whitelist-Driftmeldung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`));
+    });
   }
 
   res.json({ observedAt: new Date().toISOString(), items });
@@ -319,7 +321,6 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
     },
     select: { id: true, identityHash: true, reason: true, bannedAt: true, expiresAt: true },
     orderBy: { bannedAt: 'desc' },
-    take: 500,
   });
   const identities = local.length > 0
     ? await prisma.serverBanRemoteIdentity.findMany({
@@ -386,9 +387,11 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
 
   const client = tryGetDashboardClient();
   if (client) {
-    await Promise.all(items.map(item => notifyNitradoBanDrift(client, {
-      guildId: String(scope.guildId), nitradoConnId: String(connId), banId: item.banId,
-    }).catch(error => logger.warn(`Ban-Driftmeldung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`))));
+    await forEachBounded(items, 4, async item => {
+      await notifyNitradoBanDrift(client, {
+        guildId: String(scope.guildId), nitradoConnId: String(connId), banId: item.banId,
+      }).catch(error => logger.warn(`Ban-Driftmeldung fehlgeschlagen fuer ${connId}: ${(error as Error).message}`));
+    });
   }
 
   res.json({ observedAt: new Date().toISOString(), items });
