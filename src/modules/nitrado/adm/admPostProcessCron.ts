@@ -17,7 +17,10 @@ import { runAdmParserBackfill, type AdmParserBackfillClient } from './admParserB
 import { getRewardRule, effectiveBaseAmount, type RewardRuleClient } from '../../economy/rewardRules';
 import { getSlotEconomyConfig, type SlotConfigClient } from '../../economy/slotConfig';
 import { bookPendingRewards, type RewardBookingClient } from '../../economy/rewardBooking';
-import { bookPlaytimeRewardsWithLiveRoster } from '../../economy/playtimeLiveRosterGuard';
+import {
+  bookPlaytimeRewardsWithLiveRoster,
+  loadLiveAdmRosterSnapshot,
+} from '../../economy/playtimeLiveRosterGuard';
 import { assertEconomyScopeReady } from '../../economy/scopeMigration';
 import { resolveRewardIdentity, resolveRewardUserAt, applySuccessfulLinkEconomyEffects } from '../../linking/linkRewards';
 import { reconcileAdminForcedLinks } from '../../linking/adminForceLink';
@@ -26,12 +29,58 @@ import { identityHash } from '../../linking/identity';
 
 const INTERVAL_MS = 60_000;
 const CONNECTION_SWEEP_CONCURRENCY = 3;
+const STALE_OPEN_SESSION_MS = 24 * 60 * 60 * 1000;
 let timer: NodeJS.Timeout | null = null;
 let running = false;
 
 interface ScopedConnection {
   id: string;
   guildId: string;
+}
+
+async function reconcileStaleOpenSessions(
+  scopeRef: { guildId: string; nitradoConnId: string },
+): Promise<{ closed: number; protectedCredited: number }> {
+  const roster = await loadLiveAdmRosterSnapshot(scopeRef);
+  if (!roster.available) return { closed: 0, protectedCredited: 0 };
+
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - STALE_OPEN_SESSION_MS);
+  const liveGameIds = [...roster.gameIds];
+  const offlineFilter = liveGameIds.length > 0 ? { gameId: { notIn: liveGameIds } } : {};
+
+  // Bereits gutgeschriebene Sessions werden niemals automatisch historisch
+  // umgeschrieben. Der Live-Roster Reward-Guard verhindert dort weitere
+  // Phantom-Gutschriften; solche Sonderfaelle bleiben sichtbar fuer Audit.
+  const protectedCredited = await prisma.playerSession.count({
+    where: {
+      guildId: scopeRef.guildId,
+      nitradoConnId: scopeRef.nitradoConnId,
+      status: 'OPEN',
+      connectedAt: { lt: cutoff },
+      bucketsCredited: { gt: 0 },
+      ...offlineFilter,
+    },
+  });
+
+  const result = await prisma.playerSession.updateMany({
+    where: {
+      guildId: scopeRef.guildId,
+      nitradoConnId: scopeRef.nitradoConnId,
+      status: 'OPEN',
+      connectedAt: { lt: cutoff },
+      bucketsCredited: 0,
+      ...offlineFilter,
+    },
+    data: {
+      status: 'CLOSED',
+      disconnectedAt: now,
+      durationSeconds: 0,
+      bucketsEarned: 0,
+    },
+  });
+
+  return { closed: result.count, protectedCredited };
 }
 
 async function processConnection(conn: ScopedConnection): Promise<void> {
@@ -57,8 +106,15 @@ async function processConnection(conn: ScopedConnection): Promise<void> {
 
   try {
     await aggregatePlayerSessions(prisma as unknown as PlayerSessionClient, scopeRef);
+    const stale = await reconcileStaleOpenSessions(scopeRef);
+    if (stale.closed > 0) {
+      logger.info(`ADM-Postprocess: ${stale.closed} stale OPEN-Session(s) ohne Live-Roster-Evidenz konservativ geschlossen fuer ${conn.id}.`);
+    }
+    if (stale.protectedCredited > 0) {
+      logger.warn(`ADM-Postprocess: ${stale.protectedCredited} stale OPEN-Session(s) mit bereits gutgeschriebenen Buckets bleiben fuer Audit unveraendert (${conn.id}).`);
+    }
   } catch (error) {
-    logger.warn(`ADM-Postprocess: PlayerSession-Aggregation fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
+    logger.warn(`ADM-Postprocess: PlayerSession-Aggregation/Hygiene fehlgeschlagen fuer ${conn.id}: ${(error as Error).message}`);
   }
 
   try {
