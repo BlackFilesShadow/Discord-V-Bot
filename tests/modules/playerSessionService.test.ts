@@ -57,16 +57,22 @@ describe('pairPlayerSessions', () => {
     expect(sessions[0].bucketsEarned).toBe(0);
   });
 
-  it('zweites connect ohne disconnect laesst erstes OPEN und oeffnet neues', () => {
+  it('zweites connect superseded das erste konservativ ohne Phantom-Spielzeit', () => {
     const sessions = pairPlayerSessions([
       ev('c1', 'PLAYER_CONNECTED', 'p1', t(0), 10n),
       ev('c2', 'PLAYER_CONNECTED', 'p1', t(20), 300n),
       ev('d2', 'PLAYER_DISCONNECTED', 'p1', t(45), 500n),
     ]);
     expect(sessions).toHaveLength(2);
-    const open = sessions.find(s => s.connectEventId === 'c1')!;
+    const superseded = sessions.find(s => s.connectEventId === 'c1')!;
     const closed = sessions.find(s => s.connectEventId === 'c2')!;
-    expect(open.status).toBe('OPEN');
+    expect(superseded).toMatchObject({
+      status: 'CLOSED',
+      disconnectEventId: null,
+      disconnectedAt: t(20),
+      durationSeconds: 0,
+      bucketsEarned: 0,
+    });
     expect(closed.status).toBe('CLOSED');
     expect(closed.durationSeconds).toBe(25 * 60);
   });
@@ -164,5 +170,38 @@ describe('aggregatePlayerSessions — Idempotenz', () => {
     expect(first.store.get('c1')!.status).toBe('CLOSED');
     expect(first.store.get('c1')!.durationSeconds).toBe(25 * 60);
     expect(first.store.get('c1')!.bucketsEarned).toBe(2);
+  });
+
+  it('repariert eine historisch verwaiste OPEN-Sitzung beim spaeteren Folge-Connect ohne Gutschrift', async () => {
+    const initial = makeClient([ev('c1', 'PLAYER_CONNECTED', 'p1', t(0), 10n)]);
+    await aggregatePlayerSessions(initial.client, { guildId: 'g', nitradoConnId: 'n' });
+    expect(initial.store.get('c1')!.status).toBe('OPEN');
+
+    const withReconnect: PlayerSessionClient = {
+      admEvent: { findMany: async () => [
+        ev('c1', 'PLAYER_CONNECTED', 'p1', t(0), 10n),
+        ev('c2', 'PLAYER_CONNECTED', 'p1', t(20), 300n),
+        ev('d2', 'PLAYER_DISCONNECTED', 'p1', t(45), 500n),
+      ] },
+      playerSession: {
+        upsert: async ({ where, create, update }) => {
+          const key = where.connectEventId as string;
+          if (initial.store.has(key)) initial.store.set(key, { ...initial.store.get(key)!, ...update });
+          else initial.store.set(key, { ...create });
+          return initial.store.get(key);
+        },
+      },
+    };
+
+    const result = await aggregatePlayerSessions(withReconnect, { guildId: 'g', nitradoConnId: 'n' });
+    expect(result).toMatchObject({ upserted: 2, closed: 2, open: 0 });
+    expect(initial.store.get('c1')).toMatchObject({
+      status: 'CLOSED',
+      disconnectEventId: null,
+      disconnectedAt: t(20),
+      durationSeconds: 0,
+      bucketsEarned: 0,
+    });
+    expect(initial.store.get('c2')).toMatchObject({ status: 'CLOSED', bucketsEarned: 2 });
   });
 });
