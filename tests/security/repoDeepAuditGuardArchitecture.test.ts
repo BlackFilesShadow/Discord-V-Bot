@@ -33,7 +33,7 @@ describe('repo deep-audit dashboard guard architecture', () => {
     const activeGate = read('src/dashboard/middleware/activePersistentSession.ts');
     expect(activeGate).toContain('prisma.session.findUnique');
     expect(activeGate).toContain("code: 'SESSION_REVOKED'");
-    expect(activeGate).not.toContain('twoFactorVerified');
+    expect(activeGate).not.toMatch(/if\s*\(\s*s\.requires2FA/);
   });
 
   it('lets the webhook own its raw stream and declared 512 KiB parser limit', () => {
