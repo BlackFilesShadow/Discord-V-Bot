@@ -22,13 +22,21 @@ export interface PlaytimeRewardOptions {
   payoutEnabled?: boolean;
 }
 
+export interface LiveAdmRosterSnapshot {
+  available: boolean;
+  gameIds: Set<string>;
+}
+
 /**
- * Ermittelt dieselbe aktuelle ADM-Roster-Wahrheit wie die PLAYER_LIST.
- * Historische PlayerSession.status=OPEN-Zeilen sind explizit keine Online-
- * Evidenz. Wenn noch kein aktueller Cursor existiert, gilt fail-closed: offene
- * Sessions werden nicht bezahlt; CLOSED-Historie bleibt davon unberuehrt.
+ * Ermittelt dieselbe aktuelle ADM-Roster-Wahrheit wie die PLAYER_LIST und
+ * unterscheidet bewusst zwischen "kein Spieler online" und "noch kein
+ * kanonischer ADM-Cursor verfuegbar". Diese Unterscheidung ist fuer
+ * schreibende Hygiene-Reconciler zwingend; bei unavailable wird niemals
+ * aufgrund fehlender Live-Evidenz mutiert.
  */
-export async function loadLiveAdmGameIds(scope: PlaytimeBookingScope): Promise<Set<string>> {
+export async function loadLiveAdmRosterSnapshot(
+  scope: PlaytimeBookingScope,
+): Promise<LiveAdmRosterSnapshot> {
   const binding = await prisma.nitradoAdmBindingState.findUnique({
     where: {
       guildId_nitradoConnId: {
@@ -48,7 +56,7 @@ export async function loadLiveAdmGameIds(scope: PlaytimeBookingScope): Promise<S
     orderBy: [{ lastModifiedAt: 'desc' }, { fileName: 'desc' }],
     select: { fileIdentity: true },
   });
-  if (!latestCursor) return new Set<string>();
+  if (!latestCursor) return { available: false, gameIds: new Set<string>() };
 
   const presenceEvents = await prisma.$queryRaw<PlayerPresenceEvent[]>(Prisma.sql`
     SELECT DISTINCT ON ("actorGameId")
@@ -78,7 +86,18 @@ export async function loadLiveAdmGameIds(scope: PlaytimeBookingScope): Promise<S
      ORDER BY "actorGameId", "sourceByteStart" DESC, "id" DESC
   `);
 
-  return new Set(resolveOnlinePresence(presenceEvents, positions).map(player => player.gameId));
+  return {
+    available: true,
+    gameIds: new Set(resolveOnlinePresence(presenceEvents, positions).map(player => player.gameId)),
+  };
+}
+
+/**
+ * Read-only Convenience fuer Reward-Code. Fehlt der aktuelle Cursor, bleibt
+ * das bisherige fail-closed Verhalten erhalten: keine OPEN-Session wird bezahlt.
+ */
+export async function loadLiveAdmGameIds(scope: PlaytimeBookingScope): Promise<Set<string>> {
+  return (await loadLiveAdmRosterSnapshot(scope)).gameIds;
 }
 
 /**
