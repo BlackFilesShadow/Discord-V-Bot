@@ -5,7 +5,7 @@ import { config } from '../../config';
 import { Brand, vEmbed } from '../../utils/embedDesign';
 import { safeEmbedField } from '../../utils/embedSanitize';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
-import { identityHash } from '../linking/identity';
+import { collectIdentityPlayerNames } from '../linking/sessionIdentityLookup';
 
 export type GoodbyeRemoteState =
   | 'PENDING'
@@ -204,13 +204,13 @@ export async function initialGoodbyeCleanupSnapshot(
   const servers: GoodbyeServerStatus[] = [];
   for (const link of links) {
     if (!link.identityHash) continue;
-    const [sessions, whitelistEntries, connection] = await Promise.all([
-      prisma.playerSession.findMany({
-        where: { guildId, nitradoConnId: link.nitradoConnId },
-        select: { gameId: true, playerName: true },
-        orderBy: { connectedAt: 'desc' },
-        take: 5000,
-      }),
+    const [identityNames, whitelistEntries, connection] = await Promise.all([
+      collectIdentityPlayerNames(
+        prisma,
+        { guildId, nitradoConnId: link.nitradoConnId },
+        link.identityHash,
+        config.security.encryptionKey,
+      ),
       prisma.whitelistEntry.findMany({
         where: { guildId, nitradoConnId: link.nitradoConnId, syncState: 'SYNCED' },
         select: { gameId: true },
@@ -220,11 +220,9 @@ export async function initialGoodbyeCleanupSnapshot(
         select: { alias: true },
       }),
     ]);
-    const linkedSessionNames = new Set(sessions.flatMap(session =>
-      identityHash(session.gameId, config.security.encryptionKey) === link.identityHash && session.playerName?.trim()
-        ? [session.playerName.trim().toLocaleLowerCase('en-US')]
-        : [],
-    ));
+    const linkedSessionNames = new Set(
+      [...identityNames].map(name => name.toLocaleLowerCase('en-US')),
+    );
     const names = Array.from(new Set(whitelistEntries.flatMap(entry =>
       linkedSessionNames.has(entry.gameId.trim().toLocaleLowerCase('en-US')) ? [entry.gameId.trim()] : [],
     ))).sort((a, b) => a.localeCompare(b, 'de-DE'));

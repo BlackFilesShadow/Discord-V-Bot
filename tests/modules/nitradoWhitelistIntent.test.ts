@@ -215,7 +215,6 @@ describe('Nitrado-1B whitelist source-of-truth intent', () => {
         details: { path: ['guildId'], equals: GUILD },
       },
       select: { discordId: true, details: true },
-      take: 500,
     });
     expect(gameIdentityLinkFindMany).toHaveBeenCalledWith({
       where: {

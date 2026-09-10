@@ -40,6 +40,29 @@ function isValidName(s: unknown): s is string {
   return typeof s === 'string' && NAME_RE.test(s.trim()) && s.trim().length >= 1;
 }
 
+interface WhitelistPageCursor {
+  approvedAt: string;
+  gameId: string;
+}
+
+function encodeWhitelistCursor(value: { approvedAt: Date; gameId: string }): string {
+  return Buffer.from(JSON.stringify({ approvedAt: value.approvedAt.toISOString(), gameId: value.gameId }), 'utf8').toString('base64url');
+}
+
+function decodeWhitelistCursor(value: unknown): { approvedAt: Date; gameId: string } | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || value.length < 1 || value.length > 512) throw new Error('INVALID_CURSOR');
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<WhitelistPageCursor>;
+    if (typeof parsed.approvedAt !== 'string' || typeof parsed.gameId !== 'string' || !isValidName(parsed.gameId)) throw new Error();
+    const approvedAt = new Date(parsed.approvedAt);
+    if (!Number.isFinite(approvedAt.getTime())) throw new Error();
+    return { approvedAt, gameId: parsed.gameId.trim() };
+  } catch {
+    throw new Error('INVALID_CURSOR');
+  }
+}
+
 async function activeSlotId(
   scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>,
   slotParam: unknown,
@@ -57,18 +80,40 @@ whitelistRouter.get('/', requireGuildPermission('whitelist.view'), async (req, r
   const scope = req.guildScope!;
   const connId = await activeSlotId(scope, req.query.slot, res);
   if (!connId) return;
-  // Stage 28: hard-cap with limit+1 probe; stable approvedAt + gameId order.
+
+  let cursor: { approvedAt: Date; gameId: string } | null;
+  try {
+    cursor = decodeWhitelistCursor(req.query.cursor);
+  } catch {
+    res.status(400).json({ error: 'Ungueltiger Whitelist-Cursor.' });
+    return;
+  }
+
   const limit = 1000;
   const rows = await prisma.whitelistEntry.findMany({
-    where: { guildId: scope.guildId, nitradoConnId: connId, syncState: { not: 'PENDING_REMOVE' } },
+    // Keep the tenant scope as direct properties of the where object. The
+    // repository's fail-closed scope lint intentionally requires guildId to be
+    // statically visible here; only the keyset continuation predicate is
+    // optional on the first page.
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      syncState: { not: 'PENDING_REMOVE' },
+      OR: cursor ? [
+        { approvedAt: { lt: cursor.approvedAt } },
+        { approvedAt: cursor.approvedAt, gameId: { gt: cursor.gameId } },
+      ] : undefined,
+    },
     orderBy: [{ approvedAt: 'desc' }, { gameId: 'asc' }],
     take: limit + 1,
   });
   const hasMore = rows.length > limit;
   const visible = rows.slice(0, limit);
+  const last = visible[visible.length - 1];
   res.json({
     limit,
     hasMore,
+    nextCursor: hasMore && last ? encodeWhitelistCursor(last) : null,
     entries: visible.map(r => ({
       gameId: r.gameId,
       approvedBy: r.approvedByDiscordId,

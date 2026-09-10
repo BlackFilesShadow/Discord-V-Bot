@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, describeApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -398,10 +398,15 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const [newId, setNewId] = useState('');
   const [reasonById, setReasonById] = useState<Record<string, string>>({});
 
-  const entries = useQuery({
+  const entries = useInfiniteQuery({
     queryKey: ['whitelist', guildId, slot],
-    queryFn: () => api.get<{ entries: WhitelistEntry[] }>(`/api/v2/guilds/${guildId}/whitelist${qs}`),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.get<{ entries: WhitelistEntry[]; hasMore?: boolean; nextCursor?: string | null }>(
+      `/api/v2/guilds/${guildId}/whitelist${qs}${pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ''}`,
+    ),
+    getNextPageParam: lastPage => lastPage.nextCursor ?? undefined,
   });
+  const whitelistEntries = entries.data?.pages.flatMap(page => page.entries) ?? [];
 
   const requests = useQuery({
     queryKey: ['whitelist-requests', guildId, slot],
@@ -479,8 +484,8 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
 
           {entries.isLoading && <p className="text-muted">Lade…</p>}
           <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
-            {entries.data?.entries.length === 0 && <p className="text-muted text-sm">Keine Eintraege.</p>}
-            {entries.data?.entries.map(e => (
+            {whitelistEntries.length === 0 && <p className="text-muted text-sm">Keine Eintraege.</p>}
+            {whitelistEntries.map(e => (
               <div key={e.gameId} className="flex items-center justify-between bg-bg-elev rounded-md px-3 py-1.5 border border-border text-sm">
                 <div>
                   <span className="font-mono text-white">{e.gameId}</span>
@@ -492,6 +497,17 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
               </div>
             ))}
           </div>
+          {entries.hasNextPage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="mt-2"
+              disabled={entries.isFetchingNextPage}
+              onClick={() => { void entries.fetchNextPage(); }}
+            >
+              {entries.isFetchingNextPage ? 'Lade weitere…' : 'Weitere Eintraege laden'}
+            </Button>
+          )}
 
           <div className="mt-6 pt-4 border-t border-border space-y-3">
             <div className="flex items-center gap-2">

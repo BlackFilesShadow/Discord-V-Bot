@@ -155,7 +155,6 @@ async function listWhitelistJobs(guildId: string, nitradoConnId: string): Promis
     },
     select: { id: true, operation: true, status: true, payload: true, attempts: true, updatedAt: true },
     orderBy: { createdAt: 'desc' },
-    take: 1000,
   }) as Promise<ScopedJob[]>;
 }
 

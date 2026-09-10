@@ -24,6 +24,7 @@ import {
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import { forEachBounded } from '../../utils/boundedConcurrency';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { emitServerGameplayEvent } from '../../dashboard/socket/emitter';
 import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
@@ -58,6 +59,7 @@ const MAX_SCAN_BATCHES_PER_TICK = 5;
 const DELIVERY_BATCH = 1;
 const DELIVERY_SPACING_MS = 12_000;
 const PVP_ENRICHMENT_TIMEOUT_MS = 2_000;
+const CONFIG_SWEEP_CONCURRENCY = 4;
 const GENERIC_DEATH_CORRELATION_MS = 2_500;
 const SPECIFIC_DEATH_EVENT_TYPES: AdmEventType[] = [
   AdmEventType.PLAYER_KILLED,
@@ -573,46 +575,44 @@ async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerList
   });
   if (!latestCursor) return [];
 
-  const presenceEvents = await prisma.admEvent.findMany({
-    where: {
-      guildId: config.guildId,
-      nitradoConnId: config.nitradoConnId,
-      sourceFile: latestCursor.fileIdentity,
-      eventType: { in: [AdmEventType.PLAYER_CONNECTED, AdmEventType.PLAYER_DISCONNECTED] },
-      actorGameId: { not: null },
-    },
-    select: {
-      id: true,
-      eventType: true,
-      actorGameId: true,
-      actorName: true,
-      sourceByteStart: true,
-    },
-    orderBy: [{ sourceByteStart: 'desc' }, { id: 'desc' }],
-  }) as PlayerPresenceEvent[];
+  // The roster needs only the newest presence fact per game identity. Pulling the
+  // complete ADM history here grows linearly for the lifetime of the active file
+  // and can turn a 15s feed tick into a large DB/memory sweep at high population.
+  const presenceEvents = await prisma.$queryRaw<PlayerPresenceEvent[]>(Prisma.sql`
+    SELECT DISTINCT ON ("actorGameId")
+           "id", "eventType", "actorGameId", "actorName", "sourceByteStart"
+      FROM "AdmEvent"
+     WHERE "guildId" = ${config.guildId}
+       AND "nitradoConnId" = ${config.nitradoConnId}
+       AND "sourceFile" = ${latestCursor.fileIdentity}
+       AND "actorGameId" IS NOT NULL
+       AND "eventType" IN (
+         'PLAYER_CONNECTED'::"AdmEventType",
+         'PLAYER_DISCONNECTED'::"AdmEventType"
+       )
+     ORDER BY "actorGameId", "sourceByteStart" DESC, "id" DESC
+  `);
 
   // Bare PLAYER_POSITION rows are emitted by PluginAdminLog.PlayerList() and
   // therefore are direct online evidence. Read them before resolving presence
   // so a bot/V2 baseline taken while players are already online does not hide
   // them until their next reconnect. A later disconnect still wins by byte
   // order inside resolveOnlinePresence().
-  const positions = await prisma.admEvent.findMany({
-    where: {
-      guildId: config.guildId,
-      nitradoConnId: config.nitradoConnId,
-      sourceFile: latestCursor.fileIdentity,
-      eventType: AdmEventType.PLAYER_POSITION,
-      actorGameId: { not: null },
-    },
-    select: {
-      id: true,
-      actorGameId: true,
-      actorName: true,
-      actorPosition: true,
-      sourceByteStart: true,
-    },
-    orderBy: [{ sourceByteStart: 'desc' }, { id: 'desc' }],
-  }) as PlayerPositionEvent[];
+  // Same principle for positions: attachCurrentPositions() only needs the newest
+  // position per identity. DISTINCT ON bounds result size by online identities
+  // instead of by ADM sampling frequency.
+  const positions = await prisma.$queryRaw<PlayerPositionEvent[]>(Prisma.sql`
+    SELECT DISTINCT ON ("actorGameId")
+           "id", "actorGameId", "actorName", "actorPosition", "sourceByteStart"
+      FROM "AdmEvent"
+     WHERE "guildId" = ${config.guildId}
+       AND "nitradoConnId" = ${config.nitradoConnId}
+       AND "sourceFile" = ${latestCursor.fileIdentity}
+       AND "actorGameId" IS NOT NULL
+       AND "actorPosition" IS NOT NULL
+       AND "eventType" = 'PLAYER_POSITION'::"AdmEventType"
+     ORDER BY "actorGameId", "sourceByteStart" DESC, "id" DESC
+  `);
 
   const online = resolveOnlinePresence(presenceEvents, positions);
   if (online.length === 0) return [];
@@ -832,7 +832,7 @@ export async function runGameplayFeedsOnce(): Promise<void> {
       where: { isActive: true },
       orderBy: { createdAt: 'asc' },
     });
-    for (const config of configs) await processConfig(config);
+    await forEachBounded(configs, CONFIG_SWEEP_CONCURRENCY, processConfig);
   } catch (error) {
     logger.error('GameplayFeed-Worker Fehler:', error as Error);
   } finally {

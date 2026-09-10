@@ -163,4 +163,82 @@ describe('serverLogIngestor — atomare Persistierung', () => {
       update: expect.objectContaining({ fileName: 'DayZServer.ADM' }),
     }));
   });
+
+  it('persistiert grosse ADM-Mengen in begrenzten Batches und zaehlt alle Inserts', async () => {
+    const header = 'AdminLog started on 2026-07-01 at 18:00:00\n';
+    const lines = Array.from(
+      { length: 600 },
+      (_, index) => `18:00:12 | Player "Player ${index}"(id=player-${index}) is connected\n`,
+    ).join('');
+    const res = ingestFullFile(header + lines, 0, { fileName: 'capacity.ADM' });
+    expect(res.events).toHaveLength(600);
+
+    const batchSizes: number[] = [];
+    let cursorWrites = 0;
+    const client: AdmPersistClient = {
+      admEvent: {
+        createMany: async ({ data }) => {
+          batchSizes.push(data.length);
+          return { count: data.length };
+        },
+      },
+      admSourceCursor: {
+        upsert: async () => {
+          cursorWrites++;
+          return {};
+        },
+      },
+      $transaction: async (fn) => fn(client),
+    };
+
+    const result = await persistAdmEvents(
+      client,
+      { guildId: 'capacity-g', nitradoConnId: 'capacity-n' },
+      { fileIdentity: 'capacity-fid', fileName: 'capacity.ADM', lastModifiedAt: 1, fileSize: Buffer.byteLength(header + lines) },
+      res,
+      'capacity-fp',
+    );
+
+    expect(result.inserted).toBe(600);
+    expect(batchSizes).toEqual([100, 100, 100, 100, 100, 100]);
+    expect(cursorWrites).toBe(1);
+  });
+
+  it('schreibt den Cursor nicht, wenn ein spaeter Persistenz-Batch fehlschlaegt', async () => {
+    const header = 'AdminLog started on 2026-07-01 at 18:00:00\n';
+    const lines = Array.from(
+      { length: 300 },
+      (_, index) => `18:00:12 | Player "Player ${index}"(id=player-${index}) is connected\n`,
+    ).join('');
+    const res = ingestFullFile(header + lines, 0, { fileName: 'capacity-fail.ADM' });
+    let createManyCalls = 0;
+    let cursorWrites = 0;
+    const client: AdmPersistClient = {
+      admEvent: {
+        createMany: async ({ data }) => {
+          createManyCalls++;
+          if (createManyCalls === 2) throw new Error('synthetic batch failure');
+          return { count: data.length };
+        },
+      },
+      admSourceCursor: {
+        upsert: async () => {
+          cursorWrites++;
+          return {};
+        },
+      },
+      $transaction: async (fn) => fn(client),
+    };
+
+    await expect(persistAdmEvents(
+      client,
+      { guildId: 'capacity-g', nitradoConnId: 'capacity-n' },
+      { fileIdentity: 'capacity-fail-fid', fileName: 'capacity-fail.ADM', lastModifiedAt: 1, fileSize: Buffer.byteLength(header + lines) },
+      res,
+      'capacity-fail-fp',
+    )).rejects.toThrow('synthetic batch failure');
+
+    expect(createManyCalls).toBe(2);
+    expect(cursorWrites).toBe(0);
+  });
 });
