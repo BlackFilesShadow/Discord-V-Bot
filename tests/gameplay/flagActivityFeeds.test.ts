@@ -6,8 +6,11 @@ import { buildGameplayFeedEmbed, flagObjectLabel } from '../../src/modules/gamep
 import { categoryForEvent, kindForEvent } from '../../src/modules/gameplayFeeds/types';
 import {
   buildFlagActivityCustomId,
+  formatFlagSessionDetails,
   horizontalDistanceMeters,
   parseHorizontalPosition,
+  selectRelevantFlagSessions,
+  type FlagActivitySessionRow,
   verifyFlagActivityCustomId,
 } from '../../src/modules/gameplayFeeds/flagActivity';
 
@@ -50,6 +53,70 @@ describe('Flag activity feeds', () => {
     expect(parseHorizontalPosition('10, 20')).toEqual({ x: 10, z: 20 });
     expect(parseHorizontalPosition('invalid')).toBeNull();
     expect(horizontalDistanceMeters('0, 999, 0', '3, 1, 4')).toBe(5);
+  });
+
+  test('deduplicates correlated sessions by gameId and excludes every session of the direct actor', () => {
+    const eventAt = new Date('2026-09-10T20:00:00.000Z');
+    const sessions: FlagActivitySessionRow[] = [
+      {
+        id: 'direct-previous-session',
+        gameId: 'game-direct',
+        playerName: 'Direct Player',
+        connectedAt: new Date('2026-09-10T19:50:00.000Z'),
+        disconnectedAt: new Date('2026-09-10T19:55:00.000Z'),
+        durationSeconds: 300,
+        status: 'CLOSED',
+      },
+      {
+        id: 'duplicate-ended-before',
+        gameId: 'game-duplicate',
+        playerName: 'Reconnect Player',
+        connectedAt: new Date('2026-09-10T19:54:00.000Z'),
+        disconnectedAt: new Date('2026-09-10T19:59:55.000Z'),
+        durationSeconds: 355,
+        status: 'CLOSED',
+      },
+      {
+        id: 'duplicate-spans-event',
+        gameId: 'game-duplicate',
+        playerName: 'Reconnect Player',
+        connectedAt: new Date('2026-09-10T19:59:58.000Z'),
+        disconnectedAt: new Date('2026-09-10T20:00:08.000Z'),
+        durationSeconds: 10,
+        status: 'CLOSED',
+      },
+      {
+        id: 'other-player',
+        gameId: 'game-other',
+        playerName: 'Other Player',
+        connectedAt: new Date('2026-09-10T19:58:00.000Z'),
+        disconnectedAt: new Date('2026-09-10T19:59:30.000Z'),
+        durationSeconds: 90,
+        status: 'CLOSED',
+      },
+    ];
+
+    const selected = selectRelevantFlagSessions(sessions, eventAt, 'game-direct');
+
+    expect(selected.map(session => session.gameId)).toEqual(['game-duplicate', 'game-other']);
+    expect(selected.find(session => session.gameId === 'game-duplicate')?.id).toBe('duplicate-spans-event');
+    expect(selected.some(session => session.gameId === 'game-direct')).toBe(false);
+    expect(new Set(selected.map(session => session.gameId)).size).toBe(selected.length);
+  });
+
+  test('labels a session that ended before the flag event as Disconnect to flag instead of a zero after-distance', () => {
+    const details = formatFlagSessionDetails({
+      id: 'ended-before',
+      gameId: 'game-before',
+      playerName: 'Earlier Player',
+      connectedAt: new Date('2026-09-10T19:54:00.000Z'),
+      disconnectedAt: new Date('2026-09-10T19:59:30.000Z'),
+      durationSeconds: 330,
+      status: 'CLOSED',
+    }, new Date('2026-09-10T20:00:00.000Z'), null, null);
+
+    expect(details).toContain('Disconnect → Flagge: 30 Sek.');
+    expect(details).not.toContain('Flagge → Disconnect: 0 Sek.');
   });
 
   test('signed analysis button accepts only the untampered event reference', () => {
