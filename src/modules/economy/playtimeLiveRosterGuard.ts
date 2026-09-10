@@ -111,10 +111,13 @@ export async function bookPlaytimeRewardsWithLiveRoster(
   const guardedClient = {
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => prisma.$transaction(tx => fn(tx)),
     rewardProcessingCursor: {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- bookPlaytimeRewards supplies the canonical Guild+Connection+stream cursor scope.
       upsert: (args: unknown) => prisma.rewardProcessingCursor.upsert(args as never),
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- bookPlaytimeRewards supplies the canonical Guild+Connection+stream cursor scope.
       updateMany: (args: unknown) => prisma.rewardProcessingCursor.updateMany(args as never),
     },
     playerSession: {
+      // eslint-disable-next-line local/no-unscoped-prisma-query -- incoming query is Guild+Connection scoped by bookPlaytimeRewards; OPEN is only narrowed further by live gameId.
       findMany: (args: unknown) => prisma.playerSession.findMany(restrictOpenSessionQuery(args, liveGameIds) as never),
     },
   } as unknown as PlaytimeBookingClient;
