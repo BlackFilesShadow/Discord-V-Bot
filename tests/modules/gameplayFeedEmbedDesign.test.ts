@@ -67,7 +67,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
     expect(description).toContain('**🩸 Self Kill Report**');
-    expectOrder(description, ['**Spieler:**', '**Waffe:**', '**Pos::**', '**Ereigniszeit:**']);
+    expectOrder(description, ['**Spieler:**', '**Waffe:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('**Waffe:** IJ-70');
     expect(description).toContain(EVENT_TIME);
     expect(json.footer?.text).toBe(SERVER);
@@ -86,7 +86,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
     expect(description).toContain('**☣️ Wild Kill Report**');
-    expectOrder(description, ['**Opfer:**', '**Ursache:**', '**Pos::**', '**Ereigniszeit:**']);
+    expectOrder(description, ['**Opfer:**', '**Ursache:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('Animal\\_CanisLupus');
     expect(description).toContain(EVENT_TIME);
     expect(json.footer?.text).toBe(SERVER);
@@ -104,7 +104,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
     expect(description).toContain('**💥 Crash Kill Report**');
-    expectOrder(description, ['**Opfer:**', '**Fahrzeug / Ursache:**', '**Pos::**', '**Ereigniszeit:**']);
+    expectOrder(description, ['**Opfer:**', '**Fahrzeug / Ursache:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('**Fahrzeug / Ursache:** OffroadHatchback');
     expect(description).toContain(EVENT_TIME);
     expect(json.footer?.text).toBe(SERVER);
@@ -123,7 +123,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
     expect(description).toContain('**☠️ Death Report**');
-    expectOrder(description, ['**Spieler:**', '**Todesursache:**', '**Pos::**', '**Ereigniszeit:**']);
+    expectOrder(description, ['**Spieler:**', '**Todesursache:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('**Todesursache:** Bled out');
     expect(description).toContain(EVENT_TIME);
     expect(json.footer?.text).toBe(SERVER);
