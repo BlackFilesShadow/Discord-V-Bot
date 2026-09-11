@@ -23,15 +23,14 @@ describe('Online List embed and change detection', () => {
     { gameId: 'guid-a', playerName: 'Alpha', position: '100,200,10' },
   ];
 
-  it('renders a valid empty state for zero players', () => {
+  it('renders the compact reference empty state for zero players', () => {
     const json = buildPlayerListEmbeds({
       serverAlias: 'Empty Server', entries: [], showCoordinates: false, embedColor: '#2563eb',
     })[0].toJSON();
-    expect(json.title).toBe('🌐 Online List');
-    expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Online', value: '0' }),
-      expect.objectContaining({ name: 'Spieler', value: expect.stringMatching(/keine Spieler/i) }),
-    ]));
+    expect(json.description).toContain('**🌐 • Online List · 0 Players**');
+    expect(json.description).toMatch(/keine Spieler/i);
+    expect(json.footer?.text).toBe('Empty Server');
+    expect(json.fields ?? []).toHaveLength(0);
   });
 
   it('keeps a newly connected player visible without publishing a transient unknown position', () => {
@@ -47,50 +46,39 @@ describe('Online List embed and change detection', () => {
       showCoordinates: true,
       embedColor: '#2563eb',
     })[0].toJSON();
-    const pendingValue = without.fields?.find(field => field.name === 'Spieler')?.value ?? '';
+    const pendingValue = without.description ?? '';
     expect(pendingValue).toContain('Solo');
     expect(pendingValue).not.toMatch(/Position unbekannt|izurvive/i);
-    expect(withPosition.fields?.find(field => field.name === 'Spieler')?.value).toMatch(/Solo.*50,60/s);
+    expect(withPosition.description).toMatch(/Solo.*50,60/s);
   });
 
   it('shows server alias, online count and only current-session coordinates that are already known', () => {
     const json = buildPlayerListEmbeds({
       serverAlias: 'Chernarus #1', entries, showCoordinates: true, embedColor: '#2563eb',
     })[0].toJSON();
-    expect(json.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
-      expect.objectContaining({ name: 'Online', value: '2' }),
-      expect.objectContaining({
-        name: 'Spieler',
-        value: expect.stringMatching(/Alpha.*izurvive\.com.*Bravo/s),
-      }),
-    ]));
+    expect(json.footer?.text).toBe('Chernarus #1');
+    expect(json.description).toContain('**🌐 • Online List · 2 Players**');
+    expect(json.description).toMatch(/Alpha.*izurvive\.com.*Bravo/s);
     expect(JSON.stringify(json)).not.toContain('Position unbekannt');
   });
 
-  it('places Stand directly below the server alias and does not use the generic embed timestamp', () => {
+  it('keeps the reference card free of Stand and generic embed timestamps', () => {
     const generatedAt = new Date('2026-08-25T19:15:00.000Z');
     const json = buildPlayerListEmbeds({
       serverAlias: 'Alias Only', entries, showCoordinates: false, embedColor: '#2563eb', generatedAt,
     })[0].toJSON();
-    const fields = json.fields ?? [];
-    const serverIndex = fields.findIndex(field => field.name === 'Server');
 
-    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Alias Only', inline: false });
-    expect(fields[serverIndex + 1]).toMatchObject({
-      name: 'Stand',
-      value: `<t:${Math.floor(generatedAt.getTime() / 1000)}:F>`,
-      inline: false,
-    });
+    expect(json.footer?.text).toBe('Alias Only');
     expect(json.timestamp).toBeUndefined();
+    expect(json.description).not.toContain('Stand');
     expect(JSON.stringify(json)).not.toMatch(/Slot\s*\d+/i);
   });
 
   it('omits every coordinate when the toggle is off', () => {
-    const fields = buildPlayerListEmbeds({
+    const json = buildPlayerListEmbeds({
       serverAlias: 'Server', entries, showCoordinates: false, embedColor: '#2563eb',
-    })[0].toJSON().fields ?? [];
-    const value = fields.map(field => field.value).join('\n');
+    })[0].toJSON();
+    const value = json.description ?? '';
     expect(value).toContain('Alpha');
     expect(value).not.toMatch(/100,200|Position unbekannt|izurvive/i);
   });
@@ -138,11 +126,11 @@ describe('Online List embed and change detection', () => {
     expect(embeds.length).toBeLessThanOrEqual(10);
     const json = embeds.map(embed => embed.toJSON());
     for (const item of json) {
-      expect(item.fields?.length ?? 0).toBeLessThanOrEqual(25);
-      for (const field of item.fields ?? []) expect(field.value.length).toBeLessThanOrEqual(1024);
+      expect(item.fields ?? []).toHaveLength(0);
+      expect(item.description?.length ?? 0).toBeLessThanOrEqual(4096);
     }
     expect(json.reduce((sum, item) => sum + embedTextLength(item), 0)).toBeLessThanOrEqual(6000);
-    const visible = json.flatMap(item => item.fields ?? []).map(field => field.value).join('\n');
+    const visible = json.map(item => item.description ?? '').join('\n');
     expect(visible).toContain('Player\\_000');
     expect(visible).toContain('Player\\_099');
   });
