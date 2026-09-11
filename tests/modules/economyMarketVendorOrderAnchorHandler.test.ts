@@ -131,7 +131,9 @@ test('real order handler rejects malformed vendor anchor before any database loo
   expect(queryRawMock).not.toHaveBeenCalled();
   expect(listMarketListingsMock).not.toHaveBeenCalled();
   expect(reply).toHaveBeenCalledTimes(1);
-  expect(reply.mock.calls[0][0].embeds[0].data.title).toBe('Bestellung abgelehnt');
+  const errorEmbed = reply.mock.calls[0][0].embeds[0].toJSON();
+  expect(errorEmbed.title).toBeUndefined();
+  expect(errorEmbed.description).toContain('**Bestellung abgelehnt**');
 });
 
 test('real order handler rejects a copied anchor in a foreign guild/channel/message scope', async () => {

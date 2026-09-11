@@ -87,7 +87,7 @@ test('pending and ready embeds expose the requested lifecycle and retention', ()
   expect(interactions).toContain("name: 'Username'");
   expect(interactions).toContain("name: 'Datum'");
   expect(interactions).toContain("name: 'Uhrzeit'");
-  expect(runtime).toContain("setTitle('✅ Bestellung bereit')");
+  expect(runtime).toContain("compactDescription('✅ Bestellung bereit'");
   expect(runtime).toContain('content: `<@${notice.userDiscordId}>`');
   expect(runtime).toContain("{ name: 'Händler'");
   expect(runtime).toContain("{ name: 'Bestellung'");

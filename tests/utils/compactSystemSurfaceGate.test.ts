@@ -4,7 +4,6 @@ import path from 'node:path';
 const compactSystemSurfaces = [
   'src/commands/about.ts',
   'src/commands/user/ticket.ts',
-  'src/commands/user/feedback.ts',
   'src/commands/user/register.ts',
   'src/commands/user/upload.ts',
   'src/commands/user/search.ts',
@@ -22,9 +21,13 @@ const compactSystemSurfaces = [
   'src/modules/economy/virtualAccountDiscord.ts',
   'src/modules/economy/virtualAccountManagerPanelSafety.ts',
   'src/modules/nitrado/driftDiscord.ts',
-  'src/modules/nitrado/serverListCatalog.ts',
   'src/modules/ai/translatedPostSchedulerV2.ts',
   'src/modules/radar/runtime.ts',
+] as const;
+
+const compactSystemSurfacesWithModalTitles = [
+  'src/commands/user/feedback.ts',
+  'src/modules/nitrado/serverListCatalog.ts',
 ] as const;
 
 const compactInteractiveSurfacesWithModalTitles = [
@@ -39,6 +42,13 @@ describe('compact V-Bot system surface gate', () => {
   it.each(compactSystemSurfaces)('%s keeps system headings out of Discord title', file => {
     const text = source(file);
     expect(text).not.toContain('.setTitle(');
+    expect(text).toMatch(/compact(?:Description|Embed)|buildStatusEmbed|economyEmbed/);
+  });
+
+  it.each(compactSystemSurfacesWithModalTitles)('%s keeps embed headings compact while allowing exactly one Discord modal title', file => {
+    const text = source(file);
+    expect(text).toContain('new ModalBuilder()');
+    expect(text.match(/\.setTitle\(/g) ?? []).toHaveLength(1);
     expect(text).toMatch(/compact(?:Description|Embed)|buildStatusEmbed|economyEmbed/);
   });
 
