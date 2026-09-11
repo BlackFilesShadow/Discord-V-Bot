@@ -13,7 +13,7 @@ import {
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
-import { compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { compactDescription, compactEmbed, compactQuote } from '../../utils/embedDesign';
 import { getVirtualAccountById, type EconomyPocket, type VirtualAccountRawDb } from './virtualAccounts';
 import { getVirtualAccountMetadata } from './virtualAccountMetadata';
 import {
@@ -103,15 +103,19 @@ export async function buildVirtualAccountEmbed(guildId: GuildId, connId: Nitrado
   )
     .setDescription(compactDescription(
       `${finance.accountEmoji} ${safeEmbedField(account.name, 200)}`,
-      [description],
+      [
+        description,
+        compactQuote([
+          `Wallet: **${fmt(account.balance)} ${finance.currencyEmoji}**`,
+          `Bank: **${fmt(finance.bankBalance)} ${finance.currencyEmoji}**`,
+          `Gesamt: **${fmt(total)} ${finance.currencyEmoji}**`,
+        ]),
+      ],
     ))
     .addFields(
-      { name: 'Wallet', value: `**${fmt(account.balance)}** ${finance.currencyEmoji}`, inline: false },
-      { name: 'Bankkonto', value: `**${fmt(finance.bankBalance)}** ${finance.currencyEmoji}`, inline: false },
-      { name: 'Gesamt', value: `**${fmt(total)}** ${finance.currencyEmoji}`, inline: false },
-      { name: 'Währung', value: safeEmbedField(`${finance.currencyName} ${finance.currencyEmoji}`, 200), inline: false },
-      { name: 'Status', value: statusLabel(account.status), inline: false },
-      { name: 'Typ', value: typeLabel(account.kind, finance), inline: false },
+      { name: 'Status', value: statusLabel(account.status), inline: true },
+      { name: 'Typ', value: typeLabel(account.kind, finance), inline: true },
+      { name: 'Währung', value: safeEmbedField(`${finance.currencyName} ${finance.currencyEmoji}`, 200), inline: true },
       { name: 'Kontoverwalter', value: safeEmbedField(managerText, 1024), inline: false },
     )
     .setTimestamp(account.updatedAt);
