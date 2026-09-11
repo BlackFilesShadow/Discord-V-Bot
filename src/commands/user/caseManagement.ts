@@ -14,7 +14,7 @@ import {
   reviewAppeal,
   revokeModerationCase,
 } from '../../modules/moderation/caseAdministration';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 const NOTE_MAX = 500;
 
@@ -27,8 +27,8 @@ function caseEmbed(modCase: NonNullable<Awaited<ReturnType<typeof getCaseDetails
   const appeals = modCase.appeals.length
     ? modCase.appeals.map(appeal => `• ${appeal.status} · ${appeal.reason.slice(0, 180)}`).join('\n')
     : 'Keine Appeals';
-  return vEmbed(Colors.Moderation)
-    .setTitle(`🛡️ Moderation Case #${modCase.caseNumber}`)
+  return compactEmbed(Colors.Moderation, 'V-Bot • Moderation')
+    .setDescription(compactDescription(`🛡️ Moderation Case #${modCase.caseNumber}`))
     .addFields(
       { name: 'Aktion', value: inlineCode(modCase.action), inline: true },
       { name: 'Status', value: statusText(modCase.isActive, modCase.revokedAt), inline: true },
@@ -108,8 +108,11 @@ const caseManagementCommand: Command = {
       const description = cases.length
         ? cases.map(modCase => `**#${modCase.caseNumber}** · ${inlineCode(modCase.action)} · ${modCase.isActive ? 'aktiv' : 'inaktiv'}\n${modCase.reason.slice(0, 180)}`).join('\n\n')
         : 'Keine Cases auf diesem Server.';
+      const heading = `🛡️ Cases · ${target.username}`;
+      const bodyLimit = Math.max(0, 4096 - `**${heading}**\n`.length);
       await interaction.editReply({
-        embeds: [vEmbed(Colors.Moderation).setTitle(`🛡️ Cases · ${target.username}`).setDescription(description.slice(0, 4000))],
+        embeds: [compactEmbed(Colors.Moderation, 'V-Bot • Moderation')
+          .setDescription(compactDescription(heading, [description.slice(0, bodyLimit)]))],
         allowedMentions: { parse: [] },
       });
       return;
@@ -131,8 +134,11 @@ const caseManagementCommand: Command = {
       const description = appeals.length
         ? appeals.map(appeal => `**Case #${appeal.case.caseNumber}** · ${inlineCode(appeal.case.action)} · ${appeal.case.isActive ? 'aktiv' : 'inaktiv'}\n${appeal.user.username} (${inlineCode(appeal.user.discordId)})\n${appeal.reason.slice(0, 220)}`).join('\n\n')
         : 'Keine offenen Appeals.';
+      const heading = '📋 Offene Appeals';
+      const bodyLimit = Math.max(0, 4096 - `**${heading}**\n`.length);
       await interaction.editReply({
-        embeds: [vEmbed(Colors.Moderation).setTitle('📋 Offene Appeals').setDescription(description.slice(0, 4000))],
+        embeds: [compactEmbed(Colors.Moderation, 'V-Bot • Moderation')
+          .setDescription(compactDescription(heading, [description.slice(0, bodyLimit)]))],
         allowedMentions: { parse: [] },
       });
       return;
