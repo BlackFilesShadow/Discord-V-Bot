@@ -151,7 +151,7 @@ const GAME_CASES = [
 ] as const;
 
 describe('Casino V3 command embeds', () => {
-  it.each(GAME_CASES)('/%s deferiert vor der Runde und liefert ein public Audit-Embed', async (_name, command, opts) => {
+  it.each(GAME_CASES)('/%s deferiert vor der Runde und liefert ein kompaktes public Audit-Embed', async (_name, command, opts) => {
     const { i, editReply, deferReply } = makeInteraction(opts as never);
     await command.execute(i as never);
 
@@ -161,14 +161,18 @@ describe('Casino V3 command embeds', () => {
     expect(arg.allowedMentions).toEqual({ parse: [] });
     expect(arg.embeds).toHaveLength(1);
     const json = arg.embeds![0].toJSON();
-    expect(json.description ?? '').toMatch(/Gewonnen|Verloren|Unentschieden/);
+    const description = json.description ?? '';
+    expect(description).toMatch(/Gewonnen|Verloren|Unentschieden/);
+    expect(description).toContain('**Einsatz:**');
+    expect(description).toContain('**Auszahlung:**');
+    expect(description).toContain('**Result:**');
+    expect(description).toContain('**Audit:**');
+    expect(description).toContain(':coin:');
+    expect(json.fields ?? []).toHaveLength(0);
+    expect(json.timestamp).toBeUndefined();
     expect(json.footer?.text ?? '').toContain('Runden-Audit');
     expect(json.footer?.text ?? '').toMatch(/Hash:\s+[a-f0-9]{16}/);
     expect(json.footer?.text ?? '').toMatch(/Nonce:\s+\d+/);
-    const fields = JSON.stringify(json.fields);
-    expect(fields).toContain('Einsatz');
-    expect(fields).toContain('Auszahlung');
-    expect(fields).toContain('Audit');
   });
 
   it('/slot persistiert payout als JSON-string und einen V3 Regel-Snapshot', async () => {
