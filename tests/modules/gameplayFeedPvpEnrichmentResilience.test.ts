@@ -180,14 +180,15 @@ describe('PvP-Killfeed Zusatzinformationen', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const embed = send.mock.calls[0][0].embeds[0].toJSON();
-    expect(embed.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Killer' }),
-      expect.objectContaining({ name: 'Opfer' }),
-      expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
-      expect.objectContaining({ name: 'Distanz', value: '42.5 m' }),
-      expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
-    ]));
-    expect((embed.fields ?? []).map((field: { name: string }) => field.name)).not.toContain('Schaden');
+    const description = embed.description ?? '';
+    expect(description).toContain('**💀 V-Kill Report**');
+    expect(description).toContain('**Killer**');
+    expect(description).toContain('**Opfer**');
+    expect(description).toContain('**Waffe:** M4-A1');
+    expect(description).toContain('**Distanz:** 42.5 m');
+    expect(description).not.toContain('**Schaden:**');
+    expect(embed.footer?.text).toBe('Chernarus #1');
+    expect(embed.fields ?? []).toHaveLength(0);
 
     const deliveryCalls = deliveryUpdate.mock.calls
       .map(call => call[0])
@@ -216,12 +217,12 @@ describe('PvP-Killfeed Zusatzinformationen', () => {
 
     expect(send).toHaveBeenCalledTimes(1);
     const embed = send.mock.calls[0][0].embeds[0].toJSON();
-    expect(embed.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
-      expect.objectContaining({ name: 'Getroffener Körperteil', value: 'Head' }),
-      expect.objectContaining({ name: 'Schaden', value: expect.stringContaining('12,5') }),
-      expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
-    ]));
+    const description = embed.description ?? '';
+    expect(description).toContain('**Waffe:** M4-A1');
+    expect(description).toContain('**Getroffener Körperteil:** Head');
+    expect(description).toContain('**Schaden:** 12,5 (FirearmHit_Rifle)');
+    expect(embed.footer?.text).toBe('Chernarus #1');
+    expect(embed.fields ?? []).toHaveLength(0);
 
     const deliveryCalls = deliveryUpdate.mock.calls
       .map(call => call[0])
