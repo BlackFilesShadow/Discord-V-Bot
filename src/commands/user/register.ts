@@ -3,7 +3,8 @@ import { Command } from '../../types';
 import { createManufacturerRequest, verifyOneTimePassword } from '../../modules/registration/register';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { safeSend } from '../../utils/safeSend';
 import { logger } from '../../utils/logger';
 
@@ -55,26 +56,25 @@ async function handleManufacturerRegistration(interaction: ChatInputCommandInter
     reason
   );
 
-  const embed = vEmbed(result.success ? Colors.Success : Colors.Error)
-    .setTitle(result.success ? '✅  Anfrage gesendet' : '❌  Fehler')
-    .setDescription(result.message);
+  const embed = buildStatusEmbed({
+    status: result.success ? 'SUCCESS' : 'ERROR',
+    title: result.success ? 'Anfrage gesendet' : 'Fehler',
+    description: result.message,
+    fields: result.success
+      ? [{ name: 'Status', value: 'Warte auf Admin-Bestätigung', inline: true }]
+      : undefined,
+    footerText: Brand.footerText,
+  });
 
   if (result.success) {
-    embed.addFields({ name: 'Status', value: 'Warte auf Admin-Bestätigung', inline: true });
-
     try {
       const ownerUser = await interaction.client.users.fetch(config.discord.ownerId);
-      const adminEmbed = vEmbed(Colors.Info)
-        .setTitle('📋  Neue Hersteller-Anfrage')
-        .setDescription(
-          `${Brand.divider}\n\n` +
-          `👤 **${interaction.user.username}** möchte Hersteller werden.\n\n` +
-          Brand.divider
-        )
-        .addFields(
-          { name: '👤 Discord', value: `<@${interaction.user.id}>`, inline: true },
-          { name: '📝 Grund', value: (reason || 'Kein Grund angegeben').slice(0, 1024), inline: false },
-        );
+      const adminEmbed = compactEmbed(Colors.Info)
+        .setDescription(compactDescription('📋 Neue Hersteller-Anfrage', [
+          `👤 **${interaction.user.username}** möchte Hersteller werden.`,
+          `**Discord:** <@${interaction.user.id}>`,
+          `**Grund:** ${(reason || 'Kein Grund angegeben').slice(0, 500)}`,
+        ]));
 
       const approveBtn = new ButtonBuilder()
         .setCustomId(`approve_manufacturer_${interaction.user.id}`)
@@ -119,13 +119,15 @@ async function handlePasswordVerification(interaction: ChatInputCommandInteracti
 
   const result = await verifyOneTimePassword(user.id, password);
 
-  const embed = vEmbed(result.success ? Colors.Success : Colors.Error)
-    .setTitle(result.success ? '✅  Verifizierung erfolgreich' : '❌  Verifizierung fehlgeschlagen')
-    .setDescription(result.message);
-
-  if (result.success) {
-    embed.addFields({ name: 'Status', value: 'Aktiv – Uploads freigeschaltet', inline: true });
-  }
+  const embed = buildStatusEmbed({
+    status: result.success ? 'SUCCESS' : 'ERROR',
+    title: result.success ? 'Verifizierung erfolgreich' : 'Verifizierung fehlgeschlagen',
+    description: result.message,
+    fields: result.success
+      ? [{ name: 'Status', value: 'Aktiv – Uploads freigeschaltet', inline: true }]
+      : undefined,
+    footerText: Brand.footerText,
+  });
 
   await interaction.editReply({ embeds: [embed] });
 }
