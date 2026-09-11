@@ -13,7 +13,8 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { logger, logAudit } from '../../utils/logger';
 import { safeSend } from '../../utils/safeSend';
 
@@ -163,15 +164,13 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
           serverField = gName ? `**${gName}**` : 'Discord-Server';
         }
         if (ch && ch.isTextBased()) {
-          const embed = vEmbed(colorOf[category])
-            .setTitle(`${labelDe[category]} • ${subject}`)
-            .setDescription(message)
-            .addFields(
-              { name: 'Von', value: `<@${modal.user.id}>`, inline: true },
-              { name: 'Server', value: serverField, inline: true },
-              { name: 'Status', value: '`OPEN`', inline: true },
-            )
-            .setFooter({ text: `${Brand.footerText} • Feedback` });
+          const embed = compactEmbed(colorOf[category], `${Brand.footerText} • Feedback`)
+            .setDescription(compactDescription(`${labelDe[category]} • ${subject}`, [
+              message,
+              `**Von:** <@${modal.user.id}>`,
+              `**Server:** ${serverField}`,
+              '**Status:** `OPEN`',
+            ]));
           const sent = await safeSend(ch as TextChannel, { embeds: [embed], allowedMentions: { parse: [] } });
           if (sent?.id) {
             try {
@@ -188,17 +187,23 @@ export async function handleFeedbackModal(modal: ModalSubmitInteraction): Promis
     }
 
     await modal.editReply({
-      embeds: [
-        vEmbed(Colors.Success)
-          .setTitle('✅ Feedback erhalten')
-          .setDescription(`Vielen Dank für dein Feedback!\nKategorie: **${labelDe[category]}**`),
-      ],
+      embeds: [buildStatusEmbed({
+        status: 'SUCCESS',
+        title: 'Feedback erhalten',
+        description: `Vielen Dank für dein Feedback!\nKategorie: **${labelDe[category]}**`,
+        footerText: Brand.footerText,
+      })],
     });
   } catch (e) {
     logger.error('Feedback-Speicherung fehlgeschlagen:', e as Error);
     try {
       await modal.editReply({
-        embeds: [vEmbed(Colors.Error).setTitle('❌ Fehler').setDescription('Feedback konnte nicht gespeichert werden.')],
+        embeds: [buildStatusEmbed({
+          status: 'ERROR',
+          title: 'Fehler',
+          description: 'Feedback konnte nicht gespeichert werden.',
+          footerText: Brand.footerText,
+        })],
       });
     } catch { /* */ }
   }
