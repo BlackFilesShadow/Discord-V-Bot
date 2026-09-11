@@ -101,7 +101,9 @@ export function compactEmbed(
   color: number = Colors.Primary,
   footerText: string = Brand.footerText,
 ): EmbedBuilder {
-  return vEmbed(color).setFooter({ text: footerText });
+  return vEmbed(color)
+    .setFooter({ text: footerText })
+    .setTimestamp(null);
 }
 
 export function economyEmbed(
