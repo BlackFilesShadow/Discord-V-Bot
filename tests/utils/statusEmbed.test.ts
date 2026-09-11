@@ -5,45 +5,47 @@ import { buildStatusEmbed, statusEmoji, statusColor } from '../../src/utils/stat
 import { Colors } from '../../src/utils/embedDesign';
 
 describe('buildStatusEmbed', () => {
-  it('SUCCESS -> grüner Haken + grüne Farbe', () => {
+  it('SUCCESS -> grüner Haken + grüne Farbe in kompakter Kopfzeile', () => {
     const e = buildStatusEmbed({ status: 'SUCCESS', title: 'Einzahlung erfolgreich' }).toJSON();
-    expect(e.title).toBe('✅ Einzahlung erfolgreich');
+    expect(e.title).toBeUndefined();
+    expect(e.description).toBe('**✅ Einzahlung erfolgreich**');
     expect(e.color).toBe(Colors.Success);
+    expect(e.timestamp).toBeUndefined();
   });
 
   it('INFO -> Ausrufezeichen + blaue Farbe', () => {
     const e = buildStatusEmbed({ status: 'INFO', title: 'Beitrittsanfrage gestellt' }).toJSON();
-    expect(e.title).toBe('❕ Beitrittsanfrage gestellt');
+    expect(e.description).toBe('**❕ Beitrittsanfrage gestellt**');
     expect(e.color).toBe(Colors.Info);
   });
 
   it('ERROR -> Kreuz + rote Farbe', () => {
     const e = buildStatusEmbed({ status: 'ERROR', title: 'Unzureichendes Guthaben' }).toJSON();
-    expect(e.title).toBe('❌ Unzureichendes Guthaben');
+    expect(e.description).toBe('**❌ Unzureichendes Guthaben**');
     expect(e.color).toBe(Colors.Error);
   });
 
   it('behält thematische Emojis hinter dem Statussymbol', () => {
     const e = buildStatusEmbed({ status: 'INFO', title: '📋 Neue Anfrage' }).toJSON();
-    expect(e.title).toBe('❕ 📋 Neue Anfrage');
+    expect(e.description).toBe('**❕ 📋 Neue Anfrage**');
   });
 
   it('ersetzt alte Statussymbole statt sie zu verdoppeln', () => {
     const e = buildStatusEmbed({ status: 'INFO', title: 'ℹ️ 📋 Neue Anfrage' }).toJSON();
-    expect(e.title).toBe('❕ 📋 Neue Anfrage');
+    expect(e.description).toBe('**❕ 📋 Neue Anfrage**');
   });
 
-  it('Felder sind standardmäßig einspaltig (inline:false)', () => {
+  it('Felder bleiben standardmäßig einspaltig (inline:false)', () => {
     const e = buildStatusEmbed({
       status: 'SUCCESS', title: 'x',
       fields: [{ name: '💰 Betrag', value: '1.000 🪙' }],
     }).toJSON();
     expect(e.fields?.[0].inline).toBe(false);
+    expect(e.fields?.[0]).toMatchObject({ name: '💰 Betrag', value: '1.000 🪙' });
   });
 
-  it('erzwingt Discord-Längenlimits', () => {
+  it('erzwingt Discord-Längenlimits auch im kompakten Description-Layout', () => {
     const e = buildStatusEmbed({ status: 'INFO', title: 'a'.repeat(400), description: 'b'.repeat(5000) }).toJSON();
-    expect((e.title ?? '').length).toBeLessThanOrEqual(256);
     expect((e.description ?? '').length).toBeLessThanOrEqual(4096);
   });
 
@@ -54,12 +56,12 @@ describe('buildStatusEmbed', () => {
       description: 'Erster Abschnitt.\n\n\nZweiter Abschnitt.  \n',
     }).toJSON();
 
-    expect(e.description).toBe('Erster Abschnitt.\n\nZweiter Abschnitt.');
+    expect(e.description).toBe('**❕ Hinweis**\nErster Abschnitt.\n\nZweiter Abschnitt.');
   });
 
-  it('genau ein Statussymbol im Titel (kein Doppel)', () => {
+  it('genau ein Statussymbol in der sichtbaren Kopfzeile (kein Doppel)', () => {
     const e = buildStatusEmbed({ status: 'ERROR', title: '❌ Fehler' }).toJSON();
-    const count = ((e.title ?? '').match(/✅|❕|❌/g) ?? []).length;
+    const count = ((e.description ?? '').match(/✅|❕|❌/g) ?? []).length;
     expect(count).toBe(1);
   });
 
