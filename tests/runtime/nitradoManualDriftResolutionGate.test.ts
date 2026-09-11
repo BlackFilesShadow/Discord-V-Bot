@@ -67,7 +67,7 @@ describe('manual Nitrado drift resolution gate', () => {
     const command = read('src/commands/dashboard/whitelist.ts');
     const guard = read('src/modules/bans/whitelistBanGuard.ts');
     const banCheck = command.indexOf('isWhitelistBlockedByActiveServerBan(');
-    const entryRead = command.indexOf('const existing = await prisma.whitelistEntry.findUnique');
+    const entryRead = command.indexOf('const existing = await prisma.whitelistEntry.findFirst');
 
     expect(banCheck).toBeGreaterThanOrEqual(0);
     expect(entryRead).toBeGreaterThan(banCheck);
