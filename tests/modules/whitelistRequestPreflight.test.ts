@@ -1,7 +1,7 @@
 const readCurrentAdmBinding = jest.fn();
 const withFreshAdmBinding = jest.fn();
 const getWhitelist = jest.fn();
-const decrypt = jest.fn(() => 'plain-token');
+const decrypt = jest.fn((..._args: unknown[]) => 'plain-token');
 
 jest.mock('../../src/config', () => ({
   config: { security: { encryptionKey: 'test-key' } },
