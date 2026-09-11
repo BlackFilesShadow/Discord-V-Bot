@@ -22,6 +22,7 @@ import * as fs from 'node:fs/promises';
 import prisma from '../../database/prisma';
 import { logAudit, logger } from '../../utils/logger';
 import { vEmbed } from '../../utils/embedDesign';
+import { runKeyedSerial } from '../../utils/keyedPromiseQueue';
 
 const postLocks = new Map<string, Promise<unknown>>();
 
@@ -215,17 +216,13 @@ async function loadFaction(factionId: string): Promise<FactionEmbedData | null> 
  * - Mutex pro Faction-ID gegen parallele Aufrufe.
  */
 export async function postFactionEmbed(client: Client, factionId: string): Promise<{ messageId: string; updated: boolean }> {
-  const prev = postLocks.get(factionId);
-  if (prev) { try { await prev; } catch { /* ignore */ } }
-
-  const run = (async (): Promise<{ messageId: string; updated: boolean }> => {
+  return runKeyedSerial(postLocks, factionId, async () => {
     const f = await loadFaction(factionId);
     if (!f) throw new Error('Fraktion nicht gefunden.');
 
     // Effektiver Channel: Faction-spezifisch ODER System-Sammelkanal als Fallback.
     let targetChannelId = f.embedChannelId;
     if (!targetChannelId) {
-       
       const cfg = await prisma.factionSystemConfig.findUnique({
         where: { guildId: f.guildId },
         select: { factionChannelId: true },
@@ -246,11 +243,10 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     const { files, names } = await buildAttachments(f);
     const embed = buildEmbed(f, names, tch.guild.name);
 
-    // Initial-Ping nur EINMAL pro Faction: Beim allerersten Embed-Post (oder wenn
-    // die alte Message verloren ging und neu gesendet wird) wird die Fraktionsrolle
-    // gepingt — Mitglieder sollen die Eroeffnung mitbekommen. Bei normalen Edits
-    // (Status-Update, Member-Add, Banner-Wechsel etc.) wird der Mention bewusst
-    // NICHT erneut gesendet, sonst entsteht Push-Spam.
+    // Initial-Ping nur EINMAL pro Faction: Beim allerersten Embed-Post wird die
+    // Fraktionsrolle gepingt. Bei normalen Edits und Recovery-Neuposts wird der
+    // Mention bewusst NICHT erneut gesendet, sonst kann ein geloeschtes Embed
+    // wiederholt Push-Spam fuer die komplette Fraktion ausloesen.
     const isInitialSend = !f.embedMessageId;
     const initialContent: string = (isInitialSend && f.roleId) ? `<@&${f.roleId}>` : '';
     const initialAllowedMentions = (isInitialSend && f.roleId)
@@ -297,14 +293,7 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
     });
 
     return { messageId, updated };
-  })();
-
-  postLocks.set(factionId, run);
-  try {
-    return await run;
-  } finally {
-    if (postLocks.get(factionId) === run) postLocks.delete(factionId);
-  }
+  });
 }
 
 /**
@@ -327,7 +316,6 @@ export async function unpostFactionEmbed(client: Client, factionId: string): Pro
   // Effektiver Channel: Faction-spezifisch ODER System-Sammelkanal als Fallback.
   let targetChannelId = f.embedChannelId;
   if (!targetChannelId) {
-     
     const cfg = await prisma.factionSystemConfig.findUnique({
       where: { guildId: f.guildId },
       select: { factionChannelId: true },
@@ -397,11 +385,7 @@ function buildListEmbed(factions: Array<{
  */
 export async function postFactionList(client: Client, guildId: string): Promise<void> {
   const key = listKey(guildId);
-  const prev = listLocks.get(key);
-  if (prev) { try { await prev; } catch { /* ignore */ } }
-
-  const run = (async (): Promise<void> => {
-     
+  await runKeyedSerial(listLocks, key, async () => {
     const cfg = await prisma.factionSystemConfig.findUnique({
       where: { guildId },
     });
@@ -415,7 +399,6 @@ export async function postFactionList(client: Client, guildId: string): Promise<
     const tch = channel as GuildTextBasedChannel;
     if (tch.guildId !== guildId) return;
 
-     
     const factions = await prisma.faction.findMany({
       where: { guildId },
       include: { _count: { select: { members: true } } },
@@ -442,7 +425,6 @@ export async function postFactionList(client: Client, guildId: string): Promise<
     if (!messageId) {
       const sent = await tch.send({ embeds: [embed], allowedMentions: { parse: [] } });
       messageId = sent.id;
-       
       await prisma.factionSystemConfig.update({
         where: { id: cfg.id },
         data: { listMessageId: messageId },
@@ -452,27 +434,18 @@ export async function postFactionList(client: Client, guildId: string): Promise<
     logAudit('FACTION_LIST_REFRESHED', 'FACTION', {
       guildId, channelId: cfg.factionChannelId, messageId, count: factions.length,
     });
-  })();
-
-  listLocks.set(key, run);
-  try {
-    await run;
-  } finally {
-    if (listLocks.get(key) === run) listLocks.delete(key);
-  }
+  });
 }
 
 /**
  * Loescht das Uebersichts-Embed (z.B. vor Channel-Wechsel). Idempotent.
  */
 export async function unpostFactionList(client: Client, guildId: string): Promise<void> {
-   
   const cfg = await prisma.factionSystemConfig.findUnique({
     where: { guildId },
   });
   if (!cfg || !cfg.factionChannelId || !cfg.listMessageId) {
     if (cfg && cfg.listMessageId) {
-       
       await prisma.factionSystemConfig.update({ where: { id: cfg.id }, data: { listMessageId: null } }).catch(() => {});
     }
     return;
@@ -484,7 +457,6 @@ export async function unpostFactionList(client: Client, guildId: string): Promis
       if (msg) await msg.delete().catch(() => {});
     }
   } finally {
-     
     await prisma.factionSystemConfig.update({ where: { id: cfg.id }, data: { listMessageId: null } }).catch(() => {});
     logAudit('FACTION_LIST_UNPOSTED', 'FACTION', {
       guildId, channelId: cfg.factionChannelId,
