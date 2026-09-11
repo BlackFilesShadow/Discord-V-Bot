@@ -244,17 +244,16 @@ describe('produktive ADM -> Discord Gameplay-Feed-Kette', () => {
 
     const payload = send.mock.calls[0][0];
     const embed = payload.embeds[0].toJSON();
-    expect(embed.title).toBe('💀 V-Kill Report');
-    expect(embed.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Killer', value: 'Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)' }),
-      expect.objectContaining({ name: 'Opfer', value: 'Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)' }),
-      expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
-      expect.objectContaining({ name: 'Distanz', value: '42.5 m' }),
-      expect.objectContaining({ name: 'Server', value: 'Chernarus #1' }),
-    ]));
-    const fieldNames = (embed.fields ?? []).map((field: { name: string }) => field.name);
-    expect(fieldNames).not.toContain('Ereigniszeit');
-    expect(embed.footer).toBeUndefined();
+    expect(embed.title).toBeUndefined();
+    const description = embed.description ?? '';
+    expect(description).toContain('**💀 V-Kill Report**');
+    expect(description).toContain('**Killer**\nKiller\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)');
+    expect(description).toContain('**Opfer**\nVictim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)');
+    expect(description).toContain('**Waffe:** M4-A1');
+    expect(description).toContain('**Distanz:** 42.5 m');
+    expect(description).not.toContain('**Ereigniszeit:**');
+    expect(embed.fields ?? []).toHaveLength(0);
+    expect(embed.footer?.text).toBe('Chernarus #1');
     expect(embed.timestamp).toBeUndefined();
     const expectedNonce = createHash('sha256')
       .update(`gameplay-feed\u0000${config.id}\u0000${event.id}`)
