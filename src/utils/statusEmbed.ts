@@ -7,20 +7,22 @@ import { Colors, compactDescription, compactEmbed, readableEmbedDescription } fr
  * Verbindliche Zuordnung:
  *   SUCCESS -> ✅ + Gruen
  *   INFO    -> ❕ + Blau
+ *   WARNING -> ⚠️ + Gelb
  *   ERROR   -> ❌ + Rot
  *
  * Thematische Emojis im Titel bleiben erhalten.
  */
 
-export type EmbedStatus = 'SUCCESS' | 'INFO' | 'ERROR';
+export type EmbedStatus = 'SUCCESS' | 'INFO' | 'WARNING' | 'ERROR';
 
 const STATUS_META: Record<EmbedStatus, { emoji: string; color: number }> = {
   SUCCESS: { emoji: '✅', color: Colors.Success },
   INFO: { emoji: '❕', color: Colors.Info },
+  WARNING: { emoji: '⚠️', color: Colors.Warning },
   ERROR: { emoji: '❌', color: Colors.Error },
 };
 
-const LEADING_STATUS_RE = /^(?:✅|❌|❕|ℹ️|ℹ)\s*/u;
+const LEADING_STATUS_RE = /^(?:✅|❌|❕|⚠️|⚠|ℹ️|ℹ)\s*/u;
 
 export interface StatusEmbedField {
   name: string;
