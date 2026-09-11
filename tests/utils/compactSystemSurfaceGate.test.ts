@@ -18,6 +18,7 @@ const compactSystemSurfaces = [
   'src/modules/leaderboard/leaderboardFeed.ts',
   'src/modules/reminders/reminderScheduler.ts',
   'src/modules/bans/expiryRuntime.ts',
+  'src/modules/economy/marketOrderReadyRuntime.ts',
   'src/modules/ai/translatedPostSchedulerV2.ts',
 ] as const;
 
@@ -41,6 +42,7 @@ describe('compact V-Bot system surface gate', () => {
   it('keeps domain timestamps where they encode real event time', () => {
     expect(source('src/commands/user/caseManagement.ts')).toContain('.setTimestamp(modCase.createdAt)');
     expect(source('src/modules/bans/expiryRuntime.ts')).toContain('.setTimestamp(ban.liftedAt ?? new Date())');
+    expect(source('src/modules/economy/marketOrderReadyRuntime.ts')).toContain('.setTimestamp(now)');
   });
 
   it('keeps ephemeral security/admin interaction contracts on migrated commands', () => {
