@@ -20,6 +20,7 @@ const compactSystemSurfaces = [
   'src/modules/bans/expiryRuntime.ts',
   'src/modules/economy/marketOrderReadyRuntime.ts',
   'src/modules/economy/virtualAccountDiscord.ts',
+  'src/modules/economy/virtualAccountManagerPanelSafety.ts',
   'src/modules/nitrado/driftDiscord.ts',
   'src/modules/nitrado/serverListCatalog.ts',
   'src/modules/ai/translatedPostSchedulerV2.ts',
