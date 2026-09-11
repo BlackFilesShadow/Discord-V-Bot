@@ -8,7 +8,7 @@ import {
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { buildStatusEmbed } from '../../utils/statusEmbed';
-import { vEmbed } from '../../utils/embedDesign';
+import { compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 /**
  * /fraktionen — deutschsprachige guildweite Fraktionsuebersicht.
@@ -85,13 +85,15 @@ const fraktionenCommand: Command = {
         const role = f.roleId ? ` · <@&${f.roleId}>` : '';
         return `${st} **${escapeMarkdown(f.name)}** ${pol}\n👥 ${f._count.members} Mitglieder${leader}${role}`;
       });
+      const heading = `🏛️ Fraktionen auf ${interaction.guild?.name ?? 'diesem Server'}${pages > 1 ? ` · ${pageNo}/${pages}` : ''}`;
+      const bodyLimit = Math.max(0, 4096 - `**${heading}**\n`.length);
+      const body = lines.join('\n\n');
+      const visibleBody = body.length > bodyLimit
+        ? `${body.slice(0, Math.max(0, bodyLimit - 1))}…`
+        : body;
 
-      embeds.push(vEmbed(0xdc2626)
-        .setAuthor({ name: 'V-BOT • FRAKTIONEN' })
-        .setTitle(`🏛️ Fraktionen auf ${interaction.guild?.name ?? 'diesem Server'}${pages > 1 ? ` · ${pageNo}/${pages}` : ''}`)
-        .setDescription(lines.join('\n\n').slice(0, 4096))
-        .setFooter({ text: `${factions.length} Fraktion(en) insgesamt • Discord-weit` })
-        .setTimestamp());
+      embeds.push(compactEmbed(0xdc2626, `${factions.length} Fraktion(en) insgesamt • Discord-weit`)
+        .setDescription(compactDescription(heading, [visibleBody])));
     }
 
     for (let index = 0; index < embeds.length; index += 10) {
