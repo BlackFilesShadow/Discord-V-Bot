@@ -92,6 +92,59 @@ export function vEmbed(color: number = Colors.Primary): EmbedBuilder {
     .setTimestamp();
 }
 
+/**
+ * Kompakte V-Bot-Embed-Basis fuer die neue einheitliche Discord-Optik.
+ * Bewusst reine Praesentationsschicht: keine Interaktions-, Daten- oder
+ * Berechtigungslogik wird hier abgebildet.
+ */
+export function compactEmbed(
+  color: number = Colors.Primary,
+  footerText: string = Brand.footerText,
+): EmbedBuilder {
+  return vEmbed(color).setFooter({ text: footerText });
+}
+
+export function economyEmbed(
+  color: number = Colors.Primary,
+  footerText: string = 'V-Bot • Economy',
+): EmbedBuilder {
+  return compactEmbed(color, footerText);
+}
+
+export function casinoEmbed(
+  color: number = Colors.Primary,
+  footerText: string = 'V-Bot • Casino',
+): EmbedBuilder {
+  return compactEmbed(color, footerText);
+}
+
+/**
+ * Erzeugt die in den Referenz-Embeds verwendete kompakte Struktur:
+ * fette Kopfzeile, danach kurze Inhaltszeilen ohne kuenstliche Trenner.
+ */
+export function compactDescription(
+  heading: string,
+  lines: readonly (string | null | undefined | false)[] = [],
+): string {
+  const body = lines
+    .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+    .map(line => line.trim());
+  const cleanHeading = heading.trim();
+  return readableEmbedDescription([
+    cleanHeading ? `**${cleanHeading}**` : '',
+    ...body,
+  ].filter(Boolean).join('\n'));
+}
+
+/** Discord-Blockquote fuer kompakte Wertelisten wie Balance/Bank. */
+export function compactQuote(lines: readonly string[]): string {
+  return lines
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => `> ${line}`)
+    .join('\n');
+}
+
 export function progressBar(current: number, max: number, length: number = 12): string {
   const pct = max > 0 ? Math.min(current / max, 1) : 0;
   const filled = Math.round(pct * length);
