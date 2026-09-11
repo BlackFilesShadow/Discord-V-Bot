@@ -220,7 +220,7 @@ describe('PvP-Killfeed Zusatzinformationen', () => {
     const description = embed.description ?? '';
     expect(description).toContain('**Waffe:** M4-A1');
     expect(description).toContain('**Getroffener Körperteil:** Head');
-    expect(description).toContain('**Schaden:** 12,5 (FirearmHit_Rifle)');
+    expect(description).toContain('**Schaden:** 12,5 (FirearmHit\\_Rifle)');
     expect(embed.footer?.text).toBe('Chernarus #1');
     expect(embed.fields ?? []).toHaveLength(0);
 
