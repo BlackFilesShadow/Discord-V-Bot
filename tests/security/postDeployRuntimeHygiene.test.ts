@@ -57,4 +57,11 @@ describe('Post-deploy runtime hygiene', () => {
     expect(feeds).toContain('Konfiguration unvollstaendig/ungueltig; Retry nach Backoff');
     expect(feeds).toContain('feedBackoff.set');
   });
+
+  it('fuehrt einen manuellen Feed-Test auch bei deaktiviertem Feed wirklich aus', () => {
+    expect(feeds).toContain('async function processFeedInner(client: Client, feedId: string, allowInactive = false)');
+    expect(feeds).toContain('if (!feed || (!feed.isActive && !allowInactive)) return;');
+    expect(feeds).toContain('await processFeedInner(client, feedId, allowInactive);');
+    expect(feeds).toContain('await processFeed(client, feedId, true, true, true);');
+  });
 });
