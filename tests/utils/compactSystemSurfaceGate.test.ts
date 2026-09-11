@@ -34,10 +34,15 @@ describe('compact V-Bot system surface gate', () => {
     expect(text).toMatch(/compact(?:Description|Embed)|buildStatusEmbed|economyEmbed/);
   });
 
-  it('keeps the user-configurable embed builder outside the forced system layout', () => {
-    const text = source('src/modules/embeds/embedBuilder.ts');
-    expect(text).toContain('new EmbedBuilder()');
-    expect(text).toContain('embed.setTitle(');
+  it('keeps user-configurable embeds outside the forced system layout', () => {
+    const builder = source('src/modules/embeds/embedBuilder.ts');
+    expect(builder).toContain('new EmbedBuilder()');
+    expect(builder).toContain('embed.setTitle(');
+
+    const webhook = source('src/modules/feeds/webhookReceiver.ts');
+    expect(webhook).toContain('.setTitle(data.title)');
+    expect(webhook).toContain('if (data.url) embed.setURL(data.url)');
+    expect(webhook).toContain('if (data.image) embed.setImage(data.image)');
   });
 
   it('keeps domain timestamps where they encode real event time', () => {
