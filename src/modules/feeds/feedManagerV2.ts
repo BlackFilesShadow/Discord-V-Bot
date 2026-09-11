@@ -85,9 +85,9 @@ async function translateNews(entry: FeedEntry): Promise<FeedEntry> {
   return { ...entry, title, description };
 }
 
-async function processFeedInner(client: Client, feedId: string): Promise<void> {
+async function processFeedInner(client: Client, feedId: string, allowInactive = false): Promise<void> {
   const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-  if (!feed || !feed.isActive) return;
+  if (!feed || (!feed.isActive && !allowInactive)) return;
 
   const channel = await client.channels.fetch(feed.channelId).catch(() => null) as TextChannel | null;
   if (!channel || !channel.guild) throw new Error('Ziel-Channel ist nicht erreichbar.');
@@ -191,7 +191,13 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
   throw new Error(`Nicht unterstützter Feed-Typ: ${feed.feedType}`);
 }
 
-async function processFeed(client: Client, feedId: string, ignoreBackoff = false, propagateError = false): Promise<void> {
+async function processFeed(
+  client: Client,
+  feedId: string,
+  ignoreBackoff = false,
+  propagateError = false,
+  allowInactive = false,
+): Promise<void> {
   const currentBackoff = feedBackoff.get(feedId);
   if (!ignoreBackoff && currentBackoff && currentBackoff.until > Date.now()) return;
   if (processingFeeds.has(feedId)) {
@@ -200,7 +206,7 @@ async function processFeed(client: Client, feedId: string, ignoreBackoff = false
   }
   processingFeeds.add(feedId);
   try {
-    await processFeedInner(client, feedId);
+    await processFeedInner(client, feedId, allowInactive);
     feedBackoff.delete(feedId);
   } catch (error) {
     const previous = feedBackoff.get(feedId)?.count ?? 0;
@@ -239,7 +245,7 @@ async function processFeed(client: Client, feedId: string, ignoreBackoff = false
 }
 
 export async function runFeedNow(client: Client, feedId: string): Promise<void> {
-  await processFeed(client, feedId, true, true);
+  await processFeed(client, feedId, true, true, true);
 }
 
 function startFeedTimer(client: Client, feed: { id: string; name: string; interval: number }): void {
