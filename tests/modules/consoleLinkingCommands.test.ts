@@ -43,6 +43,23 @@ describe('Konsolen-taugliche Account-Verknuepfung', () => {
     expect(option(linkPanelCommand, 'channel')).toEqual(expect.objectContaining({ required: true }));
   });
 
+  it('/link-info zeigt ohne Suchwert den eigenen Link und schuetzt Fremdabfragen weiter mit economy.view', () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../src/commands/dashboard/linking.ts'),
+      'utf8',
+    );
+
+    expect(String(linkInfoCommand.data.description)).toContain('deine Verknüpfung');
+    expect(source).toContain("execute: withGuildScope({ acceptSlotOption: true }, async (interaction, scope) => {");
+    expect(source).toContain('const selfLookup = !identifier && (!user || user.id === scope.actorDiscordId);');
+    expect(source).toContain("if (!selfLookup && !hasCommandPermission(scope, 'economy.view'))");
+    expect(source).toContain('? { userDiscordId: scope.actorDiscordId }');
+    expect(source).toContain("selfLookup ? '🔗 Deine DayZ-Verknüpfung' : '🔎 Link-Information'");
+    expect(source).toContain('Gameserver: **${alias}**');
+    expect(source).toContain('Verknüpft seit: ${linkedAt}');
+    expect(source).toContain("? `Du bist auf **${alias}** noch nicht mit einer DayZ-Identität verknüpft. Nutze \\`/link\\`, um deine Verbindung einzurichten.`");
+  });
+
   it('persistiert den Link-Kanal und bietet dieselbe Konfiguration ueber die Dashboard-API an', () => {
     const commandSource = fs.readFileSync(
       path.resolve(__dirname, '../../src/commands/dashboard/linking.ts'),
