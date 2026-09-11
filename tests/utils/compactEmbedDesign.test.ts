@@ -51,7 +51,7 @@ describe('compact V-Bot embed design primitives', () => {
       .toJSON();
 
     expect(json.title).toBeUndefined();
-    expect(json.url).toBeUndefined();
+    expect(json.url).toBe('https://example.com/status');
     expect(json.description).toBe('**[❕ Statusseite](https://example.com/status)**\nAktueller Zustand');
   });
 
