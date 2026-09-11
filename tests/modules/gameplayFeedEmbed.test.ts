@@ -52,14 +52,15 @@ function buildView(): GameplayFeedView {
 }
 
 describe('Gameplay-Feed Embed', () => {
-  it('rendert Namen ohne sichtbare Inline-Code-Escapes und ohne Footer/Embed-Zeitstempel', () => {
+  it('rendert Namen ohne sichtbare Inline-Code-Escapes im kompakten Format', () => {
     const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Test Server').toJSON();
-    const player = embed.fields?.find(field => field.name === 'Spieler');
+    const description = embed.description ?? '';
 
-    expect(player?.value).toBe('Void\\_\\_Architect');
-    expect(player?.value).not.toContain('`');
-    expect(embed.footer).toBeUndefined();
+    expect(description).toContain('Void\\_\\_Architect');
+    expect(description).not.toContain('`Void');
+    expect(embed.footer?.text).toBe('Test Server');
     expect(embed.timestamp).toBeUndefined();
+    expect(embed.fields ?? []).toHaveLength(0);
   });
 
   it('verlinkt DayZ-Koordinaten direkt auf eine iZurvive-Location', () => {
@@ -67,50 +68,37 @@ describe('Gameplay-Feed Embed', () => {
       .toBe('https://www.izurvive.com/#location=3005;13205;6');
 
     const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Test Server').toJSON();
-    const fields = embed.fields ?? [];
-    const position = fields.find(field => field.name === 'Pos:');
-    const serverIndex = fields.findIndex(field => field.name === 'Server');
-    expect(position?.value)
-      .toBe('[3005, 13205, 211.6](https://www.izurvive.com/#location=3005;13205;6)');
-    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Test Server' });
-    expect(fields[serverIndex + 1]?.name).toBe('Ereigniszeit');
+    const description = embed.description ?? '';
+    expect(description)
+      .toContain('[3005, 13205, 211.6](https://www.izurvive.com/#location=3005;13205;6)');
+    expect(description).toContain('**Ereigniszeit:**');
+    expect(embed.footer?.text).toBe('Test Server');
   });
 
   it('laesst ausschliesslich den V-Kill/PvP-Feed ohne Ereigniszeit', () => {
     const embed = buildGameplayFeedEmbed(pvpView(), '#dc2626', 'Kill Server').toJSON();
-    expect(embed.fields?.some(field => field.name === 'Ereigniszeit')).toBe(false);
-    expect(embed.fields?.at(-1)).toMatchObject({ name: 'Server', value: 'Kill Server' });
+    expect(embed.description).not.toContain('Ereigniszeit');
+    expect(embed.footer?.text).toBe('Kill Server');
     expect(JSON.stringify(embed)).not.toContain('hidden-pvp-event-id');
   });
 
-  it('zeigt Self-Kill die Ereigniszeit direkt unter dem Server-Alias', () => {
+  it('zeigt Self-Kill die Ereigniszeit und den Server-Alias im Footer', () => {
     const embed = buildGameplayFeedEmbed(suicideView(), '#dc2626', 'Self Kill Server').toJSON();
-    const fields = embed.fields ?? [];
-    const serverIndex = fields.findIndex(field => field.name === 'Server');
 
-    expect(serverIndex).toBeGreaterThanOrEqual(0);
-    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Self Kill Server', inline: false });
-    expect(fields[serverIndex + 1]).toMatchObject({
-      name: 'Ereigniszeit',
-      value: `<t:${Math.floor(new Date('2026-08-16T01:35:00.000Z').getTime() / 1000)}:F>`,
-      inline: false,
-    });
+    expect(embed.footer?.text).toBe('Self Kill Server');
+    expect(embed.description).toContain(
+      `<t:${Math.floor(new Date('2026-08-16T01:35:00.000Z').getTime() / 1000)}:F>`,
+    );
   });
 
-  it('zeigt bei Nicht-Kill-Nitrado-Feeds die Ereigniszeit direkt unter dem Server-Alias und keine technische ID', () => {
+  it('zeigt bei Nicht-Kill-Nitrado-Feeds die Ereigniszeit und keine technische ID', () => {
     const embed = buildGameplayFeedEmbed(buildView(), '#2563eb', 'Build Server').toJSON();
-    const fields = embed.fields ?? [];
-    const serverIndex = fields.findIndex(field => field.name === 'Server');
 
-    expect(serverIndex).toBeGreaterThanOrEqual(0);
-    expect(fields[serverIndex]).toMatchObject({ name: 'Server', value: 'Build Server', inline: false });
-    expect(fields[serverIndex + 1]).toMatchObject({
-      name: 'Ereigniszeit',
-      value: `<t:${Math.floor(new Date('2026-08-16T03:42:00.000Z').getTime() / 1000)}:F>`,
-      inline: false,
-    });
+    expect(embed.footer?.text).toBe('Build Server');
+    expect(embed.description).toContain(
+      `<t:${Math.floor(new Date('2026-08-16T03:42:00.000Z').getTime() / 1000)}:F>`,
+    );
     expect(JSON.stringify(embed)).not.toContain('technical-event-id-must-stay-hidden');
-    expect(embed.footer).toBeUndefined();
     expect(embed.timestamp).toBeUndefined();
   });
 });
@@ -118,20 +106,19 @@ describe('Gameplay-Feed Embed', () => {
 it('zeigt nur durch ADM belegte Fernkampf-Trefferdetails auf Deutsch', () => {
   const view = pvpView();
   view.pvpHit = { bodyPart: 'Head', damage: 48.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' };
-  const fields = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().fields ?? [];
+  const description = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().description ?? '';
 
-  expect(fields).toEqual(expect.arrayContaining([
-    expect.objectContaining({ name: 'Waffe', value: 'M4-A1' }),
-    expect.objectContaining({ name: 'Getroffener Körperteil', value: 'Head' }),
-    expect.objectContaining({ name: 'Schaden', value: '48,5 (FirearmHit\\_Rifle)' }),
-  ]));
+  expect(description).toContain('**Waffe:** M4-A1');
+  expect(description).toContain('**Getroffener Körperteil:** Head');
+  expect(description).toContain('**Schaden:** 48,5 (FirearmHit\\_Rifle)');
 });
 
 it('zeigt bei Nahkampf ausschliesslich die Waffe', () => {
   const view = pvpView();
   view.pvpHit = { bodyPart: 'LeftArm', damage: 2.85, damageType: 'MeleeSoft', weapon: 'Rooster' };
-  const fields = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().fields ?? [];
+  const description = buildGameplayFeedEmbed(view, '#dc2626', 'Kill Server').toJSON().description ?? '';
 
-  expect(fields.find(field => field.name === 'Waffe')?.value).toBe('Rooster');
-  expect(fields.some(field => field.name === 'Getroffener Körperteil' || field.name === 'Schaden')).toBe(false);
+  expect(description).toContain('**Waffe:** Rooster');
+  expect(description).not.toContain('Getroffener Körperteil');
+  expect(description).not.toContain('**Schaden:**');
 });
