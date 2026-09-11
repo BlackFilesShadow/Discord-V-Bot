@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { Command } from '../types';
-import { Colors, vEmbed } from '../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed } from '../utils/embedDesign';
 import { BOT_PRODUCT_NAME, buildBotAboutText } from '../content/botInfo';
 
 /**
@@ -14,10 +14,14 @@ const aboutCommand: Command = {
     .setDescription('Stellt V-Bot Prime und seine aktuell verfuegbaren Bereiche vor'),
   async execute(interaction: ChatInputCommandInteraction) {
     const description = buildBotAboutText();
-    const embed = vEmbed(Colors.Info)
-      .setTitle(`🤖 ${BOT_PRODUCT_NAME} — aktueller Funktionsstand`)
-      .setDescription(description.length > 4096 ? `${description.slice(0, 4093)}...` : description)
-      .setFooter({ text: `${BOT_PRODUCT_NAME} • Live-Funktionsuebersicht` });
+    const heading = `🤖 ${BOT_PRODUCT_NAME} — aktueller Funktionsstand`;
+    const descriptionPrefix = `**${heading}**\n`;
+    const availableBodyLength = Math.max(0, 4096 - descriptionPrefix.length);
+    const body = description.length > availableBodyLength
+      ? `${description.slice(0, Math.max(0, availableBodyLength - 3))}...`
+      : description;
+    const embed = compactEmbed(Colors.Info, `${BOT_PRODUCT_NAME} • Live-Funktionsuebersicht`)
+      .setDescription(compactDescription(heading, [body]));
     await interaction.reply({ embeds: [embed], ephemeral: false });
   },
 };
