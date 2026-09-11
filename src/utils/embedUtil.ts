@@ -5,7 +5,13 @@ import {
   safeEmbedField,
   safeEmbedFooter,
 } from './embedSanitize';
-import { readableEmbedDescription, statusForColor, statusTitle, vEmbed } from './embedDesign';
+import {
+  compactDescription,
+  compactEmbed,
+  readableEmbedDescription,
+  statusForColor,
+  statusTitle,
+} from './embedDesign';
 
 interface EmbedOptions {
   title?: string;
@@ -34,23 +40,26 @@ export function createBotEmbed(options: EmbedOptions = {}): EmbedBuilder {
   const sanitize = options.sanitize !== false;
   const color = options.color || DEFAULT_COLOR;
   const numericColor = colorNumber(color);
+  const footerText = sanitize
+    ? safeEmbedFooter(options.footer || DEFAULT_FOOTER)
+    : (options.footer || DEFAULT_FOOTER);
   const embed = numericColor === null
-    ? new EmbedBuilder().setColor(color)
-    : vEmbed(numericColor).setTimestamp(options.timestamp ? new Date() : null)
-    .setFooter({
-      text: sanitize ? safeEmbedFooter(options.footer || DEFAULT_FOOTER) : (options.footer || DEFAULT_FOOTER),
-    });
+    ? new EmbedBuilder().setColor(color).setFooter({ text: footerText })
+    : compactEmbed(numericColor, footerText);
 
+  let title: string | undefined;
   if (options.title) {
-    let title = sanitize ? safeEmbedTitle(options.title) : options.title;
+    title = sanitize ? safeEmbedTitle(options.title) : options.title;
     const status = numericColor === null ? null : statusForColor(numericColor);
     if (status) title = statusTitle(status, title);
-    embed.setTitle(title);
   }
-  if (options.description) {
-    const description = sanitize ? safeEmbedDescription(options.description) : options.description;
-    embed.setDescription(readableEmbedDescription(description));
-  }
+  const description = options.description
+    ? readableEmbedDescription(sanitize ? safeEmbedDescription(options.description) : options.description)
+    : undefined;
+
+  if (title) embed.setDescription(compactDescription(title, [description]));
+  else if (description) embed.setDescription(description);
+
   if (options.fields) {
     embed.addFields(
       sanitize
@@ -65,7 +74,7 @@ export function createBotEmbed(options: EmbedOptions = {}): EmbedBuilder {
   if (options.thumbnail) embed.setThumbnail(options.thumbnail);
   if (options.image) embed.setImage(options.image);
   if (options.url) embed.setURL(options.url);
-  if (options.timestamp && numericColor === null) embed.setTimestamp();
+  if (options.timestamp) embed.setTimestamp();
 
   return embed;
 }
