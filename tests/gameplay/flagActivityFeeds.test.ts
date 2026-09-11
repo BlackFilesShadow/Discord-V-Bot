@@ -179,7 +179,7 @@ describe('Flag activity feeds', () => {
     expect(flagRows[0].eventKey).toBe(admRows[0].eventKey);
   });
 
-  test('renders raised flag activity as a readable Discord embed while retaining the classname', () => {
+  test('renders raised flag activity as a readable compact Discord embed while retaining the classname', () => {
     expect(flagObjectLabel('Flag_RSTA')).toBe('RSTA');
     const embed = buildGameplayFeedEmbed({
       eventId: 'flag-raised-1',
@@ -195,20 +195,20 @@ describe('Flag activity feeds', () => {
       actorPosition: '9713.25, 167.81, 13149.40',
       targetPosition: '9714.855469, 168.180801, 13150.735352',
     }, '#22c55e', 'Die Chaoten').toJSON();
+    const description = embed.description ?? '';
 
-    expect(embed.title).toBe('🚩 Flagge hochgezogen');
-    expect(embed.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Aktion', value: 'Hochgezogen' }),
-      expect.objectContaining({ name: 'Spieler', value: 'JtReaper' }),
-      expect.objectContaining({ name: 'Flagge', value: 'RSTA\nClassname: `Flag_RSTA`' }),
-      expect.objectContaining({ name: 'Flaggen-Position', value: 'X: 9714.86 • Z: 13150.74\nHöhe: 168.18' }),
-      expect.objectContaining({ name: 'Spieler-Position', value: 'X: 9713.25 • Z: 13149.4\nHöhe: 167.81' }),
-      expect.objectContaining({ name: 'Server', value: 'Die Chaoten' }),
-      expect.objectContaining({ name: 'Ereigniszeit', value: '<t:1788093404:F>' }),
-    ]));
+    expect(description).toContain('**🚩 Flagge hochgezogen**');
+    expect(description).toContain('**Aktion:** Hochgezogen');
+    expect(description).toContain('**Spieler:** JtReaper');
+    expect(description).toContain('**Flagge**\nRSTA\nClassname: `Flag_RSTA`');
+    expect(description).toContain('**Flaggen-Position**\nX: 9714.86 • Z: 13150.74\nHöhe: 168.18');
+    expect(description).toContain('**Spieler-Position**\nX: 9713.25 • Z: 13149.4\nHöhe: 167.81');
+    expect(description).toContain('**Ereigniszeit:** <t:1788093404:F>');
+    expect(embed.footer?.text).toBe('Die Chaoten');
+    expect(embed.fields ?? []).toHaveLength(0);
   });
 
-  test('renders lowered flag activity with the matching action and title', () => {
+  test('renders lowered flag activity with the matching action and compact title', () => {
     const embed = buildGameplayFeedEmbed({
       eventId: 'flag-lowered-1',
       kind: 'FLAG',
@@ -223,13 +223,13 @@ describe('Flag activity feeds', () => {
       actorPosition: null,
       targetPosition: '9663.215820, 294.325684, 8789.842773',
     }, '#eab308', 'Die Chaoten').toJSON();
+    const description = embed.description ?? '';
 
-    expect(embed.title).toBe('🏳️ Flagge heruntergelassen');
-    expect(embed.fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'Aktion', value: 'Heruntergelassen' }),
-      expect.objectContaining({ name: 'Flagge', value: 'Base\nClassname: `Flag_Base`' }),
-      expect.objectContaining({ name: 'Flaggen-Position', value: 'X: 9663.22 • Z: 8789.84\nHöhe: 294.33' }),
-    ]));
+    expect(description).toContain('**🏳️ Flagge heruntergelassen**');
+    expect(description).toContain('**Aktion:** Heruntergelassen');
+    expect(description).toContain('**Flagge**\nBase\nClassname: `Flag_Base`');
+    expect(description).toContain('**Flaggen-Position**\nX: 9663.22 • Z: 8789.84\nHöhe: 294.33');
+    expect(embed.footer?.text).toBe('Die Chaoten');
   });
 
   test('architecture keeps raised/lowered separate, dynamic totems intact and wires signed analysis button', () => {
