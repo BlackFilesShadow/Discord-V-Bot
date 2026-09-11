@@ -17,7 +17,7 @@ import { NitradoClient } from './nitradoClient';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from '../whitelist/whitelistOutbox';
 import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';
 import { matchesBanIdentifier } from '../bans/banTarget';
-import { vEmbed } from '../../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 type DriftKind = 'WHITELIST' | 'BAN';
 
@@ -68,9 +68,10 @@ async function sendNotice(client: Client, args: { guildId: string; nitradoConnId
   const label = args.kind === 'WHITELIST' ? `Whitelist-Eintrag \`${args.subjectKey.replace(/`/g, "'")}\`` : 'Ban-Eintrag';
   try {
     const message = await (channel as TextChannel).send({
-      embeds: [vEmbed(0xfaa61a)
-        .setTitle('Manuelle Nitrado-Abweichung erkannt')
-        .setDescription(`${label} wurde direkt bei Nitrado entfernt. Entscheide bewusst, welcher Zustand gelten soll.`)
+      embeds: [compactEmbed(Colors.Warning, 'V-Bot • Nitrado')
+        .setDescription(compactDescription('⚠️ Manuelle Nitrado-Abweichung erkannt', [
+          `${label} wurde direkt bei Nitrado entfernt. Entscheide bewusst, welcher Zustand gelten soll.`,
+        ]))
         .setTimestamp()],
       components: components(args.kind, notice.id),
       allowedMentions: { parse: [] },
