@@ -112,10 +112,11 @@ class VEmbedBuilder extends EmbedBuilder {
     let heading = this.presentationHeading;
     if (heading && this.presentationUrl) {
       heading = `[${markdownLinkLabel(heading)}](${markdownLinkUrl(this.presentationUrl)})`;
+      super.clearURL();
     }
 
     if (!heading && !this.presentationBody) {
-      super.setDescription(null);
+      super.clearDescription();
       return this;
     }
 
@@ -126,28 +127,24 @@ class VEmbedBuilder extends EmbedBuilder {
     return this;
   }
 
-  override setTitle(title: string | null): this {
-    if (title === null) {
-      this.presentationHeading = null;
-      return this.renderPresentation();
-    }
+  override setTitle(title: string): this {
     const formatted = this.status ? statusTitle(this.status, title) : title.trim();
     this.presentationHeading = formatted.slice(0, EMBED_HEADING_LIMIT);
     return this.renderPresentation();
   }
 
-  override setDescription(description: string | null): this {
-    this.presentationBody = description === null ? null : readableEmbedDescription(description);
+  override setDescription(description: string): this {
+    this.presentationBody = readableEmbedDescription(description);
     return this.renderPresentation();
   }
 
-  override setURL(url: string | null): this {
+  override setURL(url: string): this {
     this.presentationUrl = url;
     if (this.presentationHeading) {
       // Ein klassischer Embed-URL-Link haengt am nativen Discord-Titel. Da
       // feste V-Bot-Titel kompakt in der Description liegen, bleibt die URL
       // als Markdown-Link auf exakt dieser Kopfzeile klickbar.
-      super.setURL(null);
+      super.clearURL();
       return this.renderPresentation();
     }
     return super.setURL(url);
