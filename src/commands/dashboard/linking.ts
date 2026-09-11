@@ -5,6 +5,7 @@ import {
   type ChatInputCommandInteraction,
 } from 'discord.js';
 import type { Command } from '../../types';
+import { hasCommandPermission } from '../../types/scope';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { withGuildScope } from '../middleware/withGuildScope';
@@ -253,18 +254,25 @@ export const linksCommand: Command = {
 export const linkInfoCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('link-info')
-    .setDescription('Berechtigt: Prüft, welcher Discord-Account mit Name oder GUID verbunden ist.')
+    .setDescription('Zeigt deine Verknüpfung; Berechtigte können User, Name oder GUID prüfen.')
     .addUserOption(option => option.setName('user').setDescription('Discord-Account prüfen').setRequired(false))
     .addStringOption(option => option
       .setName('id')
       .setDescription('Exakter Spielername oder aktuelle DayZ-GUID')
       .setRequired(false)
       .setMaxLength(128)) as SlashCommandBuilder),
-  execute: withGuildScope({ requirePerm: 'economy.view', acceptSlotOption: true }, async (interaction, scope) => {
+  execute: withGuildScope({ acceptSlotOption: true }, async (interaction, scope) => {
     const user = interaction.options.getUser('user');
     const identifier = interaction.options.getString('id')?.trim();
-    if (!user && !identifier) {
-      await statusReply(interaction, 'INFO', 'Suchwert erforderlich', 'Gib entweder `user` oder `id` (Spielername/GUID) an.');
+    const selfLookup = !identifier && (!user || user.id === scope.actorDiscordId);
+
+    if (!selfLookup && !hasCommandPermission(scope, 'economy.view')) {
+      await statusReply(
+        interaction,
+        'ERROR',
+        'Keine Berechtigung',
+        'Du darfst Verknüpfungen anderer Spieler oder GUIDs auf diesem Server nicht einsehen.',
+      );
       return;
     }
 
@@ -272,23 +280,40 @@ export const linkInfoCommand: Command = {
       prisma as unknown as SessionLinkClient,
       { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId! },
       config.security.encryptionKey,
-      user ? { userDiscordId: user.id } : { identifier },
+      selfLookup
+        ? { userDiscordId: scope.actorDiscordId }
+        : user
+          ? { userDiscordId: user.id }
+          : { identifier },
     );
+    const alias = await serverLabel(scope.guildId, scope.nitradoConnId!);
     if (rows.length === 0) {
-      await statusReply(interaction, 'INFO', 'Keine Verknüpfung gefunden', 'Für diese Suche existiert auf dem ausgewählten Gameserver keine aktive Verknüpfung.');
+      await statusReply(
+        interaction,
+        'INFO',
+        selfLookup ? 'Noch nicht verknüpft' : 'Keine Verknüpfung gefunden',
+        selfLookup
+          ? `Du bist auf **${alias}** noch nicht mit einer DayZ-Identität verknüpft. Nutze \`/link\`, um deine Verbindung einzurichten.`
+          : `Für diese Suche existiert auf **${alias}** keine aktive Verknüpfung.`,
+      );
       return;
     }
 
     const embed = vEmbed(Colors.Primary)
-      .setTitle('🔎 Link-Information')
-      .setFooter({ text: await serverLabel(scope.guildId, scope.nitradoConnId!) });
+      .setTitle(selfLookup ? '🔗 Deine DayZ-Verknüpfung' : '🔎 Link-Information')
+      .setFooter({ text: alias });
     for (const row of rows.slice(0, 10)) {
+      const linkedAt = row.verifiedAt
+        ? `<t:${Math.floor(row.verifiedAt.getTime() / 1000)}:f> · <t:${Math.floor(row.verifiedAt.getTime() / 1000)}:R>`
+        : 'unbekannt';
       embed.addFields({
         name: row.playerName ?? 'Unbekannter Spielername',
         value: [
           `Discord: <@${row.userDiscordId}>`,
           `GUID: \`${row.gameId ?? 'nicht auflösbar'}\``,
-          `Verknüpft: ${row.verifiedAt ? `<t:${Math.floor(row.verifiedAt.getTime() / 1000)}:R>` : 'unbekannt'}`,
+          `Gameserver: **${alias}**`,
+          'Status: 🟢 Verknüpft',
+          `Verknüpft seit: ${linkedAt}`,
         ].join('\n'),
         inline: false,
       });
