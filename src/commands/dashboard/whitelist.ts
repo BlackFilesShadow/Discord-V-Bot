@@ -29,6 +29,10 @@ import {
 } from '../../modules/whitelist/whitelistOutbox';
 import { isAlreadyOnRemoteWhitelist } from '../../modules/whitelist/whitelistRequestPreflight';
 import {
+  claimWhitelistRequest,
+  type WhitelistRequestClaimClient,
+} from '../../modules/whitelist/whitelistRequestClaim';
+import {
   autocompleteServerAlias,
   resolveSelectedOrAllServers,
   resolveSingleServer,
@@ -106,8 +110,12 @@ export const whitelistCommand: Command = {
       return;
     }
 
-    const existing = await prisma.whitelistEntry.findUnique({
-      where: { guildId_nitradoConnId_gameId: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id } },
+    const existing = await prisma.whitelistEntry.findFirst({
+      where: {
+        guildId: scope.guildId,
+        nitradoConnId: target.id,
+        gameId: { equals: id, mode: 'insensitive' },
+      },
     });
     if (existing && existing.syncState !== 'PENDING_REMOVE') {
       await reply(
@@ -121,7 +129,12 @@ export const whitelistCommand: Command = {
     }
 
     const openSame = await prisma.whitelistRequest.findFirst({
-      where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id, status: 'PENDING' },
+      where: {
+        guildId: scope.guildId,
+        nitradoConnId: target.id,
+        gameId: { equals: id, mode: 'insensitive' },
+        status: 'PENDING',
+      },
     });
     if (openSame) {
       const createdAt = Math.floor(openSame.createdAt.getTime() / 1000);
@@ -180,28 +193,33 @@ export const whitelistCommand: Command = {
     }
 
     const MAX_REQUESTS_PER_USER = 8;
-    const activeCount = await prisma.whitelistRequest.count({
-      where: {
-        guildId: scope.guildId,
-        nitradoConnId: target.id,
-        requesterDiscordId: scope.actorDiscordId,
-        status: { in: ['PENDING', 'APPROVED'] },
-      },
-    });
-    if (activeCount >= MAX_REQUESTS_PER_USER) {
-      await reply(i, `Du hast auf diesem Server bereits ${activeCount} aktive Whitelist-Eintraege/Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}).`, true, 'ERROR');
-      return;
-    }
-
-    const created = await prisma.whitelistRequest.create({
-      data: {
-        guildId: scope.guildId,
-        nitradoConnId: target.id,
+    const claim = await claimWhitelistRequest(
+      prisma as unknown as WhitelistRequestClaimClient,
+      {
+        scope: { guildId: scope.guildId, nitradoConnId: target.id },
+        gameId: id,
         channelId: settings.whitelistRequestChannelId,
         requesterDiscordId: scope.actorDiscordId,
-        gameId: id,
+        maxActivePerUser: MAX_REQUESTS_PER_USER,
       },
-    });
+    );
+
+    if (claim.kind === 'ALREADY_PENDING') {
+      const createdAt = Math.floor(claim.createdAt.getTime() / 1000);
+      await reply(
+        i,
+        `Fuer **${id}** besteht auf **${targetLabel(target)}** bereits ein offener Whitelist-Antrag.\n\nErstellt: <t:${createdAt}:f> · <t:${createdAt}:R>`,
+        true,
+        'INFO',
+        'Whitelist-Antrag bereits vorhanden',
+      );
+      return;
+    }
+    if (claim.kind === 'LIMIT_REACHED') {
+      await reply(i, `Du hast auf diesem Server bereits ${claim.activeCount} aktive Whitelist-Eintraege/Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}).`, true, 'ERROR');
+      return;
+    }
+    const created = claim.request;
 
     let messageId: string | null = null;
     try {
