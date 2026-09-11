@@ -19,6 +19,12 @@ describe('buildStatusEmbed', () => {
     expect(e.color).toBe(Colors.Info);
   });
 
+  it('WARNING -> Warnsymbol + gelbe Farbe', () => {
+    const e = buildStatusEmbed({ status: 'WARNING', title: 'Achtung' }).toJSON();
+    expect(e.description).toBe('**⚠️ Achtung**');
+    expect(e.color).toBe(Colors.Warning);
+  });
+
   it('ERROR -> Kreuz + rote Farbe', () => {
     const e = buildStatusEmbed({ status: 'ERROR', title: 'Unzureichendes Guthaben' }).toJSON();
     expect(e.description).toBe('**❌ Unzureichendes Guthaben**');
@@ -33,6 +39,9 @@ describe('buildStatusEmbed', () => {
   it('ersetzt alte Statussymbole statt sie zu verdoppeln', () => {
     const e = buildStatusEmbed({ status: 'INFO', title: 'ℹ️ 📋 Neue Anfrage' }).toJSON();
     expect(e.description).toBe('**❕ 📋 Neue Anfrage**');
+
+    const warning = buildStatusEmbed({ status: 'WARNING', title: '⚠️ Hinweis' }).toJSON();
+    expect(warning.description).toBe('**⚠️ Hinweis**');
   });
 
   it('Felder bleiben standardmäßig einspaltig (inline:false)', () => {
@@ -61,13 +70,15 @@ describe('buildStatusEmbed', () => {
 
   it('genau ein Statussymbol in der sichtbaren Kopfzeile (kein Doppel)', () => {
     const e = buildStatusEmbed({ status: 'ERROR', title: '❌ Fehler' }).toJSON();
-    const count = ((e.description ?? '').match(/✅|❕|❌/g) ?? []).length;
+    const count = ((e.description ?? '').match(/✅|❕|⚠️|❌/g) ?? []).length;
     expect(count).toBe(1);
   });
 
   it('statusEmoji/statusColor liefern die verbindliche Kopplung', () => {
     expect(statusEmoji('SUCCESS')).toBe('✅');
     expect(statusEmoji('INFO')).toBe('❕');
+    expect(statusEmoji('WARNING')).toBe('⚠️');
+    expect(statusColor('WARNING')).toBe(Colors.Warning);
     expect(statusColor('ERROR')).toBe(Colors.Error);
   });
 });
