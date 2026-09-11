@@ -3,6 +3,7 @@ import {
   compactDescription,
   compactQuote,
   economyEmbed,
+  vEmbed,
 } from '../../src/utils/embedDesign';
 
 describe('compact V-Bot embed design primitives', () => {
@@ -29,5 +30,34 @@ describe('compact V-Bot embed design primitives', () => {
       '> Bank: **200 🐭**',
       '> Total: **300 🐭**',
     ].join('\n'));
+  });
+
+  it('automatically converts legacy fixed vEmbed titles into the compact description heading', () => {
+    const json = vEmbed(Colors.Error)
+      .setTitle('Aktion fehlgeschlagen')
+      .setDescription('Bitte erneut versuchen.')
+      .toJSON();
+
+    expect(json.title).toBeUndefined();
+    expect(json.description).toBe('**❌ Aktion fehlgeschlagen**\nBitte erneut versuchen.');
+    expect(json.color).toBe(Colors.Error);
+  });
+
+  it('keeps title URLs clickable after fixed headings move into the description', () => {
+    const json = vEmbed(Colors.Info)
+      .setTitle('Statusseite')
+      .setURL('https://example.com/status')
+      .setDescription('Aktueller Zustand')
+      .toJSON();
+
+    expect(json.title).toBeUndefined();
+    expect(json.url).toBeUndefined();
+    expect(json.description).toBe('**[❕ Statusseite](https://example.com/status)**\nAktueller Zustand');
+  });
+
+  it('caps compact descriptions at Discord\'s 4096-character limit', () => {
+    const description = compactDescription('Titel', ['x'.repeat(5000)]);
+    expect(description.length).toBe(4096);
+    expect(description.endsWith('…')).toBe(true);
   });
 });
