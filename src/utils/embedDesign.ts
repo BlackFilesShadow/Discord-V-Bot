@@ -45,6 +45,8 @@ export const StatusIcons: Record<Exclude<EmbedStatus, 'NEUTRAL'>, StatusIcon> = 
 } as const;
 
 const LEADING_STATUS_RE = /^(?:✅|❌|❕|⚠️|⚠|ℹ️|ℹ)\s*/u;
+const EMBED_DESCRIPTION_LIMIT = 4096;
+const EMBED_HEADING_LIMIT = 256;
 
 export function statusTitle(status: EmbedStatus, title: string): string {
   const trimmed = title.trim();
@@ -71,17 +73,84 @@ export function readableEmbedDescription(value: string): string {
     .trim();
 }
 
+function capCompactDescription(value: string): string {
+  if (value.length <= EMBED_DESCRIPTION_LIMIT) return value;
+  return `${value.slice(0, EMBED_DESCRIPTION_LIMIT - 1)}…`;
+}
+
+function markdownLinkLabel(value: string): string {
+  return value.replace(/([\\\[\]])/g, '\\$1');
+}
+
+function markdownLinkUrl(value: string): string {
+  return value
+    .replace(/\\/g, '%5C')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29');
+}
+
+/**
+ * Systemweite feste V-Bot-Embeds verwenden dieselbe kompakte Form wie die
+ * freigegebenen Referenzen. Bestehende Aufrufer duerfen weiterhin setTitle()
+ * verwenden; der Builder praesentiert diesen Titel nur noch als fette erste
+ * Description-Zeile. Fachlogik, Fields, Komponenten und Sichtbarkeit bleiben
+ * dadurch unveraendert.
+ *
+ * Dashboard-/Webhook-Custom-Embeds nutzen bewusst rohe EmbedBuilder-Instanzen
+ * und bleiben deshalb frei gestaltbar.
+ */
 class VEmbedBuilder extends EmbedBuilder {
+  private presentationHeading: string | null = null;
+  private presentationBody: string | null = null;
+  private presentationUrl: string | null = null;
+
   constructor(private readonly status: EmbedStatus | null) {
     super();
   }
 
-  override setTitle(title: string): this {
-    return super.setTitle(this.status ? statusTitle(this.status, title) : title);
+  private renderPresentation(): this {
+    let heading = this.presentationHeading;
+    if (heading && this.presentationUrl) {
+      heading = `[${markdownLinkLabel(heading)}](${markdownLinkUrl(this.presentationUrl)})`;
+    }
+
+    if (!heading && !this.presentationBody) {
+      super.setDescription(null);
+      return this;
+    }
+
+    const description = heading
+      ? compactDescription(heading, [this.presentationBody])
+      : readableEmbedDescription(this.presentationBody ?? '');
+    super.setDescription(capCompactDescription(description));
+    return this;
   }
 
-  override setDescription(description: string): this {
-    return super.setDescription(readableEmbedDescription(description));
+  override setTitle(title: string | null): this {
+    if (title === null) {
+      this.presentationHeading = null;
+      return this.renderPresentation();
+    }
+    const formatted = this.status ? statusTitle(this.status, title) : title.trim();
+    this.presentationHeading = formatted.slice(0, EMBED_HEADING_LIMIT);
+    return this.renderPresentation();
+  }
+
+  override setDescription(description: string | null): this {
+    this.presentationBody = description === null ? null : readableEmbedDescription(description);
+    return this.renderPresentation();
+  }
+
+  override setURL(url: string | null): this {
+    this.presentationUrl = url;
+    if (this.presentationHeading) {
+      // Ein klassischer Embed-URL-Link haengt am nativen Discord-Titel. Da
+      // feste V-Bot-Titel kompakt in der Description liegen, bleibt die URL
+      // als Markdown-Link auf exakt dieser Kopfzeile klickbar.
+      super.setURL(null);
+      return this.renderPresentation();
+    }
+    return super.setURL(url);
   }
 }
 
@@ -134,10 +203,10 @@ export function compactDescription(
     .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
     .map(line => line.trim());
   const cleanHeading = heading.trim();
-  return readableEmbedDescription([
+  return capCompactDescription(readableEmbedDescription([
     cleanHeading ? `**${cleanHeading}**` : '',
     ...body,
-  ].filter(Boolean).join('\n'));
+  ].filter(Boolean).join('\n')));
 }
 
 /** Discord-Blockquote fuer kompakte Wertelisten wie Balance/Bank. */
