@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { Client, EmbedBuilder, TextChannel, User } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { safeSend, safeDm } from '../../utils/safeSend';
 
 /**
@@ -21,12 +21,10 @@ const MAX_PER_TICK = 50; // Schutz gegen Lawine
 let timer: NodeJS.Timeout | null = null;
 
 function reminderEmbed(message: string, fireCount: number, recurring: boolean): EmbedBuilder {
-  return vEmbed(Colors.Info)
-    .setTitle('â° Erinnerung')
-    .setDescription(`${Brand.divider}\n${message}\n${Brand.divider}`)
-    .setFooter({
-      text: `${Brand.footerText} â€¢ Reminder${recurring ? ` (#${fireCount + 1}, wiederkehrend)` : ''}`,
-    });
+  return compactEmbed(
+    Colors.Info,
+    `${Brand.footerText} • Reminder${recurring ? ` (#${fireCount + 1}, wiederkehrend)` : ''}`,
+  ).setDescription(compactDescription('⏰ Erinnerung', [message]));
 }
 
 /**
