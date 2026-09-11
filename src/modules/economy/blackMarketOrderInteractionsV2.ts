@@ -4,7 +4,6 @@ import {
   ButtonStyle,
   ChannelType,
   type Client,
-  EmbedBuilder,
   MessageFlags,
   StringSelectMenuBuilder,
   type ButtonInteraction,
@@ -426,7 +425,7 @@ async function editOriginalOrderMessage(client: Client, order: MarketOrderView):
   const message = await channel.messages.fetch(order.orderMessageId).catch(() => null); if (!message) return;
   const existing = message.embeds[0]?.toJSON();
   const fields = (existing?.fields ?? []).map(field => field.name === 'Status' ? { ...field, value: '**Bestellung beendet**' } : field);
-  await message.edit({ embeds: [new EmbedBuilder(existing).setColor(0x22c55e).setTitle('✅ Bestellung beendet').setFields(fields).setFooter({ text: 'V-Bot · Schwarzmarkt · Verschwindet nach 1 Minute' }).setTimestamp(order.closedAt ?? new Date())], components: [], allowedMentions: { parse: [] } });
+  await message.edit({ embeds: [vEmbed(0x22c55e).setTitle('✅ Bestellung beendet').setFields(fields).setFooter({ text: 'V-Bot · Schwarzmarkt · Verschwindet nach 1 Minute' }).setTimestamp(order.closedAt ?? new Date())], components: [], allowedMentions: { parse: [] } });
 }
 
 export async function handleMarketOrderManagerSelect(interaction: StringSelectMenuInteraction): Promise<void> {
