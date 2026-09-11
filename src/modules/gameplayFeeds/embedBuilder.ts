@@ -250,7 +250,7 @@ export function buildGameplayFeedEmbed(
     embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
     addWeaponField(embed, view);
     const pos = positionField(view.actorPosition);
-    if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
+    if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
     return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
@@ -261,7 +261,7 @@ export function buildGameplayFeedEmbed(
       embed.addFields({ name: 'Ursache', value: safeName(view.targetName), inline: false });
     }
     const pos = positionField(view.actorPosition);
-    if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
+    if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
     return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
@@ -272,7 +272,7 @@ export function buildGameplayFeedEmbed(
       embed.addFields({ name: 'Fahrzeug / Ursache', value: safeName(view.targetName), inline: false });
     }
     const pos = positionField(view.actorPosition);
-    if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
+    if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
     return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
@@ -285,7 +285,7 @@ export function buildGameplayFeedEmbed(
       inline: false,
     });
     const pos = positionField(view.actorPosition);
-    if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
+    if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
     return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
