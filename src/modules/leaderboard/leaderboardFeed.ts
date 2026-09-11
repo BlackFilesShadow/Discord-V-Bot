@@ -1,7 +1,7 @@
 import { Client, TextChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { safeSend } from '../../utils/safeSend';
 
 /**
@@ -131,10 +131,10 @@ export async function buildLeaderboardEmbed(
         return `${medal} <@${entry.user.discordId}> — ${valueStr}`;
       });
 
-  return vEmbed(Colors.Gold)
-    .setTitle(`🏆  Bestenliste — ${SORT_LABEL[sortBy]}`)
-    .setDescription(`${Brand.divider}\n\n${lines.join('\n')}\n\n${Brand.divider}`)
-    .setFooter({ text: `Seite ${page}/${totalPages} ${Brand.dot} ${total} Mitglieder ${Brand.dot} ${Brand.footerText}` });
+  return compactEmbed(
+    Colors.Gold,
+    `Seite ${page}/${totalPages} ${Brand.dot} ${total} Mitglieder ${Brand.dot} ${Brand.footerText}`,
+  ).setDescription(compactDescription(`🏆 Bestenliste — ${SORT_LABEL[sortBy]}`, lines));
 }
 
 function startTimer(client: Client, feed: LeaderboardFeed): void {
