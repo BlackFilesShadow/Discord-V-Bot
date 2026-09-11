@@ -26,6 +26,10 @@ const compactSystemSurfaces = [
   'src/modules/ai/translatedPostSchedulerV2.ts',
 ] as const;
 
+const compactInteractiveSurfacesWithModalTitles = [
+  'src/modules/economy/virtualAccountInteractions.ts',
+] as const;
+
 function source(file: string): string {
   return fs.readFileSync(path.resolve(process.cwd(), file), 'utf8');
 }
@@ -35,6 +39,13 @@ describe('compact V-Bot system surface gate', () => {
     const text = source(file);
     expect(text).not.toContain('.setTitle(');
     expect(text).toMatch(/compact(?:Description|Embed)|buildStatusEmbed|economyEmbed/);
+  });
+
+  it.each(compactInteractiveSurfacesWithModalTitles)('%s keeps compact embeds while allowing Discord modal titles', file => {
+    const text = source(file);
+    expect(text).not.toContain('vEmbed(');
+    expect(text).toContain('compactEmbed(');
+    expect(text).toContain('compactDescription(');
   });
 
   it('keeps user-configurable embeds outside the forced system layout', () => {
@@ -62,5 +73,6 @@ describe('compact V-Bot system surface gate', () => {
     expect(source('src/commands/user/reminder.ts')).toContain('deferReply({ flags: MessageFlags.Ephemeral })');
     expect(source('src/commands/dashboard/permissions.ts')).toContain('flags: MessageFlags.Ephemeral');
     expect(source('src/commands/dashboard/virtualAccounts.ts')).toContain('flags: MessageFlags.Ephemeral');
+    expect(source('src/modules/economy/virtualAccountInteractions.ts')).toContain('MessageFlags.Ephemeral');
   });
 });
