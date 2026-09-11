@@ -15,7 +15,7 @@ import {
 } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
-import { vEmbed } from '../../utils/embedDesign';
+import { compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { asGuildId, asNitradoConnId, asUserDiscordId, type GuildId, type NitradoConnId, type UserDiscordId } from '../../types/scope';
 import { getVirtualAccountById, type EconomyPocket, type VirtualAccountRawDb } from './virtualAccounts';
 import {
@@ -60,7 +60,11 @@ function parsePocket(value: string, label: string): EconomyPocket {
 }
 
 async function replyError(interaction: ButtonInteraction | ModalSubmitInteraction | StringSelectMenuInteraction | UserSelectMenuInteraction, message: string) {
-  const payload = { embeds: [vEmbed(0xe74c3c).setTitle('Aktion abgelehnt').setDescription(message)], flags: MessageFlags.Ephemeral } as const;
+  const payload = {
+    embeds: [compactEmbed(0xe74c3c, 'V-Bot · Virtuelles Konto')
+      .setDescription(compactDescription('❌ Aktion abgelehnt', [message]))],
+    flags: MessageFlags.Ephemeral,
+  } as const;
   if (interaction.replied || interaction.deferred) await interaction.followUp(payload);
   else await interaction.reply(payload);
 }
@@ -111,12 +115,15 @@ export async function handleVirtualAccountDepositModal(interaction: ModalSubmitI
       reason: 'Discord Button-Einzahlung',
     });
     const cfg = await getConfig(scope.guildId, scope.connId);
+    const depositDescription = result.playerDebited === result.accountCredited && cfg.currencyName.toLowerCase() === result.finance.currencyName.toLowerCase()
+      ? `**${result.accountCredited.toLocaleString('de-DE')} ${result.finance.currencyEmoji}** wurden dem virtuellen Konto gutgeschrieben.`
+      : `Von deinem Wallet wurden **${result.playerDebited.toLocaleString('de-DE')} ${cfg.emoji}** abgebucht. Das virtuelle Konto erhielt **${result.accountCredited.toLocaleString('de-DE')} ${result.finance.currencyEmoji}**.`;
     await interaction.reply({
-      embeds: [vEmbed(0x2ecc71)
-        .setTitle(result.booked ? 'Einzahlung akzeptiert' : 'Einzahlung bereits verarbeitet')
-        .setDescription(result.playerDebited === result.accountCredited && cfg.currencyName.toLowerCase() === result.finance.currencyName.toLowerCase()
-          ? `**${result.accountCredited.toLocaleString('de-DE')} ${result.finance.currencyEmoji}** wurden dem virtuellen Konto gutgeschrieben.`
-          : `Von deinem Wallet wurden **${result.playerDebited.toLocaleString('de-DE')} ${cfg.emoji}** abgebucht. Das virtuelle Konto erhielt **${result.accountCredited.toLocaleString('de-DE')} ${result.finance.currencyEmoji}**.`)],
+      embeds: [compactEmbed(0x2ecc71, 'V-Bot · Virtuelles Konto')
+        .setDescription(compactDescription(
+          result.booked ? '✅ Einzahlung akzeptiert' : '✅ Einzahlung bereits verarbeitet',
+          [depositDescription],
+        ))],
       flags: MessageFlags.Ephemeral,
     });
     if (result.booked) {
@@ -167,7 +174,10 @@ export async function handleVirtualManagerButton(interaction: ButtonInteraction)
       .setPlaceholder(`Konto für „${actionLabel(action)}“ auswählen`)
       .addOptions(options);
     await interaction.editReply({
-      embeds: [vEmbed(0x5865f2).setTitle(actionLabel(action)).setDescription('Wähle das virtuelle Konto aus. Es werden ausschließlich Konten angezeigt, für die du als Kontoverwalter gespeichert bist.')],
+      embeds: [compactEmbed(0x5865f2, 'V-Bot · Kontoverwalter')
+        .setDescription(compactDescription(actionLabel(action), [
+          'Wähle das virtuelle Konto aus. Es werden ausschließlich Konten angezeigt, für die du als Kontoverwalter gespeichert bist.',
+        ]))],
       components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
     });
   } catch (error) {
@@ -187,7 +197,10 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
           .setMinValues(1)
           .setMaxValues(1);
         await interaction.update({
-          embeds: [vEmbed(0x5865f2).setTitle('Auszahlung').setDescription('Wähle den Empfänger aus der Mitgliederliste dieses Discord-Servers aus.')],
+          embeds: [compactEmbed(0x5865f2, 'V-Bot · Kontoverwalter')
+            .setDescription(compactDescription('Auszahlung', [
+              'Wähle den Empfänger aus der Mitgliederliste dieses Discord-Servers aus.',
+            ]))],
           components: [new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(select)],
         });
         return;
@@ -208,7 +221,8 @@ export async function handleVirtualManagerSelect(interaction: StringSelectMenuIn
     const finance = await ensureVirtualAccountFinance(scope.guildId, scope.connId, accountId);
     if (!account) throw new Error('Virtuelles Konto nicht gefunden.');
     if (action === 'balance') {
-      const embed = vEmbed(0x5865f2).setTitle(`${finance.accountEmoji} ${account.name}`)
+      const embed = compactEmbed(0x5865f2, 'V-Bot · Kontoverwalter')
+        .setDescription(compactDescription(`${finance.accountEmoji} ${account.name}`))
         .addFields(
           { name: 'Wallet', value: `${account.balance.toLocaleString('de-DE')} ${finance.currencyEmoji}`, inline: true },
           { name: 'Bank', value: `${finance.bankBalance.toLocaleString('de-DE')} ${finance.currencyEmoji}`, inline: true },
