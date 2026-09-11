@@ -96,10 +96,10 @@ async function requirePanelPermissions(channel: TextChannel): Promise<void> {
     PermissionFlagsBits.SendMessages,
     PermissionFlagsBits.EmbedLinks,
     PermissionFlagsBits.ReadMessageHistory,
-    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.ManageRoles,
   ];
   if (!perms?.has(required)) {
-    throw new Error('V-Bot benoetigt im Management-Channel Lesen, Schreiben, Embed-Links und „Kanaele verwalten“.');
+    throw new Error('V-Bot benoetigt im Management-Channel Lesen, Schreiben, Embed-Links und „Berechtigungen verwalten“ (Manage Roles).');
   }
 }
 

@@ -5,22 +5,41 @@ const root = path.resolve(__dirname, '../..');
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 const safety = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
+const terminal = read('src/dashboard/routes/v2/economyVirtualAccountTerminalDeletion.ts');
 const v2 = read('src/dashboard/routes/v2.ts');
 const wrapper = read('dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx');
+const controlUi = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
 const systemUi = read('dashboard-ui/src/components/economy/SystemAccountsOverview.tsx');
 
 describe('Economy account capability workspace', () => {
-  test('authoritative router stays ahead of compatibility control routes', () => {
+  test('authoritative routers stay ahead of compatibility control routes', () => {
+    expect(v2.indexOf('economyVirtualAccountTerminalDeletionRouter'))
+      .toBeLessThan(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'));
     expect(v2.indexOf('economyVirtualAccountTreasurySafetyRouter'))
       .toBeLessThan(v2.indexOf('economyVirtualAccountControlRouter'));
   });
 
-  test('generic control list contains CUSTOM accounts only and system registry is separate', () => {
+  test('generic safety list contains CUSTOM accounts and system registry is separate', () => {
     expect(safety).toContain("economyVirtualAccountTreasurySafetyRouter.get('/control/accounts'");
     expect(safety).toContain("accounts.filter(account => account.kind === 'CUSTOM')");
     expect(safety).toContain("economyVirtualAccountTreasurySafetyRouter.get('/control/system-accounts'");
     expect(safety).toContain("account.kind !== 'CUSTOM' || finance.accountPurpose === 'BANK_TREASURY'");
     expect(safety).toContain('listHiddenVirtualAccountIds');
+  });
+
+  test('mounted workspace keeps the CUSTOM-backed Serverbank readable for its dedicated editor only', () => {
+    const controlListStart = terminal.indexOf("economyVirtualAccountTerminalDeletionRouter.get('/control/accounts'");
+    const systemListStart = terminal.indexOf("economyVirtualAccountTerminalDeletionRouter.get('/control/system-accounts'");
+    const controlList = terminal.slice(controlListStart, systemListStart);
+    expect(controlList).toContain("account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS'");
+    expect(controlList).toContain("account.capabilities.managedBy === 'SERVER_BANK'");
+    expect(controlList).not.toContain("account.capabilities.managedBy === 'LOTTERY'");
+    expect(controlList).not.toContain("account.capabilities.managedBy === 'BLACK_MARKET'");
+
+    expect(controlUi).toContain("const treasury = rows.find(account => account.accountPurpose === 'BANK_TREASURY') ?? null;");
+    expect(controlUi).toContain("account.accountPurpose !== 'BANK_TREASURY'");
+    expect(controlUi).toContain('accounts={listRows}');
+    expect(controlUi).not.toContain('<LegacyAdminPayout guildId={guildId} slot={slot} accounts={rows}');
   });
 
   test('server serializes action capabilities and owning domain', () => {

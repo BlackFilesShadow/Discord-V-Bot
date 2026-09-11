@@ -9,16 +9,18 @@ const deletion = read('src/modules/economy/virtualAccountDeletion.ts');
 const systemUi = read('dashboard-ui/src/components/economy/SystemAccountsOverview.tsx');
 
 describe('Economy domain-owned account hardening', () => {
-  test('CUSTOM-backed Serverbank is not treated as a generic virtual account', () => {
+  test('CUSTOM-backed Serverbank stays domain-owned while remaining readable by its dedicated editor', () => {
     expect(terminalRoute).toContain("finance.accountPurpose === 'BANK_TREASURY' ? 'SERVER_BANK' : 'VIRTUAL_ACCOUNTS'");
-    expect(terminalRoute).toContain("serialized.filter(account => account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS')");
+    expect(terminalRoute).toContain("account.capabilities.managedBy === 'VIRTUAL_ACCOUNTS'");
+    expect(terminalRoute).toContain("account.capabilities.managedBy === 'SERVER_BANK'");
     expect(terminalRoute).toContain("serialized.filter(account => account.capabilities.managedBy !== 'VIRTUAL_ACCOUNTS')");
     expect(terminalRoute).toContain("managedBy === 'SERVER_BANK'");
     expect(terminalRoute).toContain('Serverbank-Systemkonto: Verwaltung und Lifecycle erfolgen ausschließlich über die Serverbank-Funktion.');
   });
 
-  test('all generic mutation entry points fail closed for domain-owned live accounts', () => {
+  test('all generic mutation entry points fail closed for domain-owned live accounts except explicit Serverbank configuration', () => {
     expect(terminalRoute).toContain('rejectDeletedOrDomainOwnedMutation');
+    expect(terminalRoute).toContain("if (owner === 'SERVER_BANK' && req.method === 'PUT')");
     expect(terminalRoute).toContain("owner && owner !== 'VIRTUAL_ACCOUNTS'");
     expect(terminalRoute).toContain("put('/control/accounts/:accountId'");
     expect(terminalRoute).toContain("delete('/control/accounts/:accountId'");

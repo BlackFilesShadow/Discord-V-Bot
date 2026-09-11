@@ -50,6 +50,20 @@ function account(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function treasuryAccount(overrides: Record<string, unknown> = {}) {
+  return account({
+    id: TREASURY_ID,
+    name: 'Serverbank',
+    walletBalance: '5000',
+    totalBalance: '5000',
+    accountPurpose: 'BANK_TREASURY',
+    channelId: null,
+    archiveChannelId: null,
+    projection: null,
+    ...overrides,
+  });
+}
+
 async function stubVirtualWorkspace(page: Page, { treasuryExists = false }: { treasuryExists?: boolean } = {}) {
   const mutations: Mutation[] = [];
 
@@ -108,17 +122,11 @@ async function stubVirtualWorkspace(page: Page, { treasuryExists = false }: { tr
     if (path === `${base}/control/accounts` && method === 'GET') return json(route, {
       accounts: [
         account(),
-        ...(treasuryExists ? [account({ id: TREASURY_ID, name: 'Serverbank', accountPurpose: 'BANK_TREASURY', channelId: null, archiveChannelId: null, projection: null })] : []),
+        ...(treasuryExists ? [treasuryAccount()] : []),
       ],
     });
     if (path === `${base}/control/system-accounts` && method === 'GET') return json(route, {
-      accounts: treasuryExists ? [account({
-        id: TREASURY_ID,
-        name: 'Serverbank',
-        accountPurpose: 'BANK_TREASURY',
-        channelId: null,
-        archiveChannelId: null,
-        projection: null,
+      accounts: treasuryExists ? [treasuryAccount({
         capabilities: {
           managedBy: 'SERVER_BANK',
           canConfigure: true,
@@ -143,16 +151,19 @@ async function stubVirtualWorkspace(page: Page, { treasuryExists = false }: { tr
       const body = (req.postDataJSON() ?? {}) as Record<string, unknown>;
       mutations.push({ method, path, query: url.search, body });
       return json(route, {
-        account: account({ id: TREASURY_ID, name: 'Serverbank', accountPurpose: 'BANK_TREASURY', channelId: null, archiveChannelId: null, projection: null }),
+        account: treasuryAccount({ walletBalance: '0', totalBalance: '0' }),
         syncWarning: null,
       });
     }
-    if (path === `${base}/control/accounts/${ACCOUNT_ID}` && method === 'PUT') {
+    if ((path === `${base}/control/accounts/${ACCOUNT_ID}` || path === `${base}/control/accounts/${TREASURY_ID}`) && method === 'PUT') {
       const body = req.postDataJSON() as Record<string, unknown>;
       mutations.push({ method, path, query: url.search, body });
+      const isTreasury = path.endsWith(`/${TREASURY_ID}`);
       return json(route, {
-        account: account({ ...body, description: body.description }),
-        syncWarning: 'Konto-Embed: fehlende Discord-Berechtigung',
+        account: isTreasury
+          ? treasuryAccount({ ...body, description: body.description })
+          : account({ ...body, description: body.description }),
+        syncWarning: isTreasury ? null : 'Konto-Embed: fehlende Discord-Berechtigung',
       });
     }
     if (path === `${base}/control/accounts/${ACCOUNT_ID}/sync` && method === 'POST') {
@@ -185,12 +196,38 @@ async function openWorkspace(page: Page): Promise<void> {
 }
 
 test.describe('Virtual account treasury + manager authenticated contracts', () => {
-  test('Systemkonto-Link öffnet die sichtbare Serverbank-Konfiguration', async ({ page }) => {
-    await stubVirtualWorkspace(page, { treasuryExists: true });
+  test('Systemkonto-Link öffnet die Serverbank-Konfiguration und speichert die Live-Embed-Kanäle', async ({ page }) => {
+    const mutations = await stubVirtualWorkspace(page, { treasuryExists: true });
     await openWorkspace(page);
 
     await page.getByRole('button', { name: 'Serverbank konfigurieren', exact: true }).click();
-    await expect(page.getByTestId('serverbank-configuration')).toBeVisible();
+    const editor = page.getByTestId('serverbank-configuration');
+    await expect(editor).toBeVisible();
+
+    await editor.getByText('Hauptkanal / Live-Embed', { exact: true }).locator('..').locator('select').selectOption(LIVE_CHANNEL_ID);
+    await editor.getByText('Archiv-Kanal / Transaktions-Threads', { exact: true }).locator('..').locator('select').selectOption(ARCHIVE_CHANNEL_ID);
+    await editor.getByText('Beschreibung', { exact: true }).locator('..').locator('textarea').fill('Zentrale Serverbank');
+    await editor.getByRole('button', { name: 'Speichern', exact: true }).click();
+
+    const treasuryUpdatePath = `/api/v2/guilds/${GUILD_ID}/economy/virtual-accounts/control/accounts/${TREASURY_ID}`;
+    await expect.poll(() => findMutation(mutations, treasuryUpdatePath, 'PUT')).toBeTruthy();
+    expect(findMutation(mutations, treasuryUpdatePath, 'PUT')).toMatchObject({
+      method: 'PUT',
+      path: treasuryUpdatePath,
+      query: `?slot=${SLOT}`,
+      body: {
+        description: 'Zentrale Serverbank',
+        channelId: LIVE_CHANNEL_ID,
+        archiveChannelId: ARCHIVE_CHANNEL_ID,
+        acceptUserTransfers: true,
+        managers: [],
+      },
+    });
+    await expect(page.getByText('Kontoeinstellungen gespeichert und synchronisiert.')).toBeVisible();
+
+    const payoutBlock = page.getByText('Admin-Auszahlung', { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]');
+    await expect(payoutBlock.locator('select').first().locator('option', { hasText: 'Serverbank' })).toHaveCount(0);
   });
 
   test('Serverbank und Management-Kanal bleiben exakt Guild+Slot-gescoped', async ({ page }) => {
