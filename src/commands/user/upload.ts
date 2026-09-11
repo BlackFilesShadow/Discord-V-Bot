@@ -13,7 +13,8 @@ import {
   DuplicatePackageNameError,
 } from '../../modules/upload/uploadHandler';
 import { config } from '../../config';
-import { Colors, Brand, vEmbed, formatBytes } from '../../utils/embedDesign';
+import { Brand, formatBytes } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { safeAxiosGet } from '../../utils/ssrf';
 
 /**
@@ -104,14 +105,14 @@ const uploadCommand: Command = {
     } catch (e) {
       if (e instanceof DuplicatePackageNameError) {
         await interaction.editReply({
-          embeds: [
-            vEmbed(Colors.Error)
-              .setTitle('❌ Doppelter Paketname')
-              .setDescription(
-                `${e.message}\n\nWaehle einen anderen Namen oder loesche das vorhandene Paket zuerst mit ` +
-                `\`/mypackages delete paketname:${paketname}\`.`,
-              ),
-          ],
+          embeds: [buildStatusEmbed({
+            status: 'ERROR',
+            title: 'Doppelter Paketname',
+            description:
+              `${e.message}\n\nWaehle einen anderen Namen oder loesche das vorhandene Paket zuerst mit ` +
+              `\`/mypackages delete paketname:${paketname}\`.`,
+            footerText: Brand.footerText,
+          })],
         });
         return;
       }
@@ -176,16 +177,7 @@ const uploadCommand: Command = {
     // Zusammenfassung — IMMER, auch bei Teilfehlern.
     const okCount = results.filter(r => r.success).length;
     const failCount = results.length - okCount;
-    const color = failCount === 0 ? Colors.Success : okCount === 0 ? Colors.Error : Colors.Warning;
-
-    const summary = vEmbed(color)
-      .setTitle(`📦 Upload: ${paketname}`)
-      .setDescription(
-        `${Brand.divider}\n\n` +
-        `**${okCount}/${results.length}** Dateien erfolgreich.` +
-        (failCount > 0 ? `\n❌ ${failCount} fehlgeschlagen.` : '') +
-        `\n\n${Brand.divider}`,
-      );
+    const status = failCount === 0 ? 'SUCCESS' : okCount === 0 ? 'ERROR' : 'WARNING';
 
     const fields: { name: string; value: string; inline: boolean }[] = [];
     for (const r of results.slice(0, 25)) {
@@ -195,7 +187,16 @@ const uploadCommand: Command = {
         inline: false,
       });
     }
-    if (fields.length) summary.addFields(fields);
+
+    const summary = buildStatusEmbed({
+      status,
+      title: `📦 Upload: ${paketname}`,
+      description:
+        `**${okCount}/${results.length}** Dateien erfolgreich.` +
+        (failCount > 0 ? `\n❌ ${failCount} fehlgeschlagen.` : ''),
+      fields,
+      footerText: Brand.footerText,
+    });
 
     await interaction.editReply({ embeds: [summary] });
   },
