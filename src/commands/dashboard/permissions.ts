@@ -33,7 +33,7 @@ import {
 } from '../../modules/permissions/repository';
 import { logAudit } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { vEmbed } from '../../utils/embedDesign';
+import { compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 
 const DELEGABLE: PermissionScope[] = PERMISSION_SCOPES.filter(scope => !NON_DELEGABLE_SCOPES.has(scope));
@@ -280,10 +280,9 @@ export const permsCommand: Command = {
       const page = rows.slice(offset, offset + 25);
       const pageNo = Math.floor(offset / 25) + 1;
       const pageCount = Math.ceil(rows.length / 25);
-      const embed = vEmbed()
-        .setTitle(`Permission-Grants${pageCount > 1 ? ` · ${pageNo}/${pageCount}` : ''}`)
-        .setDescription(`**${rows.length}** User-Grant(s) auf diesem Server`)
-        .setTimestamp();
+      const heading = `Permission-Grants${pageCount > 1 ? ` · ${pageNo}/${pageCount}` : ''}`;
+      const embed = compactEmbed(undefined, 'V-Bot Permissions')
+        .setDescription(compactDescription(heading, [`**${rows.length}** User-Grant(s) auf diesem Server`]));
       for (const row of page) {
         embed.addFields({
           name: `User ${row.userDiscordId}`,
