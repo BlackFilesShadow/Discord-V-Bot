@@ -1,5 +1,6 @@
 import { EmbedBuilder } from 'discord.js';
 import { safeEmbedField } from '../../utils/embedSanitize';
+import { compactDescription, compactEmbed } from '../../utils/embedDesign';
 import type { GameplayFeedView } from './types';
 
 const TITLES: Record<GameplayFeedView['category'], string> = {
@@ -171,6 +172,28 @@ export function placementObjectLabel(value: string): string {
   return displayName || humanizePlacementClass(className);
 }
 
+/**
+ * Wandelt ausschliesslich die bereits fertig berechneten sichtbaren Felder in
+ * die kompakte Referenzdarstellung um. Die fachliche Auswahl, Reihenfolge und
+ * Werte der Gameplay-Daten bleiben unveraendert.
+ */
+function compactGameplayPresentation(
+  source: EmbedBuilder,
+  embedColor: string,
+  serverAlias: string,
+): EmbedBuilder {
+  const json = source.toJSON();
+  const lines = (json.fields ?? [])
+    .filter(field => field.name !== 'Server')
+    .map(field => field.value.includes('\n')
+      ? `**${field.name}**\n${field.value}`
+      : `**${field.name}:** ${field.value}`);
+  return compactEmbed(
+    parseHex(embedColor),
+    safeEmbedField(serverAlias.trim() || 'DayZ-Server', 256),
+  ).setDescription(compactDescription(json.title ?? 'Gameplay Report', lines));
+}
+
 export function buildGameplayFeedEmbed(
   view: GameplayFeedView,
   embedColor: string,
@@ -200,7 +223,7 @@ export function buildGameplayFeedEmbed(
     const actorPos = flagPositionField(view.actorPosition);
     if (actorPos) embed.addFields({ name: 'Spieler-Position', value: actorPos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return embed;
+    return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
 
   if (view.category === 'PVP') {
@@ -220,7 +243,7 @@ export function buildGameplayFeedEmbed(
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
     }
     addServer(embed, serverAlias);
-    return embed;
+    return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
 
   if (view.category === 'SUICIDE') {
@@ -229,7 +252,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return embed;
+    return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
 
   if (view.category === 'NPC') {
@@ -240,7 +263,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return embed;
+    return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
 
   if (view.category === 'VEHICLE') {
@@ -251,7 +274,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return embed;
+    return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
 
   if (view.category === 'OTHER') {
@@ -264,7 +287,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos:', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return embed;
+    return compactGameplayPresentation(embed, embedColor, serverAlias);
   }
 
   embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
@@ -280,5 +303,5 @@ export function buildGameplayFeedEmbed(
   const pos = positionField(view.actorPosition);
   if (pos) embed.addFields({ name: 'Position', value: pos, inline: false });
   addServer(embed, serverAlias, view.occurredAt, true);
-  return embed;
+  return compactGameplayPresentation(embed, embedColor, serverAlias);
 }
