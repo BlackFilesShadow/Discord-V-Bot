@@ -24,6 +24,7 @@ const compactSystemSurfaces = [
   'src/modules/nitrado/driftDiscord.ts',
   'src/modules/nitrado/serverListCatalog.ts',
   'src/modules/ai/translatedPostSchedulerV2.ts',
+  'src/modules/radar/runtime.ts',
 ] as const;
 
 const compactInteractiveSurfacesWithModalTitles = [
