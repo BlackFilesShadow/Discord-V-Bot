@@ -112,13 +112,9 @@ class VEmbedBuilder extends EmbedBuilder {
     let heading = this.presentationHeading;
     if (heading && this.presentationUrl) {
       heading = `[${markdownLinkLabel(heading)}](${markdownLinkUrl(this.presentationUrl)})`;
-      super.clearURL();
     }
 
-    if (!heading && !this.presentationBody) {
-      super.clearDescription();
-      return this;
-    }
+    if (!heading && !this.presentationBody) return this;
 
     const description = heading
       ? compactDescription(heading, [this.presentationBody])
@@ -140,14 +136,11 @@ class VEmbedBuilder extends EmbedBuilder {
 
   override setURL(url: string): this {
     this.presentationUrl = url;
-    if (this.presentationHeading) {
-      // Ein klassischer Embed-URL-Link haengt am nativen Discord-Titel. Da
-      // feste V-Bot-Titel kompakt in der Description liegen, bleibt die URL
-      // als Markdown-Link auf exakt dieser Kopfzeile klickbar.
-      super.clearURL();
-      return this.renderPresentation();
-    }
-    return super.setURL(url);
+    // Der native URL-Wert bleibt fuer bestehende Daten-/Serialisierungsvertraege
+    // erhalten. Sichtbar/klickbar ist bei kompakten V-Bot-Embeds zusaetzlich
+    // die identische URL auf der Markdown-Kopfzeile.
+    super.setURL(url);
+    return this.renderPresentation();
   }
 }
 
