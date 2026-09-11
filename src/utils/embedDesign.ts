@@ -85,11 +85,15 @@ class VEmbedBuilder extends EmbedBuilder {
   }
 }
 
+/**
+ * Einheitliche V-Bot-Basis. Ein Zeitstempel wird nicht mehr automatisch
+ * erzwungen; Oberflaechen, fuer die Zeit fachlich relevant ist, setzen ihn
+ * weiterhin explizit selbst.
+ */
 export function vEmbed(color: number = Colors.Primary): EmbedBuilder {
   return new VEmbedBuilder(statusForColor(color))
     .setColor(color)
-    .setFooter({ text: Brand.footerText })
-    .setTimestamp();
+    .setFooter({ text: Brand.footerText });
 }
 
 /**
@@ -101,9 +105,7 @@ export function compactEmbed(
   color: number = Colors.Primary,
   footerText: string = Brand.footerText,
 ): EmbedBuilder {
-  return vEmbed(color)
-    .setFooter({ text: footerText })
-    .setTimestamp(null);
+  return vEmbed(color).setFooter({ text: footerText });
 }
 
 export function economyEmbed(
