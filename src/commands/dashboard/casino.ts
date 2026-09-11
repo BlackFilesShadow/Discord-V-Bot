@@ -38,8 +38,8 @@ import { asUserDiscordId } from '../../types/scope';
 import type { GuildScope, UserDiscordId } from '../../types/scope';
 import { logAudit, logger } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { Colors, vEmbed } from '../../utils/embedDesign';
-import { buildStatusEmbed } from '../../utils/statusEmbed';
+import { Colors, casinoEmbed, compactDescription } from '../../utils/embedDesign';
+import { statusColor, statusEmoji, type EmbedStatus } from '../../utils/statusEmbed';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import {
   CASINO_ALGORITHM_VERSION,
@@ -141,6 +141,20 @@ async function queryOne<T>(db: RawDb, sql: string, ...values: unknown[]): Promis
   return rows[0] ?? null;
 }
 
+function casinoStatusEmbed(
+  status: EmbedStatus,
+  title: string,
+  description?: string,
+  fields: { name: string; value: string }[] = [],
+  footerText = 'V-Bot Casino',
+): EmbedBuilder {
+  return casinoEmbed(statusColor(status), footerText)
+    .setDescription(compactDescription(`${statusEmoji(status)} ${title}`, [
+      description,
+      ...fields.map(field => `**${field.name}**: ${field.value}`),
+    ]));
+}
+
 async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<void> {
   const safeMessage = e instanceof CasinoUserError
     ? e.message
@@ -156,13 +170,12 @@ async function statusFail(i: ChatInputCommandInteraction, e: unknown): Promise<v
     });
   }
   const payload: InteractionReplyOptions = {
-    embeds: [buildStatusEmbed({
-      status: 'ERROR',
-      title: 'Spiel nicht gestartet',
-      description: 'Die Runde konnte nicht gestartet werden.',
-      fields: [{ name: '📝 Grund', value: safeMessage }],
-      footerText: 'V-Bot Casino',
-    })],
+    embeds: [casinoStatusEmbed(
+      'ERROR',
+      'Spiel nicht gestartet',
+      'Die Runde konnte nicht gestartet werden.',
+      [{ name: '📝 Grund', value: safeMessage }],
+    )],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   };
@@ -192,30 +205,21 @@ function buildRoundEmbed(args: {
   const net = args.payout - args.bet;
   const netStr = (net >= 0n ? '+' : '') + fmt(net);
   const meta = args.outcome === 'WON'
-    ? { sym: '✅', word: 'Gewonnen', color: Colors.Success }
+    ? { word: 'Gewonnen', color: Colors.Success }
     : args.outcome === 'DRAW'
-      ? { sym: '⚠️', word: 'Unentschieden', color: Colors.Warning }
-      : { sym: '❌', word: 'Verloren', color: Colors.Error };
-  const netField = args.outcome === 'WON'
-    ? { name: '📈 Gewinn', value: `${netStr} ${args.coin}`, inline: false }
-    : args.outcome === 'DRAW'
-      ? { name: '📊 Netto', value: `${netStr} ${args.coin}`, inline: false }
-      : { name: '📉 Verlust', value: `${netStr} ${args.coin}`, inline: false };
+      ? { word: 'Unentschieden', color: Colors.Warning }
+      : { word: 'Verloren', color: Colors.Error };
+  const auditFooter = `V-Bot Casino • Runden-Audit • Hash: ${args.serverSeedHash} • Nonce: ${args.nonce.toString()}`;
 
-  return vEmbed(meta.color)
-    .setAuthor({ name: args.i.user.username, iconURL: args.i.user.displayAvatarURL() })
-    .setTitle(`${def.emoji} ${def.label}`)
-    .setDescription(`${meta.sym} **${meta.word}**`)
-    .addFields(
-      { name: '💰 Einsatz', value: `${fmt(args.bet)} ${args.coin}`, inline: true },
-      { name: '🏆 Auszahlung', value: `${fmt(args.payout)} ${args.coin}`, inline: true },
-      { name: '🎚️ Server-Chance', value: `${args.winChancePct}%`, inline: true },
-      netField,
-      ...args.details,
-      { name: '🔎 Audit', value: `Runde \`${args.roundId}\`\nMit \`/casino-verify\` nachpruefbar.`, inline: false },
-    )
-    .setFooter({ text: `V-Bot Casino • Runden-Audit • Hash: ${args.serverSeedHash} • Nonce: ${args.nonce.toString()}` })
-    .setTimestamp();
+  return casinoEmbed(meta.color, auditFooter)
+    .setDescription(compactDescription(`${def.emoji} ${def.label}`, [
+      ...args.details.map(field => `**${field.name}**: ${field.value}`),
+      `**Einsatz:** ${fmt(args.bet)} ${args.coin}`,
+      `**Auszahlung:** ${fmt(args.payout)} ${args.coin}`,
+      `**Result:** ${meta.word} · **${netStr} ${args.coin}**`,
+      `**Server-Chance:** ${args.winChancePct}%`,
+      `**Audit:** Runde \`${args.roundId}\` · mit \`/casino-verify\` nachpruefbar.`,
+    ]));
 }
 
 function seedHashFull(seed: string): string {
@@ -781,11 +785,11 @@ export const casinoStatsCommand: Command = {
     );
     const rounds = row?.rounds ?? 0n;
     if (rounds === 0n) {
-      await i.editReply({ embeds: [buildStatusEmbed({
-        status: 'INFO', title: 'Casino-Statistik',
-        description: `Fuer ${target.username} liegt noch keine Casino-Aktivitaet vor.`,
-        footerText: 'V-Bot Casino',
-      })], allowedMentions: { parse: [] } });
+      await i.editReply({ embeds: [casinoStatusEmbed(
+        'INFO',
+        'Casino-Statistik',
+        `Fuer ${target.username} liegt noch keine Casino-Aktivitaet vor.`,
+      )], allowedMentions: { parse: [] } });
       return;
     }
     const wins = row?.wins ?? 0n;
@@ -797,19 +801,15 @@ export const casinoStatsCommand: Command = {
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const net = payout - bet;
     const winRate = decided > 0n ? Number((wins * 10_000n) / decided) / 100 : 0;
-    const e = vEmbed(net >= 0n ? Colors.Success : Colors.Error)
-      .setAuthor({ name: target.username, iconURL: target.displayAvatarURL() })
-      .setTitle('📊 Casino-Statistik')
-      .addFields(
-        { name: '🎲 Runden', value: rounds.toString(), inline: false },
-        { name: '🏆 Siege', value: wins.toString(), inline: true },
-        { name: '⚠️ Unentschieden', value: draws.toString(), inline: true },
-        { name: '❌ Niederlagen', value: losses.toString(), inline: true },
-        { name: '🏆 Win-Rate (entschieden)', value: `${winRate.toFixed(2)}%`, inline: false },
-        { name: '💰 Einsatz gesamt', value: `${fmt(bet)} ${cfg.emoji}`, inline: false },
-        { name: '🏆 Auszahlung gesamt', value: `${fmt(payout)} ${cfg.emoji}`, inline: false },
-        { name: '📊 Netto', value: `${net >= 0n ? '+' : ''}${fmt(net)} ${cfg.emoji}`, inline: false },
-      ).setFooter({ text: 'V-Bot Casino' }).setTimestamp();
+    const e = casinoEmbed(net >= 0n ? Colors.Success : Colors.Error)
+      .setDescription(compactDescription(`📊 Casino-Statistik · <@${target.id}>`, [
+        `Runden: **${rounds.toString()}**`,
+        `Siege: **${wins.toString()}** · Unentschieden: **${draws.toString()}** · Niederlagen: **${losses.toString()}**`,
+        `Win-Rate (entschieden): **${winRate.toFixed(2)}%**`,
+        `Einsatz gesamt: **${fmt(bet)} ${cfg.emoji}**`,
+        `Auszahlung gesamt: **${fmt(payout)} ${cfg.emoji}**`,
+        `Netto: **${net >= 0n ? '+' : ''}${fmt(net)} ${cfg.emoji}**`,
+      ]));
     await i.editReply({ embeds: [e], allowedMentions: { parse: [] } });
     logAudit('CASINO_STATS', 'CASINO', {
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, target: target.id,
@@ -835,29 +835,35 @@ export const casinoVerifyCommand: Command = {
       roundId, String(scope.guildId), String(scope.nitradoConnId), String(scope.actorDiscordId),
     );
     if (!round) {
-      await i.editReply({ embeds: [buildStatusEmbed({
-        status: 'ERROR', title: 'Runde nicht gefunden',
-        description: 'Die Runde existiert in diesem Gameserver-Slot nicht oder gehoert nicht dir.', footerText: 'V-Bot Casino Audit',
-      })], allowedMentions: { parse: [] } });
+      await i.editReply({ embeds: [casinoStatusEmbed(
+        'ERROR',
+        'Runde nicht gefunden',
+        'Die Runde existiert in diesem Gameserver-Slot nicht oder gehoert nicht dir.',
+        [],
+        'V-Bot Casino Audit',
+      )], allowedMentions: { parse: [] } });
       return;
     }
 
     const parsed = parseAuditSnapshot(round.result);
     if (parsed.kind === 'missing') {
-      await i.editReply({ embeds: [buildStatusEmbed({
-        status: 'INFO', title: '⚠️ Legacy-Runde',
-        description: 'Diese Runde besitzt noch keinen vollstaendigen Regel-Snapshot und kann deshalb nicht vollstaendig nachgerechnet werden.',
-        fields: [{ name: 'Runde', value: `\`${round.id}\`` }, { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` }],
-        footerText: 'V-Bot Casino Audit',
-      })], allowedMentions: { parse: [] } });
+      await i.editReply({ embeds: [casinoStatusEmbed(
+        'INFO',
+        'Legacy-Runde',
+        'Diese Runde besitzt noch keinen vollstaendigen Regel-Snapshot und kann deshalb nicht vollstaendig nachgerechnet werden.',
+        [{ name: 'Runde', value: `\`${round.id}\`` }, { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` }],
+        'V-Bot Casino Audit',
+      )], allowedMentions: { parse: [] } });
       return;
     }
     if (parsed.kind === 'invalid') {
-      await i.editReply({ embeds: [buildStatusEmbed({
-        status: 'ERROR', title: '❌ Audit-Snapshot ungueltig',
-        description: 'Die Runde enthaelt Audit-Daten, aber der Snapshot ist strukturell ungueltig oder wurde veraendert.',
-        footerText: 'V-Bot Casino Audit',
-      })], allowedMentions: { parse: [] } });
+      await i.editReply({ embeds: [casinoStatusEmbed(
+        'ERROR',
+        'Audit-Snapshot ungueltig',
+        'Die Runde enthaelt Audit-Daten, aber der Snapshot ist strukturell ungueltig oder wurde veraendert.',
+        [],
+        'V-Bot Casino Audit',
+      )], allowedMentions: { parse: [] } });
       return;
     }
     const snapshot = parsed.snapshot;
@@ -870,10 +876,13 @@ export const casinoVerifyCommand: Command = {
         : resolveLegacyV2Game(snapshot.type, round.bet, clientSeed, runtime, round.serverSeed, round.nonce);
     } catch (error) {
       logger.error('Casino verify replay failed', { guildId: scope.guildId, roundId: round.id, error: error instanceof Error ? error.message : String(error) });
-      await i.editReply({ embeds: [buildStatusEmbed({
-        status: 'ERROR', title: 'Audit fehlgeschlagen',
-        description: 'Die gespeicherte Runde konnte mit ihrem Audit-Snapshot nicht reproduziert werden.', footerText: 'V-Bot Casino Audit',
-      })], allowedMentions: { parse: [] } });
+      await i.editReply({ embeds: [casinoStatusEmbed(
+        'ERROR',
+        'Audit fehlgeschlagen',
+        'Die gespeicherte Runde konnte mit ihrem Audit-Snapshot nicht reproduziert werden.',
+        [],
+        'V-Bot Casino Audit',
+      )], allowedMentions: { parse: [] } });
       return;
     }
 
@@ -895,23 +904,28 @@ export const casinoVerifyCommand: Command = {
       && betBoundsMatch;
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const def = casinoDefinition(snapshot.type);
-    const embed = vEmbed(verified ? Colors.Success : Colors.Error)
-      .setTitle(verified ? '✅ Casino-Runde verifiziert' : '❌ Casino-Runde NICHT verifiziert')
-      .setDescription(verified
-        ? 'Seed, Nonce, Regel-Snapshot, Einsatzgrenzen, Outcome, Ergebnisdetails und Auszahlung sind reproduzierbar.'
-        : 'Mindestens ein gespeicherter Audit- oder Ergebniswert stimmt nicht mit der reproduzierten Runde ueberein.')
-      .addFields(
-        { name: '🎲 Spiel', value: `${def.emoji} ${def.label}`, inline: true },
-        { name: '💰 Einsatz', value: `${fmt(round.bet)} ${cfg.emoji}`, inline: true },
-        { name: '🏆 Auszahlung', value: `${fmt(round.payout)} ${cfg.emoji}`, inline: true },
-        { name: '🧩 Algorithmus', value: snapshot.algorithmVersion, inline: false },
-        { name: '🎚️ Gewinnchance', value: snapshot.winChancePct === null ? 'Legacy-Regel' : `${snapshot.winChancePct}%`, inline: true },
-        { name: '🔑 Server-Seed', value: `\`${round.serverSeed}\``, inline: false },
-        { name: '🧑 Client-Seed', value: `\`${clientSeed}\``, inline: false },
-        { name: '#️⃣ Nonce', value: round.nonce.toString(), inline: false },
-        { name: '🔐 SHA-256', value: `\`${seedHashFull(round.serverSeed)}\``, inline: false },
-        { name: '⚙️ Snapshot', value: `Payout x${(snapshot.payoutMultMilli / 1000).toFixed(3)} • Min ${snapshot.minBet} • Max ${snapshot.maxBet}${snapshot.cooldownSeconds !== null ? ` • Cooldown ${snapshot.cooldownSeconds}s` : ''}`, inline: false },
-      ).setFooter({ text: `V-Bot Casino Audit • Runde ${round.id}` }).setTimestamp(round.createdAt);
+    const embed = casinoEmbed(
+      verified ? Colors.Success : Colors.Error,
+      `V-Bot Casino Audit • Runde ${round.id}`,
+    ).setDescription(compactDescription(
+      verified ? '✅ Casino-Runde verifiziert' : '❌ Casino-Runde NICHT verifiziert',
+      [
+        verified
+          ? 'Seed, Nonce, Regel-Snapshot, Einsatzgrenzen, Outcome, Ergebnisdetails und Auszahlung sind reproduzierbar.'
+          : 'Mindestens ein gespeicherter Audit- oder Ergebniswert stimmt nicht mit der reproduzierten Runde ueberein.',
+        `**Spiel:** ${def.emoji} ${def.label}`,
+        `**Einsatz:** ${fmt(round.bet)} ${cfg.emoji}`,
+        `**Auszahlung:** ${fmt(round.payout)} ${cfg.emoji}`,
+        `**Algorithmus:** ${snapshot.algorithmVersion}`,
+        `**Gewinnchance:** ${snapshot.winChancePct === null ? 'Legacy-Regel' : `${snapshot.winChancePct}%`}`,
+        `**Server-Seed:** \`${round.serverSeed}\``,
+        `**Client-Seed:** \`${clientSeed}\``,
+        `**Nonce:** ${round.nonce.toString()}`,
+        `**SHA-256:** \`${seedHashFull(round.serverSeed)}\``,
+        `**Snapshot:** Payout x${(snapshot.payoutMultMilli / 1000).toFixed(3)} • Min ${snapshot.minBet} • Max ${snapshot.maxBet}${snapshot.cooldownSeconds !== null ? ` • Cooldown ${snapshot.cooldownSeconds}s` : ''}`,
+        `**Erstellt:** <t:${Math.floor(round.createdAt.getTime() / 1000)}:F>`,
+      ],
+    ));
     await i.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
     logAudit('CASINO_VERIFY', 'CASINO', {
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, roundId: round.id,

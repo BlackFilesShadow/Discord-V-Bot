@@ -12,7 +12,7 @@ import {
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import type { VirtualAccountRawDb } from './virtualAccounts';
-import { vEmbed } from '../../utils/embedDesign';
+import { compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 export interface SafeManagerPanelRow {
   id: string;
@@ -134,18 +134,14 @@ async function restorePanelStrict(client: Client, panel: SafeManagerPanelRow, tr
 }
 
 function managerPanelEmbed(): EmbedBuilder {
-  return vEmbed(0x5865f2)
-    .setTitle('🏦 V-Bot · Virtuelle Kontoverwaltung')
-    .setDescription([
+  return compactEmbed(0x5865f2, 'V-Bot · Kontoverwalter · keine Discord-Rolle erforderlich')
+    .setDescription(compactDescription('🏦 V-Bot · Virtuelle Kontoverwaltung', [
       'Hier verwaltest du ausschliesslich die virtuellen Konten, fuer die du persoenlich freigeschaltet bist.',
-      '',
       '**Auszahlung** · Konto → Discord-Spieler',
       '**Remove** · Betrag kontrolliert aus einem Konto entfernen',
       '**Pay / Balance** · Kontostand pruefen und Wallet ↔ Bank verschieben',
-      '',
       'Nach der Aktion zeigt V-Bot dir nur deine zugewiesenen Konten zur Auswahl. Jede Mutation wird serverseitig erneut autorisiert und archiviert.',
-    ].join('\n'))
-    .setFooter({ text: 'V-Bot · Kontoverwalter · keine Discord-Rolle erforderlich' });
+    ]));
 }
 
 function managerPanelButtons(connId: NitradoConnId) {

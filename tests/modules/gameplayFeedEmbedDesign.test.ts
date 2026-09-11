@@ -29,18 +29,29 @@ function view(overrides: Partial<GameplayFeedView>): GameplayFeedView {
   };
 }
 
-function fieldsFor(feed: GameplayFeedView) {
-  return buildGameplayFeedEmbed(feed, '#dc2626', SERVER).toJSON().fields ?? [];
+function descriptionFor(feed: GameplayFeedView): string {
+  return buildGameplayFeedEmbed(feed, '#dc2626', SERVER).toJSON().description ?? '';
+}
+
+function expectOrder(description: string, labels: string[]): void {
+  let previous = -1;
+  for (const label of labels) {
+    const index = description.indexOf(label);
+    expect(index).toBeGreaterThan(previous);
+    previous = index;
+  }
 }
 
 describe('approved V-Bot gameplay feed embed designs', () => {
-  it('renders V-Kill Report with Killer before Opfer, inline Pos links and server alias last', () => {
+  it('renders V-Kill Report compactly with Killer before Opfer, inline Pos links and server alias footer', () => {
     const json = buildGameplayFeedEmbed(view({}), '#dc2626', SERVER).toJSON();
-    expect(json.title).toBe('💀 V-Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Killer', 'Opfer', 'Waffe', 'Distanz', 'Server']);
-    expect(json.fields?.[0].value).toBe('Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)');
-    expect(json.fields?.[1].value).toBe('Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)');
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Server', value: SERVER });
+    const description = json.description ?? '';
+    expect(description).toContain('**💀 V-Kill Report**');
+    expectOrder(description, ['**Killer**', '**Opfer**', '**Waffe:**', '**Distanz:**']);
+    expect(description).toContain('Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)');
+    expect(description).toContain('Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)');
+    expect(json.footer?.text).toBe(SERVER);
+    expect(json.fields ?? []).toHaveLength(0);
   });
 
   it('renders Self Kill Report with weapon, Pos, alias and event time', () => {
@@ -54,11 +65,12 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: 'IJ-70',
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
-    expect(json.title).toBe('🩸 Self Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Spieler', 'Waffe', 'Pos:', 'Server', 'Ereigniszeit']);
-    expect(json.fields?.find(field => field.name === 'Waffe')?.value).toBe('IJ-70');
-    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
+    const description = json.description ?? '';
+    expect(description).toContain('**🩸 Self Kill Report**');
+    expectOrder(description, ['**Spieler:**', '**Waffe:**', '**Pos:**', '**Ereigniszeit:**']);
+    expect(description).toContain('**Waffe:** IJ-70');
+    expect(description).toContain(EVENT_TIME);
+    expect(json.footer?.text).toBe(SERVER);
   });
 
   it('renders Wild Kill Report only for the visible Wild/Infizierten cause model plus event time', () => {
@@ -72,11 +84,12 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: null,
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
-    expect(json.title).toBe('☣️ Wild Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Ursache', 'Pos:', 'Server', 'Ereigniszeit']);
-    expect(json.fields?.find(field => field.name === 'Ursache')?.value).toBe('Animal\\_CanisLupus');
-    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
+    const description = json.description ?? '';
+    expect(description).toContain('**☣️ Wild Kill Report**');
+    expectOrder(description, ['**Opfer:**', '**Ursache:**', '**Pos:**', '**Ereigniszeit:**']);
+    expect(description).toContain('Animal\\_CanisLupus');
+    expect(description).toContain(EVENT_TIME);
+    expect(json.footer?.text).toBe(SERVER);
   });
 
   it('renders Crash Kill Report with vehicle cause, Pos, alias and event time', () => {
@@ -89,11 +102,12 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: null,
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
-    expect(json.title).toBe('💥 Crash Kill Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Opfer', 'Fahrzeug / Ursache', 'Pos:', 'Server', 'Ereigniszeit']);
-    expect(json.fields?.find(field => field.name === 'Fahrzeug / Ursache')?.value).toBe('OffroadHatchback');
-    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
+    const description = json.description ?? '';
+    expect(description).toContain('**💥 Crash Kill Report**');
+    expectOrder(description, ['**Opfer:**', '**Fahrzeug / Ursache:**', '**Pos:**', '**Ereigniszeit:**']);
+    expect(description).toContain('**Fahrzeug / Ursache:** OffroadHatchback');
+    expect(description).toContain(EVENT_TIME);
+    expect(json.footer?.text).toBe(SERVER);
   });
 
   it('renders generic Death Report with retained raw cause, Pos, alias and event time', () => {
@@ -107,15 +121,16 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: null,
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
-    expect(json.title).toBe('☠️ Death Report');
-    expect(json.fields?.map(field => field.name)).toEqual(['Spieler', 'Todesursache', 'Pos:', 'Server', 'Ereigniszeit']);
-    expect(json.fields?.find(field => field.name === 'Todesursache')?.value).toBe('Bled out');
-    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
+    const description = json.description ?? '';
+    expect(description).toContain('**☠️ Death Report**');
+    expectOrder(description, ['**Spieler:**', '**Todesursache:**', '**Pos:**', '**Ereigniszeit:**']);
+    expect(description).toContain('**Todesursache:** Bled out');
+    expect(description).toContain(EVENT_TIME);
+    expect(json.footer?.text).toBe(SERVER);
   });
 
   it('does not invent a generic death cause when the ADM line has none', () => {
-    const json = buildGameplayFeedEmbed(view({
+    expect(descriptionFor(view({
       kind: 'DEATH',
       category: 'OTHER',
       eventType: 'PLAYER_DIED',
@@ -123,8 +138,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       targetPosition: null,
       toolOrWeapon: null,
       distanceMeters: null,
-    }), '#dc2626', SERVER).toJSON();
-    expect(json.fields?.find(field => field.name === 'Todesursache')?.value).toBe('Im ADM-Log nicht näher angegeben');
+    }))).toContain('**Todesursache:** Im ADM-Log nicht näher angegeben');
   });
 
   const buildCases = [
@@ -134,7 +148,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     ['DESTROY', 'DESTROY', '💥 Destruction Report'],
   ] as const;
 
-  it.each(buildCases)('renders %s as the approved report with alias followed by event time', (_event, category, title) => {
+  it.each(buildCases)('renders %s as the approved compact report with alias footer and event time', (_event, category, title) => {
     const feed = view({
       kind: category === 'PLACEMENT' ? 'PLACEMENT' : 'BUILD',
       category,
@@ -147,11 +161,12 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       targetPosition: null,
     });
     const json = buildGameplayFeedEmbed(feed, '#eab308', SERVER).toJSON();
-    expect(json.title).toBe(title);
-    expect(json.fields?.[0]).toMatchObject({ name: 'Spieler', value: 'Builder' });
-    expect(json.fields?.find(field => field.name === 'Objekt')?.value).toBe('Fence');
-    expect(json.fields?.at(-2)).toMatchObject({ name: 'Server', value: SERVER });
-    expect(json.fields?.at(-1)).toMatchObject({ name: 'Ereigniszeit', value: EVENT_TIME });
+    const description = json.description ?? '';
+    expect(description).toContain(`**${title}**`);
+    expect(description).toContain('**Spieler:** Builder');
+    expect(description).toContain('**Objekt:** Fence');
+    expect(description).toContain(EVENT_TIME);
+    expect(json.footer?.text).toBe(SERVER);
   });
 
   it('cleans technical Placement classnames without changing ADM source data', () => {
@@ -159,7 +174,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     expect(placementObjectLabel('Nameless Object<GardenPlot>')).toBe('Nameless Gartenplot');
     expect(placementObjectLabel('Nameless Object<WatchtowerKit>')).toBe('Nameless Watchtower Kit');
 
-    const snareFields = fieldsFor(view({
+    expect(descriptionFor(view({
       kind: 'PLACEMENT',
       category: 'PLACEMENT',
       eventType: 'PLACEMENT',
@@ -169,10 +184,9 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: null,
       distanceMeters: null,
       targetPosition: null,
-    }));
-    expect(snareFields.find(field => field.name === 'Objekt')?.value).toBe('Snare Trap');
+    }))).toContain('**Objekt:** Snare Trap');
 
-    const namelessFields = fieldsFor(view({
+    expect(descriptionFor(view({
       kind: 'PLACEMENT',
       category: 'PLACEMENT',
       eventType: 'PLACEMENT',
@@ -182,12 +196,11 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: null,
       distanceMeters: null,
       targetPosition: null,
-    }));
-    expect(namelessFields.find(field => field.name === 'Objekt')?.value).toBe('Nameless Gartenplot');
+    }))).toContain('**Objekt:** Nameless Gartenplot');
   });
 
   it('keeps iZurvive linking in build report positions', () => {
-    const fields = fieldsFor(view({
+    expect(descriptionFor(view({
       kind: 'BUILD',
       category: 'BUILD',
       eventType: 'BUILD',
@@ -197,7 +210,6 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       toolOrWeapon: 'Shovel',
       distanceMeters: null,
       targetPosition: null,
-    }));
-    expect(fields.find(field => field.name === 'Position')?.value).toBe('[100,200,10](https://www.izurvive.com/#location=100;200;6)');
+    }))).toContain('**Position:** [100,200,10](https://www.izurvive.com/#location=100;200;6)');
   });
 });

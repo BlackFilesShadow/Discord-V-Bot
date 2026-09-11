@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import { Colors, Brand, vEmbed, progressBar } from '../../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed, progressBar } from '../../utils/embedDesign';
 import { buildStatusEmbed } from '../../utils/statusEmbed';
 
 /**
@@ -63,21 +63,16 @@ const levelCommand: Command = {
       rankStr = `#${rank}`;
     }
 
-    const embed = vEmbed(Colors.Gold)
-      .setTitle(`⭐  ${targetUser.username}`)
+    const embed = compactEmbed(Colors.Gold, 'V-Bot • XP')
       .setThumbnail(targetUser.displayAvatarURL())
-      .setDescription(
-        `${Brand.divider}\n\n` +
-        `🏆 **Level ${level}** ${Brand.dot} Rang **${rankStr}**\n\n` +
-        `${bar}  **${progressPercent}%**\n` +
-        `┃ ${xpProgress.toLocaleString('de-DE')} / ${xpNeeded.toLocaleString('de-DE')} XP\n\n` +
-        Brand.divider,
-      )
-      .addFields(
-        { name: '✨ Gesamt-XP', value: `**${currentXp.toLocaleString('de-DE')}**`, inline: true },
-        { name: '💬 Nachrichten', value: `**${totalMessages.toLocaleString('de-DE')}**`, inline: true },
-        { name: '🎙️ Voice', value: `**${voiceMinutes.toLocaleString('de-DE')}** Min`, inline: true },
-      );
+      .setDescription(compactDescription(`⭐ ${targetUser.username}`, [
+        `🏆 **Level ${level}** · Rang **${rankStr}**`,
+        `${bar}  **${progressPercent}%**`,
+        `┃ ${xpProgress.toLocaleString('de-DE')} / ${xpNeeded.toLocaleString('de-DE')} XP`,
+        `✨ Gesamt-XP: **${currentXp.toLocaleString('de-DE')}**`,
+        `💬 Nachrichten: **${totalMessages.toLocaleString('de-DE')}**`,
+        `🎙️ Voice: **${voiceMinutes.toLocaleString('de-DE')} Min**`,
+      ]));
 
     await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
   },

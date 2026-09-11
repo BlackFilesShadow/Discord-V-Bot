@@ -15,7 +15,7 @@ import { config } from '../../config';
 import { decrypt } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { enqueueServerBanRemove, type BanOutboxClient } from './banOutbox';
 
 // Niedriger gehalten als die meisten anderen Cron-Intervalle: dieser Tick ist
@@ -262,16 +262,16 @@ async function deliverNotice(notice: {
 
     const serverLabel = connection?.alias?.trim() || 'Gameserver';
     const expiresUnix = Math.floor(notice.expiresAt.getTime() / 1000);
-    const embed = vEmbed(Colors.Success)
-      .setTitle('✅ Server-Bann abgelaufen')
-      .setDescription(`Die zeitlich begrenzte Strafe von **${identifier}** ist beendet.`)
+    const embed = compactEmbed(Colors.Success, 'Automatischer Ablauf • V Bot')
+      .setDescription(compactDescription('✅ Server-Bann abgelaufen', [
+        `Die zeitlich begrenzte Strafe von **${identifier}** ist beendet.`,
+      ]))
       .addFields(
         { name: 'Server', value: serverLabel, inline: false },
         { name: 'Bann abgelaufen', value: `<t:${expiresUnix}:R>`, inline: false },
         { name: 'Grund', value: safeText(ban.reason), inline: false },
         { name: 'Status', value: '✅ Von der Nitrado-Bannliste entfernt', inline: false },
       )
-      .setFooter({ text: 'Automatischer Ablauf • V Bot' })
       .setTimestamp(ban.liftedAt ?? new Date());
 
     const message = await textChannel.send({

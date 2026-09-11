@@ -1,6 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { createHash } from 'node:crypto';
 import { safeEmbedField } from '../../utils/embedSanitize';
+import { compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { izurvivePositionUrl } from './embedBuilder';
 
 export interface PlayerListEntry {
@@ -12,7 +13,7 @@ export interface PlayerListEntry {
 const FIELD_LIMIT = 900;
 const MAX_EMBEDS = 10;
 // Discord begrenzt die Summe aller Embed-Texte einer Nachricht auf 6000 Zeichen.
-// Fuer Titel, Feldnamen, Serveralias und Footer bleibt bewusst Reserve.
+// Fuer kompakte Kopfzeilen, Serveralias und Footer bleibt bewusst Reserve.
 const PLAYER_LINES_BUDGET = 5000;
 
 function parseHex(value: string): number {
@@ -106,7 +107,6 @@ export function buildPlayerListEmbeds(args: {
   generatedAt?: Date;
 }): EmbedBuilder[] {
   const entries = [...args.entries].sort((a, b) => a.playerName.localeCompare(b.playerName, 'de-DE'));
-  const generatedAt = args.generatedAt ?? new Date();
 
   let lines: string[];
   if (entries.length === 0) {
@@ -127,32 +127,14 @@ export function buildPlayerListEmbeds(args: {
   const fitted = fitLinesToMessageBudget(lines);
   const chunks = chunkLines(fitted);
   const embeds: EmbedBuilder[] = [];
+  const serverAlias = safeEmbedField(args.serverAlias || 'DayZ-Server', 256);
 
   for (let index = 0; index < chunks.length; index++) {
-    const embed = new EmbedBuilder()
-      .setColor(parseHex(args.embedColor))
-      .setTitle(index === 0 ? '🌐 Online List' : `🌐 Online List · Fortsetzung ${index + 1}`);
-
-    if (index === 0) {
-      embed.addFields(
-        { name: 'Server', value: safeEmbedField(args.serverAlias || 'DayZ-Server', 256), inline: false },
-        {
-          name: 'Stand',
-          value: `<t:${Math.floor(generatedAt.getTime() / 1000)}:F>`,
-          inline: false,
-        },
-        { name: 'Online', value: String(entries.length), inline: false },
-      );
-    }
-
-    embed.addFields({ name: index === 0 ? 'Spieler' : 'Weitere Spieler', value: chunks[index] });
-    if (index === chunks.length - 1) {
-      embed.setFooter({
-        text: args.showCoordinates
-          ? 'Koordinaten erscheinen erst nach dem ersten gueltigen ADM-Positionsereignis der aktuellen Sitzung.'
-          : 'Koordinaten sind deaktiviert.',
-      });
-    }
+    const heading = index === 0
+      ? `🌐 • Online List · ${entries.length} Players`
+      : `🌐 • Online List · ${entries.length} Players · Fortsetzung ${index + 1}`;
+    const embed = compactEmbed(parseHex(args.embedColor), serverAlias)
+      .setDescription(compactDescription(heading, [chunks[index]]));
     embeds.push(embed);
   }
 

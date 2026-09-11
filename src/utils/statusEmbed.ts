@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import { Colors, readableEmbedDescription, vEmbed } from './embedDesign';
+import { Colors, compactDescription, compactEmbed, readableEmbedDescription } from './embedDesign';
 
 /**
  * Zentraler Status-Embed-Builder (Embed-Plan Rev IV, §9.2).
@@ -7,20 +7,22 @@ import { Colors, readableEmbedDescription, vEmbed } from './embedDesign';
  * Verbindliche Zuordnung:
  *   SUCCESS -> ✅ + Gruen
  *   INFO    -> ❕ + Blau
+ *   WARNING -> ⚠️ + Gelb
  *   ERROR   -> ❌ + Rot
  *
  * Thematische Emojis im Titel bleiben erhalten.
  */
 
-export type EmbedStatus = 'SUCCESS' | 'INFO' | 'ERROR';
+export type EmbedStatus = 'SUCCESS' | 'INFO' | 'WARNING' | 'ERROR';
 
 const STATUS_META: Record<EmbedStatus, { emoji: string; color: number }> = {
   SUCCESS: { emoji: '✅', color: Colors.Success },
   INFO: { emoji: '❕', color: Colors.Info },
+  WARNING: { emoji: '⚠️', color: Colors.Warning },
   ERROR: { emoji: '❌', color: Colors.Error },
 };
 
-const LEADING_STATUS_RE = /^(?:✅|❌|❕|ℹ️|ℹ)\s*/u;
+const LEADING_STATUS_RE = /^(?:✅|❌|❕|⚠️|⚠|ℹ️|ℹ)\s*/u;
 
 export interface StatusEmbedField {
   name: string;
@@ -55,11 +57,12 @@ function cleanTitle(status: EmbedStatus, title: string): string {
 
 export function buildStatusEmbed(opts: StatusEmbedOptions): EmbedBuilder {
   const meta = STATUS_META[opts.status];
-  const embed = vEmbed(meta.color)
-    .setTitle(cap(cleanTitle(opts.status, opts.title), 256))
-    .setFooter({ text: cap(opts.footerText ?? 'V-Bot', 2048) });
-
-  if (opts.description) embed.setDescription(cap(readableEmbedDescription(opts.description), 4096));
+  const heading = cap(cleanTitle(opts.status, opts.title), 256);
+  const description = opts.description
+    ? cap(readableEmbedDescription(opts.description), 3800)
+    : undefined;
+  const embed = compactEmbed(meta.color, cap(opts.footerText ?? 'V-Bot', 2048))
+    .setDescription(compactDescription(heading, [description]));
 
   if (opts.fields?.length) {
     embed.addFields(

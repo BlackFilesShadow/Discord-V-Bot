@@ -292,13 +292,13 @@ describe('Radar-Worker', () => {
       allowedMentions: { parse: [], roles: [ROLE_ID] },
       enforceNonce: true,
     }));
-    const fields = send.mock.calls[0][0].embeds[0].toJSON().fields as Array<{ name: string; value: string }>;
-    expect(fields.map(field => field.name)).toEqual(expect.arrayContaining([
-      'Username', 'Koordinaten X/Z', 'Erkannt durch ADM',
-    ]));
-    expect(fields.map(field => field.name)).not.toContain('ADM-Hoehe');
-    expect(fields.find(field => field.name === 'Koordinaten X/Z')?.value)
-      .toBe('[X: 100.0 · Z: 200.0](https://www.izurvive.com/chernarusplus/#location=100;200;6)');
+    const embed = send.mock.calls[0][0].embeds[0].toJSON();
+    expect(embed.fields).toBeUndefined();
+    expect(embed.description).toContain('**Nordbasis**');
+    expect(embed.description).toContain('**Username:** Player One');
+    expect(embed.description).toContain('**Koordinaten X/Z:** [X: 100.0 · Z: 200.0](https://www.izurvive.com/chernarusplus/#location=100;200;6)');
+    expect(embed.description).toContain('**Erkannt durch ADM:**');
+    expect(embed.description).not.toContain('ADM-Hoehe');
     expect(radarEventUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'radar-event-1', status: 'SENDING' }),
       data: expect.objectContaining({ status: 'SENT', messageId: 'discord-message-1' }),

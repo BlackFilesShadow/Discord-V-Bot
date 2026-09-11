@@ -4,20 +4,25 @@ import type { Client, Guild, TextChannel, NewsChannel, ThreadChannel } from 'dis
 import { AttachmentBuilder, ChannelType, EmbedBuilder } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { safeEmbedDescription, safeEmbedTitle, safeEmbedAuthor } from '../../utils/embedSanitize';
 import { resolveTranslatedPostImage, saveTranslatedPostImageFromUrl, removeTranslatedPostImage } from './translatedPostImage';
 import { translate, getLanguageName, SUPPORTED_LANGUAGES } from './translator';
 
 export function buildTranslatePostEmbed(opts: { guild: Guild | null; translated: string; targetLang: string; imageUrl?: string | null; customTitle?: string | null }): EmbedBuilder {
   const lang = SUPPORTED_LANGUAGES.find((l) => l.code === opts.targetLang);
-  const flag = lang?.emoji ?? 'ðŸŒ';
+  const flag = lang?.emoji ?? '🌐';
   const langName = lang?.name ?? getLanguageName(opts.targetLang);
   const guildName = opts.guild?.name ?? 'Server';
   const guildIcon = opts.guild?.iconURL({ size: 128 }) ?? undefined;
   const body = opts.translated && opts.translated.trim().length > 0 ? opts.translated : '_(leer)_';
-  const title = opts.customTitle && opts.customTitle.trim().length > 0 ? `${flag} ${opts.customTitle.trim().slice(0, 240)}` : `${flag} Ãœbersetzte Nachricht Â· ${langName}`;
-  const embed = vEmbed(Colors.Info).setAuthor({ name: safeEmbedAuthor(`${flag}  ${guildName}`), iconURL: guildIcon }).setTitle(safeEmbedTitle(title)).setDescription(safeEmbedDescription(`${Brand.divider}\n${body}\n${Brand.divider}`)).setFooter({ text: Brand.name, iconURL: guildIcon });
+  const title = opts.customTitle && opts.customTitle.trim().length > 0
+    ? `${flag} ${opts.customTitle.trim().slice(0, 240)}`
+    : `${flag} Übersetzte Nachricht · ${langName}`;
+  const embed = compactEmbed(Colors.Info)
+    .setAuthor({ name: safeEmbedAuthor(`${flag} ${guildName}`), iconURL: guildIcon })
+    .setDescription(compactDescription(safeEmbedTitle(title), [safeEmbedDescription(body)]))
+    .setFooter({ text: Brand.name, iconURL: guildIcon });
   if (opts.imageUrl) embed.setImage(opts.imageUrl);
   return embed;
 }

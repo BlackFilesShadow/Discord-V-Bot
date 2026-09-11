@@ -41,7 +41,7 @@ describe('Gameplay feed activation, pacing and Online List architecture gate', (
     expect(runtime).toContain('playerListNonce(config.id, stateHash, postKey)');
     expect(runtime).toContain('message.edit');
     expect(runtime).not.toContain('new NitradoClient');
-    expect(playerList).toContain('🌐 Online List');
+    expect(playerList).toContain('🌐 • Online List');
     expect(playerList).not.toContain('Position unbekannt');
     expect(playerList).toContain('return position ? `• ${name} — ${position}` : `• ${name}`;');
   });

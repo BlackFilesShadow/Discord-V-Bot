@@ -50,9 +50,8 @@ describe('Self-Kill Waffenanzeige aus ADM-V2', () => {
     expect(event.toolOrWeapon).toBeNull();
     expect(view).not.toBeNull();
 
-    const embed = buildGameplayFeedEmbed(view!, '#dc2626', 'Die Chaoten').toJSON();
-    expect(embed.fields?.find(field => field.name === 'Waffe')?.value)
-      .toBe('Im ADM-Log nicht angegeben');
+    const description = buildGameplayFeedEmbed(view!, '#dc2626', 'Die Chaoten').toJSON().description ?? '';
+    expect(description).toContain('**Waffe:** Im ADM-Log nicht angegeben');
   });
 
   it('zeigt eine von ADM gelieferte Suizidwaffe unveraendert an', () => {
@@ -67,11 +66,11 @@ describe('Self-Kill Waffenanzeige aus ADM-V2', () => {
     });
 
     expect(event.toolOrWeapon).toBe('IJ-70');
-    const embed = buildGameplayFeedEmbed(view!, '#dc2626', 'Die Chaoten').toJSON();
-    expect(embed.fields?.find(field => field.name === 'Waffe')?.value).toBe('IJ-70');
+    const description = buildGameplayFeedEmbed(view!, '#dc2626', 'Die Chaoten').toJSON().description ?? '';
+    expect(description).toContain('**Waffe:** IJ-70');
   });
 
-  it('blendet das Waffenfeld komplett aus wenn Waffe / Ursache deaktiviert ist', () => {
+  it('blendet die Waffenzeile komplett aus wenn Waffe / Ursache deaktiviert ist', () => {
     const event = parseSelfKill(
       '01:06:00 | Player "DrQuinnxX" (DEAD) (id=1 pos=<5601.6, 2068.5, 7.5>) committed suicide',
     );
@@ -83,7 +82,7 @@ describe('Self-Kill Waffenanzeige aus ADM-V2', () => {
     });
 
     expect(view?.showTool).toBe(false);
-    const embed = buildGameplayFeedEmbed(view!, '#dc2626', 'Die Chaoten').toJSON();
-    expect(embed.fields?.some(field => field.name === 'Waffe')).toBe(false);
+    const description = buildGameplayFeedEmbed(view!, '#dc2626', 'Die Chaoten').toJSON().description ?? '';
+    expect(description).not.toContain('**Waffe:**');
   });
 });

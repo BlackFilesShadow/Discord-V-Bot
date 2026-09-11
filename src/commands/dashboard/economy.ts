@@ -16,8 +16,13 @@ import {
 import { asUserDiscordId } from '../../types/scope';
 import type { GuildId, NitradoConnId } from '../../types/scope';
 import { logAudit } from '../../utils/logger';
-import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { statusColor, statusEmoji, type EmbedStatus } from '../../utils/statusEmbed';
+import {
+  Colors,
+  compactDescription,
+  compactQuote,
+  economyEmbed,
+} from '../../utils/embedDesign';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import {
   createPendingServerAction,
@@ -57,7 +62,12 @@ async function statusReply(
   title: string,
   opts: { description?: string; fields?: { name: string; value: string }[]; footerText?: string; ephemeral?: boolean } = {},
 ): Promise<void> {
-  const embed = buildStatusEmbed({ status, title, description: opts.description, fields: opts.fields, footerText: opts.footerText ?? 'V-Bot Economy' });
+  const detailLines = (opts.fields ?? []).map(field => `**${field.name}**: ${field.value}`);
+  const embed = economyEmbed(statusColor(status), opts.footerText ?? 'V-Bot Economy')
+    .setDescription(compactDescription(`${statusEmoji(status)} ${title}`, [
+      opts.description,
+      ...detailLines,
+    ]));
   const ephemeral = opts.ephemeral ?? true;
   if (ephemeral) await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
   else await i.reply({ embeds: [embed], allowedMentions: { parse: [] } });
@@ -65,26 +75,32 @@ async function statusReply(
 
 // /balance zeigt bewusst nur aktuelle Salden. Die Transaktionshistorie bleibt
 // intern/Audit-seitig erhalten, wird dem Spieler aber nicht mehr eingeblendet.
+// Ohne User-Option gilt weiterhin der Actor; nur die explizite optionale Auswahl
+// darf auf einen anderen Discord-User umschalten.
 export const balanceCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('balance')
-    .setDescription('Zeigt deinen aktuellen Wallet-, Bank- und Gesamtstand.') as SlashCommandBuilder),
+    .setDescription('Zeigt den aktuellen Wallet-, Bank- und Gesamtstand.')
+    .addUserOption(o => o
+      .setName('user')
+      .setDescription('Optional: Kontostand dieses Users anzeigen')
+      .setRequired(false)) as SlashCommandBuilder),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!;
-    const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
+    const selectedUser = i.options.getUser('user');
+    const targetUser = selectedUser ?? i.user;
+    const targetUserId = selectedUser ? asUserDiscordId(selectedUser.id) : scope.actorDiscordId;
+    const acc = await getAccountOrZero(scope.guildId, connId, targetUserId);
     const cfg = await getConfig(scope.guildId, connId);
     const total = acc.walletBalance + acc.bankBalance;
-    const e = vEmbed(Colors.Gold)
-      .setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() })
-      .setTitle(`${cfg.emoji} Kontostand`)
-      .setDescription(`Konto von **${i.user.username}**`)
-      .addFields(
-        { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: false },
-        { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: false },
-        { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: false },
-      )
-      .setFooter({ text: await guildFooter(scope.guildId, connId) })
-      .setTimestamp();
+    const e = economyEmbed(Colors.Primary, await guildFooter(scope.guildId, connId))
+      .setDescription(compactDescription(`▣ Balance · <@${targetUser.id}>`, [
+        compactQuote([
+          `Cash: **${fmt(acc.walletBalance)} ${cfg.emoji}**`,
+          `Bank: **${fmt(acc.bankBalance)} ${cfg.emoji}**`,
+          `Total: **${fmt(total)} ${cfg.emoji}**`,
+        ]),
+      ]));
     await embedReply(i, e, false);
   }),
 };
@@ -111,9 +127,11 @@ export const payCommand: Command = {
     }
     logAudit('ECON_PAY', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, from: scope.actorDiscordId, to: target.id, amount: betrag.toString() });
     const cfg = await getConfig(scope.guildId, connId);
-    await statusReply(i, 'SUCCESS', 'Zahlung erfolgreich', { ephemeral: false, description: `Der Betrag wurde an <@${target.id}> gesendet.`, fields: [
-      { name: '👤 Empfänger', value: `<@${target.id}>` }, { name: '💰 Betrag', value: `${fmt(betrag)} ${cfg.emoji}` }, { name: '📝 Grund', value: grund },
-    ] });
+    await statusReply(i, 'SUCCESS', 'Zahlung erfolgreich', {
+      ephemeral: false,
+      description: `Übertragen: **${fmt(betrag)} ${cfg.emoji}** an <@${target.id}>.`,
+      fields: grund !== 'Pay' ? [{ name: '📝 Grund', value: grund }] : [],
+    });
   }),
 };
 
@@ -155,9 +173,11 @@ export const adminPayCommand: Command = {
     } catch (e) { await statusReply(i, 'ERROR', 'Aktion fehlgeschlagen', { description: 'Die Aktion konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     logAudit('ECON_ADMIN_PAY', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, target: target.id, delta: delta.toString(), actor: scope.actorDiscordId });
     const cfg = await getConfig(scope.guildId, connId);
-    await statusReply(i, 'SUCCESS', 'Guthaben hinzugefügt', { footerText: 'V-Bot Economy • Administration', description: `Das Wallet von <@${target.id}> wurde angepasst.`, fields: [
-      { name: '👤 Spieler', value: `<@${target.id}>` }, { name: '💰 Hinzugefügt', value: `${fmt(delta)} ${cfg.emoji}` }, { name: '📝 Grund', value: grund },
-    ] });
+    await statusReply(i, 'SUCCESS', 'Guthaben hinzugefügt', {
+      footerText: 'V-Bot Economy • Administration',
+      description: `Wallet von <@${target.id}> um **${fmt(delta)} ${cfg.emoji}** erhöht.`,
+      fields: [{ name: '📝 Grund', value: grund }],
+    });
   }),
 };
 
@@ -169,9 +189,10 @@ export const depositCommand: Command = {
     try { await deposit(scope.guildId, connId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Einzahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Einzahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     const cfg = await getConfig(scope.guildId, connId); const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
-    await statusReply(i, 'SUCCESS', 'Einzahlung erfolgreich', { footerText: 'V-Bot Bank', description: 'Der Betrag wurde von deiner Wallet auf dein Bankkonto übertragen.', fields: [
-      { name: '💰 Betrag', value: `${fmt(amount)} ${cfg.emoji}` }, { name: '🏦 Neues Bankguthaben', value: `${fmt(acc.bankBalance)} ${cfg.emoji}` },
-    ] });
+    await statusReply(i, 'SUCCESS', 'Einzahlung erfolgreich', {
+      footerText: 'V-Bot Bank',
+      description: `Eingezahlt: **${fmt(amount)} ${cfg.emoji}**. Bank: **${fmt(acc.bankBalance)} ${cfg.emoji}**, Cash: **${fmt(acc.walletBalance)} ${cfg.emoji}**.`,
+    });
   }),
 };
 
@@ -183,9 +204,10 @@ export const withdrawCommand: Command = {
     try { await withdraw(scope.guildId, connId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Auszahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Auszahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     const cfg = await getConfig(scope.guildId, connId); const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
-    await statusReply(i, 'SUCCESS', 'Auszahlung erfolgreich', { footerText: 'V-Bot Bank', description: 'Der Betrag wurde von deinem Bankkonto auf deine Wallet übertragen.', fields: [
-      { name: '💰 Betrag', value: `${fmt(amount)} ${cfg.emoji}` }, { name: '👛 Neue Wallet', value: `${fmt(acc.walletBalance)} ${cfg.emoji}` },
-    ] });
+    await statusReply(i, 'SUCCESS', 'Auszahlung erfolgreich', {
+      footerText: 'V-Bot Bank',
+      description: `Abgehoben: **${fmt(amount)} ${cfg.emoji}**. Cash: **${fmt(acc.walletBalance)} ${cfg.emoji}**, Bank: **${fmt(acc.bankBalance)} ${cfg.emoji}**.`,
+    });
   }),
 };
 
@@ -202,9 +224,11 @@ export const transferCommand: Command = {
     catch (e) { await statusReply(i, 'ERROR', 'Überweisung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Überweisung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     logAudit('ECON_TRANSFER', 'ECONOMY', { guildId: scope.guildId, nitradoConnId: connId, from: scope.actorDiscordId, to: target.id, amount: amount.toString() });
     const cfg = await getConfig(scope.guildId, connId);
-    await statusReply(i, 'SUCCESS', 'Überweisung erfolgreich', { footerText: 'V-Bot Bank', description: `Der Betrag wurde an <@${target.id}> überwiesen.`, fields: [
-      { name: '👤 Empfänger', value: `<@${target.id}>` }, { name: '💰 Betrag', value: `${fmt(amount)} ${cfg.emoji}` }, { name: '🏦 Quelle', value: 'Bankkonto' },
-    ] });
+    await statusReply(i, 'SUCCESS', 'Überweisung erfolgreich', {
+      footerText: 'V-Bot Bank',
+      description: `Übertragen: **${fmt(amount)} ${cfg.emoji}** an <@${target.id}>.`,
+      fields: [{ name: '🏦 Quelle', value: 'Bankkonto' }],
+    });
   }),
 };
 
@@ -212,9 +236,14 @@ export const bankCommand: Command = {
   data: slotOption(new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Gesamtguthaben.') as SlashCommandBuilder),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
     const connId = scope.nitradoConnId!; const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId); const cfg = await getConfig(scope.guildId, connId); const total = acc.walletBalance + acc.bankBalance;
-    const e = vEmbed(Colors.Gold).setAuthor({ name: i.user.username, iconURL: i.user.displayAvatarURL() }).setTitle(`${cfg.emoji} Bankübersicht`).setDescription(`Konto von **${i.user.username}**`).addFields(
-      { name: '👛 Wallet', value: `**${fmt(acc.walletBalance)}** ${cfg.emoji}`, inline: false }, { name: '🏦 Bank', value: `**${fmt(acc.bankBalance)}** ${cfg.emoji}`, inline: false }, { name: 'Σ Gesamt', value: `**${fmt(total)}** ${cfg.emoji}`, inline: false },
-    ).setFooter({ text: await guildFooter(scope.guildId, connId) }).setTimestamp();
+    const e = economyEmbed(Colors.Primary, await guildFooter(scope.guildId, connId))
+      .setDescription(compactDescription(`▣ Bank · <@${i.user.id}>`, [
+        compactQuote([
+          `Cash: **${fmt(acc.walletBalance)} ${cfg.emoji}**`,
+          `Bank: **${fmt(acc.bankBalance)} ${cfg.emoji}**`,
+          `Total: **${fmt(total)} ${cfg.emoji}**`,
+        ]),
+      ]));
     await embedReply(i, e, false);
   }),
 };

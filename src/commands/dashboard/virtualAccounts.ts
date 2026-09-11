@@ -18,7 +18,8 @@ import { publishVirtualAccountActivityLive } from '../../modules/economy/virtual
 import { getConfig } from '../../modules/economy/repository';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import { logAudit, logger } from '../../utils/logger';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Colors, compactDescription, economyEmbed } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 
 function addSlotOption(builder: SlashCommandSubcommandBuilder): SlashCommandSubcommandBuilder {
   return builder.addIntegerOption(o => o
@@ -39,7 +40,7 @@ function statusLabel(status: VirtualAccountStatus): string {
 
 async function replyError(i: ChatInputCommandInteraction, title: string, message: string): Promise<void> {
   await i.reply({
-    embeds: [vEmbed(Colors.Error).setTitle(title).setDescription(message).setFooter({ text: 'V-Bot Economy' })],
+    embeds: [buildStatusEmbed({ status: 'ERROR', title, description: message, footerText: 'V-Bot Economy' })],
     flags: MessageFlags.Ephemeral,
     allowedMentions: { parse: [] },
   });
@@ -74,12 +75,13 @@ export const virtualAccountCommand: Command = {
     if (sub === 'list') {
       const accounts = await listVirtualAccounts(scope.guildId, connId, false);
       const visible = accounts.filter(a => a.status !== 'ARCHIVED').slice(0, 20);
-      const embed = vEmbed(Colors.Info)
-        .setTitle('🏦 Virtuelle Konten')
-        .setFooter({ text: 'V-Bot Economy' });
-      if (visible.length === 0) {
-        embed.setDescription('Auf diesem Gameserver sind keine virtuellen Konten verfuegbar.');
-      } else {
+      const embed = economyEmbed(Colors.Info, 'V-Bot Economy')
+        .setDescription(compactDescription('🏦 Virtuelle Konten', [
+          visible.length === 0
+            ? 'Auf diesem Gameserver sind keine virtuellen Konten verfuegbar.'
+            : 'Konten sind strikt an den ausgewaehlten Gameserver gebunden.',
+        ]));
+      if (visible.length > 0) {
         const financeMap = await listVirtualAccountFinanceMap(scope.guildId, connId);
         const fields = [];
         for (const account of visible) {
@@ -97,7 +99,7 @@ export const virtualAccountCommand: Command = {
             ].join('\n'),
           });
         }
-        embed.setDescription('Konten sind strikt an den ausgewaehlten Gameserver gebunden.').addFields(fields);
+        embed.addFields(fields);
       }
       await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       return;
@@ -112,8 +114,8 @@ export const virtualAccountCommand: Command = {
     const finance = await ensureVirtualAccountFinance(scope.guildId, connId, account.id);
 
     if (sub === 'info') {
-      const embed = vEmbed(account.status === 'ACTIVE' ? Colors.Success : Colors.Warning)
-        .setTitle(`${finance.accountEmoji} ${account.name}`)
+      const embed = economyEmbed(account.status === 'ACTIVE' ? Colors.Success : Colors.Warning, 'V-Bot Economy')
+        .setDescription(compactDescription(`${finance.accountEmoji} ${account.name}`))
         .addFields(
           { name: 'Status', value: statusLabel(account.status), inline: false },
           { name: 'Wallet', value: `${fmt(account.balance)} ${finance.currencyEmoji}`, inline: false },
@@ -123,8 +125,7 @@ export const virtualAccountCommand: Command = {
           { name: 'Typ', value: finance.accountPurpose === 'BANK_TREASURY' ? 'Serverbank' : account.kind, inline: false },
           { name: 'Direkte Einzahlungen', value: account.acceptUserTransfers && account.status === 'ACTIVE' ? 'Erlaubt' : 'Gesperrt', inline: false },
           { name: 'Ablauf', value: account.expiresAt ? `<t:${Math.floor(account.expiresAt.getTime() / 1000)}:F>` : 'Kein Ablauf', inline: false },
-        )
-        .setFooter({ text: 'V-Bot Economy' });
+        );
       if (finance.bannerUrl) embed.setImage(finance.bannerUrl);
       await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
       return;
@@ -167,19 +168,20 @@ export const virtualAccountCommand: Command = {
           sourcePocket,
           booked: result.booked,
         });
-        const embed = vEmbed(Colors.Success)
-          .setTitle(result.booked ? '✅ Ueberweisung erfolgreich' : '✅ Bereits verarbeitet')
-          .setDescription(
+        const embed = buildStatusEmbed({
+          status: 'SUCCESS',
+          title: result.booked ? 'Ueberweisung erfolgreich' : 'Bereits verarbeitet',
+          description:
             cfg.currencyName.toLocaleLowerCase('de-DE') === result.finance.currencyName.toLocaleLowerCase('de-DE')
               ? `**${fmt(result.accountCredited)}** ${result.finance.currencyEmoji} → **${account.name}**`
               : `Abgebucht: **${fmt(result.playerDebited)}** ${cfg.emoji}\nGutgeschrieben: **${fmt(result.accountCredited)}** ${result.finance.currencyEmoji} → **${account.name}**`,
-          )
-          .addFields(
+          fields: [
             { name: 'Quelle', value: sourcePocket === 'WALLET' ? 'Wallet' : 'Bank', inline: false },
             { name: 'Neues Wallet des Kontos', value: `${fmt(result.account.balance)} ${result.finance.currencyEmoji}`, inline: false },
             { name: 'Grund', value: reason, inline: false },
-          )
-          .setFooter({ text: 'V-Bot Economy' });
+          ],
+          footerText: 'V-Bot Economy',
+        });
         await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
         if (result.booked) {
           try {

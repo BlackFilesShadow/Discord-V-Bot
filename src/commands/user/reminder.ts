@@ -7,7 +7,8 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import prisma from '../../database/prisma';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { logger, logAudit } from '../../utils/logger';
 
 /**
@@ -116,7 +117,12 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
     if (zielArg === 'channel') {
       if (!interaction.guildId || !interaction.channel || interaction.channel.type !== ChannelType.GuildText) {
         await interaction.editReply({
-          embeds: [vEmbed(Colors.Warning).setDescription('⚠️ Channel-Zustellung nur in Server-Text-Channels. Falle zurück auf DM.')],
+          embeds: [buildStatusEmbed({
+            status: 'WARNING',
+            title: 'Channel-Zustellung nicht möglich',
+            description: 'Channel-Zustellung nur in Server-Text-Channels. Falle zurück auf DM.',
+            footerText: Brand.footerText,
+          })],
         });
       } else {
         channelId = interaction.channelId;
@@ -127,7 +133,12 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
     const active = await prisma.reminder.count({ where: { userId: interaction.user.id, isActive: true } });
     if (active >= MAX_PER_USER) {
       await interaction.editReply({
-        embeds: [vEmbed(Colors.Error).setDescription(`❌ Maximal ${MAX_PER_USER} aktive Reminder pro User.`)],
+        embeds: [buildStatusEmbed({
+          status: 'ERROR',
+          title: 'Reminder-Limit erreicht',
+          description: `Maximal ${MAX_PER_USER} aktive Reminder pro User.`,
+          footerText: Brand.footerText,
+        })],
       });
       return;
     }
@@ -148,21 +159,18 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
 
     const targetLabel = channelId ? `<#${channelId}>` : 'per DM';
     await interaction.editReply({
-      embeds: [
-        vEmbed(Colors.Success)
-          .setTitle('✅ Erinnerung gesetzt')
-          .setDescription(
-            [
-              Brand.divider,
-              `**Wann:** <t:${Math.floor(dueAt.getTime() / 1000)}:R> (<t:${Math.floor(dueAt.getTime() / 1000)}:F>)`,
-              `**Wo:** ${targetLabel}`,
-              recurring ? `**Wiederholt:** alle ${dauer} ${einheit}` : '',
-              `**Text:** ${text}`,
-              `**ID:** \`${r.id}\``,
-              Brand.divider,
-            ].filter(Boolean).join('\n')
-          ),
-      ],
+      embeds: [buildStatusEmbed({
+        status: 'SUCCESS',
+        title: 'Erinnerung gesetzt',
+        description: [
+          `**Wann:** <t:${Math.floor(dueAt.getTime() / 1000)}:R> (<t:${Math.floor(dueAt.getTime() / 1000)}:F>)`,
+          `**Wo:** ${targetLabel}`,
+          recurring ? `**Wiederholt:** alle ${dauer} ${einheit}` : '',
+          `**Text:** ${text}`,
+          `**ID:** \`${r.id}\``,
+        ].filter(Boolean).join('\n'),
+        footerText: Brand.footerText,
+      })],
     });
     return;
   }
@@ -174,10 +182,14 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
       orderBy: { dueAt: 'asc' },
       take: MAX_PER_USER,
     });
-    const embed = vEmbed(Colors.Info).setTitle(`⏰ Deine Erinnerungen (${list.length})`);
-    if (!list.length) {
-      embed.setDescription('_Keine aktiven Reminder. Setze einen mit `/erinnerung setzen`._');
-    } else {
+    const footer = list.length > 15
+      ? `${Brand.footerText} • ${list.length - 15} weitere ausgeblendet`
+      : Brand.footerText;
+    const embed = compactEmbed(Colors.Info, footer)
+      .setDescription(compactDescription(`⏰ Deine Erinnerungen (${list.length})`, [
+        !list.length ? '_Keine aktiven Reminder. Setze einen mit `/erinnerung setzen`._' : null,
+      ]));
+    if (list.length) {
       for (const r of list.slice(0, 15)) {
         const ts = Math.floor(r.dueAt.getTime() / 1000);
         const wo = r.channelId ? `<#${r.channelId}>` : 'DM';
@@ -187,9 +199,6 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
           value: `<t:${ts}:R> • ${wo}\n${r.message.slice(0, 200)}`,
           inline: false,
         });
-      }
-      if (list.length > 15) {
-        embed.setFooter({ text: `${Brand.footerText} • ${list.length - 15} weitere ausgeblendet` });
       }
     }
     await interaction.editReply({ embeds: [embed] });
@@ -202,14 +211,24 @@ async function runSub(sub: string, interaction: ChatInputCommandInteraction): Pr
     const r = await prisma.reminder.findUnique({ where: { id } });
     if (!r || r.userId !== interaction.user.id) {
       await interaction.editReply({
-        embeds: [vEmbed(Colors.Error).setDescription('❌ Reminder nicht gefunden oder gehört dir nicht.')],
+        embeds: [buildStatusEmbed({
+          status: 'ERROR',
+          title: 'Reminder nicht gefunden',
+          description: 'Reminder nicht gefunden oder gehört dir nicht.',
+          footerText: Brand.footerText,
+        })],
       });
       return;
     }
     await prisma.reminder.update({ where: { id }, data: { isActive: false } });
     logAudit('REMINDER_DELETED', 'USER', { reminderId: id, userId: interaction.user.id });
     await interaction.editReply({
-      embeds: [vEmbed(Colors.Success).setDescription(`✅ Erinnerung \`${id}\` deaktiviert.`)],
+      embeds: [buildStatusEmbed({
+        status: 'SUCCESS',
+        title: 'Erinnerung deaktiviert',
+        description: `Erinnerung \`${id}\` deaktiviert.`,
+        footerText: Brand.footerText,
+      })],
     });
     return;
   }

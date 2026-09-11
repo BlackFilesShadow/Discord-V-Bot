@@ -9,7 +9,7 @@ import { ChannelType } from 'discord.js';
 import prisma from '../../database/prisma';
 import { asGuildId, asNitradoConnId } from '../../types/scope';
 import { logger } from '../../utils/logger';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
 import { tryGetDashboardClient } from '../../dashboard/clientRegistry';
 import { getMarketOrder } from './blackMarketOrder';
 import { getConfig } from './repository';
@@ -147,9 +147,10 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
     messageId = existing?.id ?? null;
   }
   if (!messageId) {
-    const embed = vEmbed(Colors.Success)
-      .setTitle('✅ Bestellung bereit')
-      .setDescription('Deine Bestellung ist fertig und kann abgeholt werden.')
+    const embed = compactEmbed(Colors.Success, `V-Bot · Schwarzmarkt · Löschung nach 20 Minuten · ${marker}`)
+      .setDescription(compactDescription('✅ Bestellung bereit', [
+        'Deine Bestellung ist fertig und kann abgeholt werden.',
+      ]))
       .addFields(
         { name: 'Händler', value: vendor.name.slice(0, 1024), inline: false },
         { name: 'Bestellung', value: `\`${order.id}\``, inline: false },
@@ -157,7 +158,6 @@ async function sendReadyNotice(notice: ReadyNoticeRow, now: Date): Promise<void>
         { name: 'Gesamt', value: `**${order.totalAmount.toLocaleString('de-DE')} ${cfg.emoji}** (${cfg.currencyName})`, inline: false },
         { name: 'Artikel', value: itemLines.join('\n').slice(0, 1024), inline: false },
       )
-      .setFooter({ text: `V-Bot · Schwarzmarkt · Löschung nach 20 Minuten · ${marker}` })
       .setTimestamp(now);
     const sent = await channel.send({
       content: `<@${notice.userDiscordId}>`,

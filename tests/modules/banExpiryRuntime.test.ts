@@ -144,7 +144,8 @@ describe('timed server-ban expiry', () => {
     expect(payload.allowedMentions).toEqual({ parse: [] });
     expect(payload.nonce).toBe('notice-1');
     expect(payload.enforceNonce).toBe(true);
-    expect(embed.title).toBe('✅ Server-Bann abgelaufen');
+    expect(embed.title).toBeUndefined();
+    expect(embed.description).toContain('**✅ Server-Bann abgelaufen**');
     expect(embed.footer?.text).toBe('Automatischer Ablauf • V Bot');
     expect(embed.footer?.text).not.toMatch(/ban-|notice-|\bid\b/i);
     expect(embed.fields?.find((field: any) => field.name === 'Server')?.value).toBe('Test1');

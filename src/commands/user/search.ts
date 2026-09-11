@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import { searchPackages } from '../../modules/download/downloadHandler';
-import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import { Colors, Brand, compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 const PER_PAGE = 10;
 
@@ -54,9 +54,8 @@ const searchCommand: Command = {
       return;
     }
 
-    const embed = vEmbed(Colors.Info)
-      .setTitle(`🔍  Suchergebnisse für "${query}" (Seite ${page})`)
-      .setFooter({ text: `${results.length} Ergebnis(se) ${Brand.dot} ${Brand.footerText}` });
+    const embed = compactEmbed(Colors.Info, `${results.length} Ergebnis(se) ${Brand.dot} ${Brand.footerText}`)
+      .setDescription(compactDescription(`🔍 Suchergebnisse für "${query}" (Seite ${page})`));
 
     for (const pkg of results) {
       const desc = pkg.description ?? '';

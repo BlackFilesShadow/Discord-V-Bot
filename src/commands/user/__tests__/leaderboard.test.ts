@@ -84,7 +84,10 @@ describe('Leaderboard Command', () => {
     expect(interaction.editReply).toHaveBeenCalledWith(expect.objectContaining({ embeds: expect.any(Array) }));
     const embeds = interaction.editReply.mock.calls[0][0].embeds;
     expect(embeds).toHaveLength(2);
-    expect(embeds[0].toJSON().title).toContain('Leaderboard-Feed aktiviert');
+    const status = embeds[0].toJSON();
+    expect(status.title).toBeUndefined();
+    expect(status.description).toContain('**✅ Leaderboard-Feed aktiviert**');
+    expect(status.footer?.text).toBe('V-Bot • XP');
   });
 
   it('weist Feed-Verwaltung ohne ManageGuild als Embed ab und startet keinen Feed', async () => {

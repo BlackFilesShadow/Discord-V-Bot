@@ -5,7 +5,8 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Brand, Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { createTicket, closeTicket } from '../../modules/ticket/ticketManager';
 import prisma from '../../database/prisma';
 
@@ -51,11 +52,12 @@ const ticketCommand: Command = {
         initialMessage: message,
       });
       await interaction.editReply({
-        embeds: [
-          vEmbed(result.success ? Colors.Success : Colors.Error)
-            .setTitle(result.success ? `📨  Ticket #${result.ticketNumber} erstellt` : '❌  Fehler')
-            .setDescription(result.message),
-        ],
+        embeds: [buildStatusEmbed({
+          status: result.success ? 'SUCCESS' : 'ERROR',
+          title: result.success ? `📨 Ticket #${result.ticketNumber} erstellt` : 'Fehler',
+          description: result.message,
+          footerText: Brand.footerText,
+        })],
       });
       return;
     }
@@ -75,11 +77,12 @@ const ticketCommand: Command = {
       }
       const result = await closeTicket(ticket.id, interaction.user.id, interaction.client);
       await interaction.editReply({
-        embeds: [
-          vEmbed(result.success ? Colors.Success : Colors.Error)
-            .setTitle(result.success ? '🔒  Geschlossen' : '❌  Fehler')
-            .setDescription(result.message),
-        ],
+        embeds: [buildStatusEmbed({
+          status: result.success ? 'SUCCESS' : 'ERROR',
+          title: result.success ? '🔒 Geschlossen' : 'Fehler',
+          description: result.message,
+          footerText: Brand.footerText,
+        })],
       });
       return;
     }
@@ -102,9 +105,8 @@ const ticketCommand: Command = {
       );
       await interaction.editReply({
         embeds: [
-          vEmbed(Colors.Info)
-            .setTitle('🎟️  Deine Tickets')
-            .setDescription(lines.join('\n')),
+          compactEmbed(Colors.Info)
+            .setDescription(compactDescription('🎟️ Deine Tickets', lines)),
         ],
       });
     }

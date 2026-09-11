@@ -9,7 +9,7 @@ import {
 } from 'discord.js';
 import { Command } from '../../types';
 import { createModerationCase, createAppeal } from '../../modules/moderation/caseManager';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 // ── Konstanten ────────────────────────────────────────────────
 const REASON_MAX_LENGTH = 500;            // Discord-Audit-Reason hard-limit ist 512
@@ -44,6 +44,11 @@ function caseField(caseNumber?: number): { name: string; value: string; inline: 
   return caseNumber
     ? [{ name: '📋 Case', value: `#${caseNumber}`, inline: true }]
     : [];
+}
+
+function moderationEmbed(color: number, title: string, description: string): EmbedBuilder {
+  return compactEmbed(color, 'V-Bot • Moderation')
+    .setDescription(compactDescription(title, [description]));
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -82,14 +87,15 @@ export const kickCommand: Command = {
       guild: interaction.guild!,
     });
 
-    const embed = vEmbed(result.success ? Colors.Moderation : Colors.Error)
-      .setTitle(result.success ? '🦶  Nutzer gekickt' : '❌  Kick fehlgeschlagen')
-      .setDescription(result.message)
-      .addFields(
-        { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
-        ...caseField(result.caseNumber),
-        { name: '📝 Grund', value: reason, inline: false },
-      );
+    const embed = moderationEmbed(
+      result.success ? Colors.Moderation : Colors.Error,
+      result.success ? '🦶 Nutzer gekickt' : '❌ Kick fehlgeschlagen',
+      result.message,
+    ).addFields(
+      { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
+      ...caseField(result.caseNumber),
+      { name: '📝 Grund', value: reason, inline: false },
+    );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -141,15 +147,16 @@ export const banCommand: Command = {
       guild: interaction.guild!,
     });
 
-    const embed = vEmbed(result.success ? Colors.Moderation : Colors.Error)
-      .setTitle(result.success ? '🔨  Nutzer gebannt' : '❌  Ban fehlgeschlagen')
-      .setDescription(result.message)
-      .addFields(
-        { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
-        { name: '⏰ Dauer', value: duration ? `${duration} Min.` : 'Permanent', inline: true },
-        ...caseField(result.caseNumber),
-        { name: '📝 Grund', value: reason, inline: false },
-      );
+    const embed = moderationEmbed(
+      result.success ? Colors.Moderation : Colors.Error,
+      result.success ? '🔨 Nutzer gebannt' : '❌ Ban fehlgeschlagen',
+      result.message,
+    ).addFields(
+      { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
+      { name: '⏰ Dauer', value: duration ? `${duration} Min.` : 'Permanent', inline: true },
+      ...caseField(result.caseNumber),
+      { name: '📝 Grund', value: reason, inline: false },
+    );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -202,15 +209,16 @@ export const muteCommand: Command = {
       guild: interaction.guild!,
     });
 
-    const embed = vEmbed(result.success ? Colors.Moderation : Colors.Error)
-      .setTitle(result.success ? '🔇  Nutzer gemutet' : '❌  Mute fehlgeschlagen')
-      .setDescription(result.message)
-      .addFields(
-        { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
-        { name: '⏰ Dauer', value: `${duration} Min.`, inline: true },
-        ...caseField(result.caseNumber),
-        { name: '📝 Grund', value: reason, inline: false },
-      );
+    const embed = moderationEmbed(
+      result.success ? Colors.Moderation : Colors.Error,
+      result.success ? '🔇 Nutzer gemutet' : '❌ Mute fehlgeschlagen',
+      result.message,
+    ).addFields(
+      { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
+      { name: '⏰ Dauer', value: `${duration} Min.`, inline: true },
+      ...caseField(result.caseNumber),
+      { name: '📝 Grund', value: reason, inline: false },
+    );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -252,14 +260,15 @@ export const warnCommand: Command = {
       guild: interaction.guild!,
     });
 
-    const embed = vEmbed(result.success ? Colors.Warning : Colors.Error)
-      .setTitle(result.success ? '⚠️  Nutzer verwarnt' : '❌  Verwarnung fehlgeschlagen')
-      .setDescription(result.message)
-      .addFields(
-        { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
-        ...caseField(result.caseNumber),
-        { name: '📝 Grund', value: reason, inline: false },
-      );
+    const embed = moderationEmbed(
+      result.success ? Colors.Warning : Colors.Error,
+      result.success ? '⚠️ Nutzer verwarnt' : '❌ Verwarnung fehlgeschlagen',
+      result.message,
+    ).addFields(
+      { name: '👤 Nutzer', value: targetDisplay(targetUser.id, targetUser.username), inline: true },
+      ...caseField(result.caseNumber),
+      { name: '📝 Grund', value: reason, inline: false },
+    );
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -303,9 +312,11 @@ export const appealCommand: Command = {
       interaction.guildId ?? undefined,
     );
 
-    const embed: EmbedBuilder = vEmbed(result.success ? Colors.Info : Colors.Error)
-      .setTitle(result.success ? '📋  Appeal eingereicht' : '❌  Appeal abgelehnt')
-      .setDescription(result.message);
+    const embed: EmbedBuilder = moderationEmbed(
+      result.success ? Colors.Info : Colors.Error,
+      result.success ? '📋 Appeal eingereicht' : '❌ Appeal abgelehnt',
+      result.message,
+    );
 
     if (result.success) {
       embed.addFields(

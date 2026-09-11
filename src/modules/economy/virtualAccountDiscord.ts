@@ -13,7 +13,7 @@ import {
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';
 import { safeEmbedDescription, safeEmbedField } from '../../utils/embedSanitize';
-import { vEmbed } from '../../utils/embedDesign';
+import { compactDescription, compactEmbed, compactQuote } from '../../utils/embedDesign';
 import { getVirtualAccountById, type EconomyPocket, type VirtualAccountRawDb } from './virtualAccounts';
 import { getVirtualAccountMetadata } from './virtualAccountMetadata';
 import {
@@ -96,21 +96,29 @@ export async function buildVirtualAccountEmbed(guildId: GuildId, connId: Nitrado
   const managerText = managers.length > 0
     ? managers.map(manager => `<@${manager.userDiscordId}>`).join(' · ')
     : 'Nicht zugewiesen';
-  const embed = vEmbed(account.status === 'ACTIVE' ? 0x2ecc71 : account.status === 'EXPIRED' ? 0xf1c40f : 0x6b7280)
-    .setTitle(`${finance.accountEmoji} ${safeEmbedField(account.name, 200)}`)
+  const description = styledDescription(metadata?.description ?? null, finance.textStyle);
+  const embed = compactEmbed(
+    account.status === 'ACTIVE' ? 0x2ecc71 : account.status === 'EXPIRED' ? 0xf1c40f : 0x6b7280,
+    'V-Bot · Virtuelles Konto · Live-Sync',
+  )
+    .setDescription(compactDescription(
+      `${finance.accountEmoji} ${safeEmbedField(account.name, 200)}`,
+      [
+        description,
+        compactQuote([
+          `Wallet: **${fmt(account.balance)} ${finance.currencyEmoji}**`,
+          `Bank: **${fmt(finance.bankBalance)} ${finance.currencyEmoji}**`,
+          `Gesamt: **${fmt(total)} ${finance.currencyEmoji}**`,
+        ]),
+      ],
+    ))
     .addFields(
-      { name: 'Wallet', value: `**${fmt(account.balance)}** ${finance.currencyEmoji}`, inline: false },
-      { name: 'Bankkonto', value: `**${fmt(finance.bankBalance)}** ${finance.currencyEmoji}`, inline: false },
-      { name: 'Gesamt', value: `**${fmt(total)}** ${finance.currencyEmoji}`, inline: false },
-      { name: 'Währung', value: safeEmbedField(`${finance.currencyName} ${finance.currencyEmoji}`, 200), inline: false },
-      { name: 'Status', value: statusLabel(account.status), inline: false },
-      { name: 'Typ', value: typeLabel(account.kind, finance), inline: false },
+      { name: 'Status', value: statusLabel(account.status), inline: true },
+      { name: 'Typ', value: typeLabel(account.kind, finance), inline: true },
+      { name: 'Währung', value: safeEmbedField(`${finance.currencyName} ${finance.currencyEmoji}`, 200), inline: true },
       { name: 'Kontoverwalter', value: safeEmbedField(managerText, 1024), inline: false },
     )
-    .setFooter({ text: 'V-Bot · Virtuelles Konto · Live-Sync' })
     .setTimestamp(account.updatedAt);
-  const description = styledDescription(metadata?.description ?? null, finance.textStyle);
-  if (description) embed.setDescription(description);
   if (finance.bannerUrl) embed.setImage(finance.bannerUrl);
   return embed;
 }
@@ -290,9 +298,10 @@ export async function syncVirtualAccountProjection(client: Client, guildId: Guil
       });
       archiveThreadId = thread.id;
       await thread.send({
-        embeds: [vEmbed(0x3498db)
-          .setTitle('📚 Transaktionsarchiv gestartet')
-          .setDescription(`Alle bestätigten Geldbewegungen für **${safeEmbedDescription(account.name)}** werden hier protokolliert.`)
+        embeds: [compactEmbed(0x3498db, 'V-Bot · Virtuelles Konto · Archiv')
+          .setDescription(compactDescription('📚 Transaktionsarchiv gestartet', [
+            `Alle bestätigten Geldbewegungen für **${safeEmbedDescription(account.name)}** werden hier protokolliert.`,
+          ]))
           .setTimestamp()],
         allowedMentions: { parse: [] },
       });
@@ -372,24 +381,22 @@ export async function postVirtualAccountArchive(client: Client, args: VirtualAcc
     { name: 'Datum / Uhrzeit', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false },
   ];
   await thread.send({
-    embeds: [vEmbed(0x2ecc71).setTitle(args.title).addFields(fields)],
+    embeds: [compactEmbed(0x2ecc71, 'V-Bot · Virtuelles Konto · Archiv')
+      .setDescription(compactDescription(args.title))
+      .addFields(fields)],
     allowedMentions: { parse: [] },
   });
 }
 
 function managerPanelEmbed(): EmbedBuilder {
-  return vEmbed(0x5865f2)
-    .setTitle('🏦 V-Bot · Virtuelle Kontoverwaltung')
-    .setDescription([
+  return compactEmbed(0x5865f2, 'V-Bot · Kontoverwalter · keine Discord-Rolle erforderlich')
+    .setDescription(compactDescription('🏦 V-Bot · Virtuelle Kontoverwaltung', [
       'Hier verwaltest du ausschließlich die virtuellen Konten, für die du persönlich freigeschaltet bist.',
-      '',
       '**Auszahlung** · Konto → Discord-Spieler',
       '**Remove** · Betrag kontrolliert aus einem Konto entfernen',
       '**Pay / Balance** · Kontostand prüfen und Wallet ↔ Bank verschieben',
-      '',
       'Nach der Aktion zeigt V-Bot dir nur deine zugewiesenen Konten zur Auswahl. Jede Mutation wird serverseitig erneut autorisiert und archiviert.',
-    ].join('\n'))
-    .setFooter({ text: 'V-Bot · Kontoverwalter · keine Discord-Rolle erforderlich' });
+    ]));
 }
 
 function managerPanelButtons(connId: NitradoConnId) {
