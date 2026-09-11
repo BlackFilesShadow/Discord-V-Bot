@@ -4,7 +4,8 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { Command } from '../../types';
-import { Colors, vEmbed } from '../../utils/embedDesign';
+import { Brand, Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { buildStatusEmbed } from '../../utils/statusEmbed';
 import { logger } from '../../utils/logger';
 import {
   answerQuestion,
@@ -71,7 +72,7 @@ export const aiCommand: Command = {
         // Harte Bot-Identitaet: Entwicklerfragen werden niemals aus Guild-
         // Owner-/Server-Kontext oder einem LLM abgeleitet.
         if (isDeveloperIdentityQuestion(q)) {
-          title = '🤖  AI-Antwort';
+          title = '🤖 AI-Antwort';
           body = getDeveloperIdentityAnswer();
         } else {
           const guild = interaction.guild;
@@ -89,20 +90,20 @@ export const aiCommand: Command = {
             context: context ?? undefined,
             guildId: interaction.guildId,
           });
-          title = '🤖  AI-Antwort';
+          title = '🤖 AI-Antwort';
           body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
         }
       } else if (sub === 'sentiment') {
         const t = interaction.options.getString('text', true);
         const r = await analyzeSentiment(t);
-        title = '📊  Sentiment-Analyse';
+        title = '📊 Sentiment-Analyse';
         body = r.success
           ? `**Label:** ${r.label}\n**Score:** ${r.score}\n\`\`\`json\n${JSON.stringify(r.details, null, 2).slice(0, 1500)}\n\`\`\``
           : aiErr(r.error);
       } else if (sub === 'toxicity') {
         const t = interaction.options.getString('text', true);
         const r = await detectToxicity(t);
-        title = '🚨  Toxicity-Check';
+        title = '🚨 Toxicity-Check';
         body = r.success
           ? `**Status:** ${r.label}\n**Score:** ${r.score}\n\`\`\`json\n${JSON.stringify(r.details, null, 2).slice(0, 1500)}\n\`\`\``
           : aiErr(r.error);
@@ -110,21 +111,27 @@ export const aiCommand: Command = {
         const t = interaction.options.getString('text', true);
         const lang = interaction.options.getString('sprache') || 'de';
         const r = await translateText(t, lang);
-        title = `🌐  Übersetzung → ${lang}`;
+        title = `🌐 Übersetzung → ${lang}`;
         body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
       }
 
-      const embed = vEmbed(Colors.Info)
-        .setTitle(title)
-        .setDescription(body.slice(0, 4000))
-        .setFooter({ text: `${Date.now() - start}ms` });
+      const headingPrefix = title ? `**${title}**\n` : '';
+      const bodyLimit = Math.max(0, 4096 - headingPrefix.length);
+      const visibleBody = body.length > bodyLimit
+        ? `${body.slice(0, Math.max(0, bodyLimit - 3))}...`
+        : body;
+      const embed = compactEmbed(Colors.Info, `${Date.now() - start}ms`)
+        .setDescription(compactDescription(title, [visibleBody]));
 
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       logger.error(`/ai ${sub} Ausnahme`, err as Error);
-      const embed = vEmbed(Colors.Error)
-        .setTitle('❌  AI-Fehler')
-        .setDescription('Die KI-Anfrage ist fehlgeschlagen. Bitte versuche es später erneut.');
+      const embed = buildStatusEmbed({
+        status: 'ERROR',
+        title: 'AI-Fehler',
+        description: 'Die KI-Anfrage ist fehlgeschlagen. Bitte versuche es später erneut.',
+        footerText: Brand.footerText,
+      });
       await interaction.editReply({ embeds: [embed] });
     }
   },
