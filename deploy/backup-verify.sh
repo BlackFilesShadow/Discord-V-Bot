@@ -16,8 +16,8 @@ BOT_DIR="${BOT_DIR:-/opt/discord-v-bot}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/discord-v-bot-backups}"
 PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg16}"
 TMP_NAME="vbot-backup-verify-$(date +%s)"
+TMP_NETWORK="${TMP_NAME}-net"
 TMP_DIR="/tmp/${TMP_NAME}"
-PG_PORT="55432"
 PG_USER="verifier"
 PG_PASS="verify_$(openssl rand -hex 8)"
 PG_DB="vbot_verify"
@@ -30,6 +30,7 @@ err()  { echo -e "${RED}[X]${NC}  $1"; exit 1; }
 cleanup() {
   info "Cleanup..."
   docker rm -f "$TMP_NAME" >/dev/null 2>&1 || true
+  docker network rm "$TMP_NETWORK" >/dev/null 2>&1 || true
   rm -rf "$TMP_DIR" || true
   rm -f "/tmp/${TMP_NAME}-import.log" || true
 }
@@ -37,6 +38,26 @@ trap cleanup EXIT
 
 if [[ ! -d "$BACKUP_DIR" ]]; then
   err "Backup-Verzeichnis nicht gefunden: $BACKUP_DIR"
+fi
+if [[ ! -f "$BOT_DIR/docker-compose.yml" ]]; then
+  err "Docker-Compose-Datei fehlt: $BOT_DIR/docker-compose.yml"
+fi
+if ! command -v docker >/dev/null 2>&1; then
+  err "Docker ist nicht verfügbar."
+fi
+if ! (cd "$BOT_DIR" && docker compose version >/dev/null 2>&1); then
+  err "Docker Compose ist nicht verfügbar."
+fi
+
+# Der Konsistenzscanner wird aus genau dem gebauten Produktionsimage gestartet.
+# Dadurch braucht der Host weder Node/npm noch ts-node und die laufende Bot-
+# Instanz bleibt von der Restore-Verifikation vollständig getrennt.
+BOT_IMAGE=$(cd "$BOT_DIR" && docker compose images -q bot 2>/dev/null | head -n1 || true)
+if [[ -z "$BOT_IMAGE" ]]; then
+  err "Gebautes V-Bot-Produktionsimage wurde nicht gefunden."
+fi
+if ! docker image inspect "$BOT_IMAGE" >/dev/null 2>&1; then
+  err "V-Bot-Produktionsimage ist lokal nicht verfügbar: $BOT_IMAGE"
 fi
 
 # 1) Letztes Backup finden und kryptografisch pruefen.
@@ -67,14 +88,18 @@ fi
 SQL_SIZE=$(du -h "$SQL_FILE" | cut -f1)
 info "SQL-Dump: $SQL_SIZE"
 
-# 3) Wegwerf-Postgres starten.
-info "Starte Wegwerf-Postgres ($PG_IMAGE) auf Port $PG_PORT..."
+# 3) Isoliertes Wegwerf-Netz und Wegwerf-Postgres starten.
+info "Erzeuge isoliertes Restore-Netz..."
+if ! docker network create "$TMP_NETWORK" >/dev/null; then
+  err "Temporäres Docker-Netz konnte nicht erstellt werden."
+fi
+info "Starte Wegwerf-Postgres ($PG_IMAGE)..."
 docker run -d --rm \
   --name "$TMP_NAME" \
+  --network "$TMP_NETWORK" \
   -e POSTGRES_USER="$PG_USER" \
   -e POSTGRES_PASSWORD="$PG_PASS" \
   -e POSTGRES_DB="$PG_DB" \
-  -p "${PG_PORT}:5432" \
   "$PG_IMAGE" >/dev/null
 
 # 4) Auf Bereitschaft warten; Timeout ist ein harter Fehler.
@@ -127,12 +152,16 @@ UNVALIDATED_FKS=$(docker exec "$TMP_NAME" psql -v ON_ERROR_STOP=1 -U "$PG_USER" 
 log "Alle Foreign Keys sind validiert."
 
 # 8) DB-3 Scanner ist die kanonische Orphan-/Cross-Scope-Pruefung.
-if [[ ! -f "$BOT_DIR/package.json" ]] || [[ ! -d "$BOT_DIR/node_modules" ]]; then
-  err "Bot-Runtime fuer kanonischen DB-Konsistenzscan nicht vorhanden: $BOT_DIR"
-fi
+# Der Runtime-Container enthält den kompilierten Scanner; ts-node ist dort
+# absichtlich nicht erforderlich. Scanner und Restore-DB teilen nur das
+# temporäre Verifikationsnetz und können die Produktion nicht verändern.
 info "Starte kanonischen DB-Konsistenzscanner gegen Restore..."
-RESTORE_DATABASE_URL="postgresql://${PG_USER}:${PG_PASS}@127.0.0.1:${PG_PORT}/${PG_DB}"
-if ! (cd "$BOT_DIR" && DATABASE_URL="$RESTORE_DATABASE_URL" npm run db:consistency); then
+RESTORE_DATABASE_URL="postgresql://${PG_USER}:${PG_PASS}@${TMP_NAME}:5432/${PG_DB}?schema=public"
+if ! docker run --rm \
+  --network "$TMP_NETWORK" \
+  -e DATABASE_URL="$RESTORE_DATABASE_URL" \
+  "$BOT_IMAGE" \
+  node dist/src/scripts/dbConsistencyScan.js; then
   err "DB-Konsistenzscanner meldet Fehler im restaurierten Backup."
 fi
 
