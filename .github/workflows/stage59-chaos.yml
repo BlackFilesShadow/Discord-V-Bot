@@ -1,0 +1,135 @@
+name: Stage 59 Docker Chaos
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: stage59-chaos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  stage59-primary:
+    name: Stage 59 · Process Kill Primary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma Client
+        run: npx prisma generate
+      - name: Apply production migrations
+        run: npx prisma migrate deploy
+      - name: Stage 59 PostgreSQL + Redis process-kill and recovery
+        run: npx ts-node scripts/stage59-process-kill-chaos.ts
+        env:
+          STAGE59_REQUIRE_DOCKER: '1'
+          STAGE59_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE59_OUTPUT_PATH: stage59-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-primary.json
+      - name: Upload Stage 59 primary evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage59-process-kill-primary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage59-artifacts/*-primary.json
+          if-no-files-found: error
+
+  stage59-verification-2:
+    name: Stage 59 · Process Kill Verification 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: discord_v_bot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/discord_v_bot_test
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma Client
+        run: npx prisma generate
+      - name: Apply production migrations
+        run: npx prisma migrate deploy
+      - name: Stage 59 PostgreSQL + Redis process-kill and recovery
+        run: npx ts-node scripts/stage59-process-kill-chaos.ts
+        env:
+          STAGE59_REQUIRE_DOCKER: '1'
+          STAGE59_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          STAGE59_OUTPUT_PATH: stage59-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-verification2.json
+      - name: Upload Stage 59 verification evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage59-process-kill-verification2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage59-artifacts/*-verification2.json
+          if-no-files-found: error
