@@ -16,6 +16,9 @@ COPY dashboard-ui/ ./
 # Der Alias zeigt aus /ui auf /src/shared und muss daher vor dem Vite-Build
 # als explizite Build-Eingabe vorhanden sein.
 COPY src/shared/ /src/shared/
+# Stage 56 is part of the normal dashboard build. The Docker UI builder runs
+# from /ui, so make the root-level measurement script available at /scripts.
+COPY scripts/measure-dashboard-bundle.mjs /scripts/measure-dashboard-bundle.mjs
 # vite.config.ts schreibt nach ../src/dashboard/public — das Verzeichnis
 # muss zur Build-Zeit existieren (sonst weicht Vite auf cwd aus).
 RUN mkdir -p /src/dashboard/public
