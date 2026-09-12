@@ -12,7 +12,7 @@
  * Wissensbank) und erwarten eine guildId, die ueber den Server-Selektor
  * gewaehlt wird. XP-Konfiguration ist DEV-only und lebt im DEV Command Center.
  */
-import { useState, type ReactNode, type ComponentType } from 'react';
+import { useEffect, useState, type ReactNode, type ComponentType } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard, Gavel, MessageSquare, Megaphone, UploadCloud, Download, ShieldCheck,
@@ -66,12 +66,17 @@ const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'kn
 
 interface GuildOption { id: string; name: string; memberCount: number }
 
-export function BotAdminTab() {
+export function BotAdminTab({ showFeedback = false }: { showFeedback?: boolean }) {
   const [section, setSection] = useState<SectionKey>('overview');
   const [guildId, setGuildId] = useState<string>('');
   const base = '/api/v2/bot-admin';
   const canManage = true;
   const canDanger = true;
+  const visibleSections = showFeedback ? SECTIONS : SECTIONS.filter(item => item.key !== 'feedback');
+
+  useEffect(() => {
+    if (!showFeedback && section === 'feedback') setSection('overview');
+  }, [showFeedback, section]);
 
   const guildsQ = useQuery({
     queryKey: [base, 'guilds'],
@@ -84,7 +89,7 @@ export function BotAdminTab() {
     <div className="grid gap-5 lg:grid-cols-[200px_1fr]">
       {/* Subnavigation */}
       <nav className="space-y-1 lg:sticky lg:top-4 self-start" aria-label="Bot-Admin-Bereiche">
-        {SECTIONS.map(s => {
+        {visibleSections.map(s => {
           const Icon = s.icon;
           const active = section === s.key;
           return (
@@ -122,9 +127,9 @@ export function BotAdminTab() {
           <Card glow><EmptyState icon={Inbox} title="Server wählen" desc="Bitte oben einen Server auswählen, um diesen Bereich zu verwalten." /></Card>
         ) : (
           <>
-            {section === 'overview' && <OverviewSection base={base} onJump={setSection} />}
+            {section === 'overview' && <OverviewSection base={base} onJump={setSection} showFeedback={showFeedback} />}
             {section === 'appeals' && <AppealsSection base={base} canManage={canManage} />}
-            {section === 'feedback' && <FeedbackSection base={base} canManage={canManage} />}
+            {showFeedback && section === 'feedback' && <FeedbackSection base={base} canManage={canManage} />}
             {section === 'broadcast' && <BroadcastSection base={base} canManage={canManage} canDanger={canDanger} />}
             {section === 'upload' && <UploadSection base={base} canManage={canManage} />}
             {section === 'export' && <ExportSection base={base} canManage={canManage} canDanger={canDanger} />}
@@ -216,7 +221,7 @@ interface OverviewData {
   recentAdminActions: Array<{ id: string; action: string; createdAt: string }>;
 }
 
-function OverviewSection({ base, onJump }: { base: string; onJump: (s: SectionKey) => void }) {
+function OverviewSection({ base, onJump, showFeedback }: { base: string; onJump: (s: SectionKey) => void; showFeedback: boolean }) {
   const q = useQuery({ queryKey: [base, 'overview'], queryFn: () => api.get<OverviewData>(`${base}/overview`) });
   const s = q.data?.stats;
   const stat = (label: string, value: ReactNode, jump: SectionKey, danger?: boolean) => (
@@ -236,7 +241,7 @@ function OverviewSection({ base, onJump }: { base: string; onJump: (s: SectionKe
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {stat('Offene Appeals', s.openAppeals, 'appeals')}
-            {stat('Neues Feedback', s.newFeedback, 'feedback')}
+            {showFeedback && stat('Neues Feedback', s.newFeedback, 'feedback')}
             {stat('Ausstehende Validierungen', s.pendingValidations, 'validate')}
             {stat('Upload-Status', s.uploadEnabled ? 'AN' : 'AUS', 'upload', !s.uploadEnabled)}
             {stat('Gesperrte Nutzer', s.suspendedUsers, 'users')}
