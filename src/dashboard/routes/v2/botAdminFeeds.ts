@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import prisma from '../../../database/prisma';
-import { createCanonicalFeed, FEED_TYPES } from '../../services/feedControlPlane';
+import { createCanonicalFeed, isSupportedFeedType } from '../../services/feedControlPlane';
 import { logAuditDb } from '../../../utils/logger';
 
 export const botAdminFeedsRouter = Router();
@@ -88,7 +88,7 @@ botAdminFeedsRouter.post('/:id/toggle', async (req, res) => {
   }
 
   const nextActive = !feed.isActive;
-  if (nextActive && !FEED_TYPES.has(feed.feedType as never)) {
+  if (nextActive && !isSupportedFeedType(feed.feedType)) {
     res.status(409).json({ error: `Legacy-Feed-Typ ${feed.feedType} wird nicht mehr unterstützt. Bitte neu als unterstützten Feed anlegen.` });
     return;
   }
