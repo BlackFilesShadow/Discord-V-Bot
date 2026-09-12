@@ -43,11 +43,15 @@ describe('DB-4 fresh/upgrade/backup-restore production contract', () => {
     expect(backup).not.toContain('sudo -u postgres');
   });
 
-  test('production backup verifier rejects checksum or restore errors instead of warning and continuing', () => {
+  test('production backup verifier is host-node independent and isolates the canonical scanner', () => {
     expect(backupVerify).toContain('sha256sum -c');
     expect(backupVerify).toContain('psql -v ON_ERROR_STOP=1');
     expect(backupVerify).not.toContain('ON_ERROR_STOP=0');
-    expect(backupVerify).toContain('npm run db:consistency');
+    expect(backupVerify).toContain('docker compose images -q bot');
+    expect(backupVerify).toContain('docker network create "$TMP_NETWORK"');
+    expect(backupVerify).toContain('--network "$TMP_NETWORK"');
+    expect(backupVerify).toContain('node dist/src/scripts/dbConsistencyScan.js');
+    expect(backupVerify).not.toContain('(cd "$BOT_DIR" && DATABASE_URL="$RESTORE_DATABASE_URL" npm run db:consistency)');
     expect(backupVerify).toContain('NOT convalidated');
   });
 
