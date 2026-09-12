@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-23T01:58:55.698Z",
-  "finalAuditedSha": "1cf8822b39615b94d52c28b32d03a481062a3bd2",
+  "generatedAt": "2026-09-12T18:33:45.000Z",
+  "finalAuditedSha": "831e6a374394916440ddcb0fb03ba88dd1327147",
   "stages": [
     {
       "id": 1,
@@ -668,29 +668,40 @@
     {
       "id": 51,
       "name": "soak-test-51",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "scripts/soak-test-smoke.mjs",
+        "scripts/full-stack-soak-51.ts",
+        ".github/workflows/stage51-soak.yml",
         "docs/soak-test-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+        "tests/security/soakTestArchitecture.test.ts",
+        "ci-run:32622474389:attempt-1",
+        "verification2-run:32622474364:attempt-1",
+        "e2e-run:32622474379:attempt-1",
+        "stage51-soak-run:32622474368:attempt-1",
+        "ci-run:32628364189:attempt-1",
+        "verification2-run:32628364203:attempt-1",
+        "e2e-run:32628364181:attempt-1",
+        "stage51-soak-run:32628364174:attempt-1"
       ],
-      "findings": [
-        "residual-multi-hour-soak"
-      ],
-      "note": "Short multi-sample soak; multi-hour residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+      "findings": [],
+      "note": "Two complete gate cycles and two dedicated soak runs succeeded on unchanged SHA b540786f. The final two-hour isolated-CI run processed 1,062,972 requests with zero failures, bounded latency/resources and full PostgreSQL runtime traffic.",
+      "exactSha": "b540786f857f16f8ec422288f020b30328034278"
     },
     {
       "id": 52,
       "name": "ram-node-heap-tuning-52",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
-        "docs/ram-node-heap-tuning-matrix.json"
+        "docs/ram-node-heap-tuning-matrix.json",
+        "tests/security/ramNodeHeapTuningArchitecture.test.ts",
+        "ci-run:32635039830:attempt-1",
+        "verification2-run:32635039793:attempt-1",
+        "e2e-run:32635039798:attempt-1"
       ],
-      "findings": [
-        "residual-stage-46-51-measurements-before-final-tuning-decision"
-      ],
-      "note": "No blind heap increase is allowed; final tuning/no-change decision depends on Stages 46-51 measurements."
+      "findings": [],
+      "note": "Measured Stage 46-51 evidence supports retaining Node/V8 defaults; the guard rejects an unreviewed production heap override.",
+      "exactSha": "2bed7f7fed0c86e071a87a3fbca05076d4bc7166"
     },
     {
       "id": 53,
@@ -731,27 +742,34 @@
     {
       "id": 56,
       "name": "dashboard-bundle-codesplit-56",
-      "status": "VERIFIED",
+      "status": "PARTIAL",
       "evidence": [
         "docs/dashboard-bundle-codesplit-matrix.json",
         "docs/audit/performance/eaf8b42bb5d1fc194416324606f146196d04c8c0/56-bundle.json",
+        "docs/audit/performance/831e6a374394916440ddcb0fb03ba88dd1327147/56-bundle.json",
         "tests/security/dashboardBundleCodesplitArchitecture.test.ts"
       ],
-      "findings": [],
-      "note": "All JS chunks <500kB on Vite 6.4.3; entry ~64kB; vendor+lazy split",
-      "exactSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0"
+      "findings": [
+        "stage-56-current-maplibre-chunk-over-500kb",
+        "stage-56-build-gate-does-not-execute-measurement"
+      ],
+      "note": "The current main entry remains small, but its lazy MapLibre vendor chunk is 963.45 kB raw. The unchanged 500 kB all-chunk contract therefore fails; historical pre-MapLibre evidence is retained only as history.",
+      "exactSha": "831e6a374394916440ddcb0fb03ba88dd1327147"
     },
     {
       "id": 57,
       "name": "dead-code-legacy-cleanup-57",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
-        "docs/dead-code-legacy-cleanup-matrix.json"
+        "docs/dead-code-legacy-cleanup-matrix.json",
+        "tests/security/deadCodeLegacyCleanupArchitecture.test.ts",
+        "ci-run:32646340498:attempt-1",
+        "verification2-run:32646340387:attempt-1",
+        "e2e-run:32646340393:attempt-1"
       ],
-      "findings": [
-        "residual-full-coupling-and-reference-analysis-before-cleanup"
-      ],
-      "note": "Passport removal is proven; the broader event/worker/registry coupling analysis is still required before declaring cleanup complete."
+      "findings": [],
+      "note": "Dynamic imports, filesystem command loading, Discord dispatch, AI tools and Nitrado worker registries are included in the deletion-safety analysis; no speculative mass deletion remains.",
+      "exactSha": "bacdf2eb43691ed4553da0f5008f54f94338376a"
     },
     {
       "id": 58,
@@ -760,61 +778,70 @@
       "evidence": [
         "docs/full-user-journey-e2e-matrix.json",
         "tests/security/waveFPerfChaosJourneyRuntime.test.ts",
+        "tests/security/fullUserJourneyStage58Architecture.test.ts",
         "src/events/guildMemberAdd.ts",
-        "src/events/guildMemberRemove.ts"
+        "src/events/guildMemberRemove.ts",
+        "main-ci-run:34710294164:attempt-1",
+        "main-e2e-run:34710294163:attempt-1"
       ],
       "findings": [
         "F-S4-10",
         "residual-live-discord-gateway"
       ],
-      "note": "Ordered orchestration chain inventoried; live Join/Leave residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+      "note": "The ordered Join-to-Leave/Cleanup/Rejoin architecture remains green on main 831e6a37. A real Discord OAuth/gateway journey with authorized accounts is still required and is not claimed by CI.",
+      "exactSha": "831e6a374394916440ddcb0fb03ba88dd1327147"
     },
     {
       "id": 59,
       "name": "chaos",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "scripts/chaos-smoke.mjs",
+        "scripts/stage59-process-kill-chaos.ts",
+        ".github/workflows/stage59-chaos.yml",
         "docs/chaos-test-matrix.json",
-        "tests/security/waveFPerfChaosJourneyRuntime.test.ts"
+        "tests/security/stage59ChaosRevalidationArchitecture.test.ts",
+        "ci-run:34709496126:attempt-1",
+        "verification2-run:34709496113:attempt-1",
+        "e2e-run:34709496125:attempt-1",
+        "stage59-chaos-run:34709496208:attempt-1",
+        "main-ci-run:34710294164:attempt-1",
+        "main-e2e-run:34710294163:attempt-1",
+        "main-stage59-chaos-run:34710294177:attempt-1"
       ],
-      "findings": [
-        "F-S4-11",
-        "residual-docker-process-kill"
-      ],
-      "note": "Runtime circuit/SSRF/path/idempotency fault injection; container-kill residual",
-      "exactSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17"
+      "findings": [],
+      "note": "Real PostgreSQL and Redis process kills plus same-client recovery ran twice on isolated PR runners and twice post-merge; circuit, SSRF, path and idempotency fault contracts remain green.",
+      "exactSha": "b3fcb7db4207a9a37b918ef4ba9104fdf070e7e9"
     },
     {
       "id": 60,
       "name": "gesamtaudit-60-code",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/gesamtaudit-1-code-architecture-matrix.json",
         "scripts/gesamtaudit-scan.mjs",
         "tests/security/gesamtaudit1CodeArchitecture.test.ts"
       ],
-      "findings": [
-        "dynamic-import-graph-residual"
-      ],
-      "note": "Architecture gate corpus + v2 auth/idempotency + AI tool path scan GREEN; residual full design rewrite",
-      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+      "findings": [],
+      "note": "Executable architecture proof is complete; the dynamic-import/orphan graph is explicitly owned and completed by Stage 61.",
+      "exactSha": "d999e90e18d916296ec3657210449480c3349b84"
     },
     {
       "id": 61,
       "name": "gesamtaudit-61-couplings",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/gesamtaudit-2-couplings-matrix.json",
         "scripts/gesamtaudit-scan.mjs",
-        "tests/security/gesamtaudit2CouplingsArchitecture.test.ts"
+        "tests/security/gesamtaudit2CouplingsArchitecture.test.ts",
+        "tests/security/stage61RuntimeReachabilityArchitecture.test.ts",
+        "ci-run:34707169564:attempt-1",
+        "verification2-run:34707169605:attempt-1",
+        "e2e-run:34707169600:attempt-1"
       ],
-      "findings": [
-        "full-dynamic-import-orphan-sweep"
-      ],
-      "note": "Core Discord/DB/Nitrado/AI/Economy/Leave couplings pinned; orphan sweep residual",
-      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+      "findings": [],
+      "note": "The AST runtime graph covers static, export-from, literal import/require and filesystem-loaded command roots; all production Discord event handlers are reachable and unresolved/dynamic edges fail closed.",
+      "exactSha": "d68a303a5429e8680361a08eccc01dacb2baaf14"
     },
     {
       "id": 62,
@@ -822,51 +849,70 @@
       "status": "PARTIAL",
       "evidence": [
         "docs/gesamtaudit-3-production-reality-matrix.json",
-        "tests/security/gesamtaudit3ProductionRealityArchitecture.test.ts"
+        "tests/security/gesamtaudit3ProductionRealityArchitecture.test.ts",
+        "tests/security/stage62CurrentMainBindingArchitecture.test.ts",
+        "main-ci-run:34710294164:attempt-1",
+        "main-e2e-run:34710294163:attempt-1"
       ],
       "findings": [
-        "live-production-deploy-stage-67"
+        "live-production-deploy-stage-67",
+        "live-backup-restore-requires-authorized-staging"
       ],
-      "note": "Deploy/CI/metrics/secrets pins GREEN; live prod is Stage 67",
-      "exactSha": "bdf190b881573a78896152e6ec0dbe6e542e7e1a"
+      "note": "Repository deploy, CI, metrics, secrets and isolated database-lifecycle contracts are green on main 831e6a37. Authorized production deploy/live smoke and staging backup-restore remain external.",
+      "exactSha": "831e6a374394916440ddcb0fb03ba88dd1327147"
     },
     {
       "id": 63,
       "name": "release-sha",
       "status": "PARTIAL",
       "evidence": [
-        "worktree-dirty"
+        "docs/release-sha-freeze-matrix.json",
+        "historical-stage63-merge:88fd83a12b5b0e452c73fbfcc670775d42748649"
       ],
       "findings": [
-        "F-S4-13"
-      ]
+        "release-freeze-required-after-final-internal-change"
+      ],
+      "note": "The historical Stage-63 release candidate was invalidated by later merged changes. Freeze the next candidate only after the audit source-of-truth is reconciled."
     },
     {
       "id": 64,
       "name": "final-gate-1",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/e2e.yml"
+      ],
       "findings": [
-        "F-S4-14"
-      ]
+        "final-gate-1-required-on-next-frozen-sha"
+      ],
+      "note": "A new audit commit resets final-gate evidence; Gate 1 must pass on the next unchanged frozen SHA."
     },
     {
       "id": 65,
       "name": "final-gate-2",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        ".github/workflows/verification2.yml"
+      ],
       "findings": [
-        "F-S4-14"
-      ]
+        "final-gate-2-required-on-next-frozen-sha"
+      ],
+      "note": "The independent Verification 2 including its second Playwright job must pass on the same next frozen SHA."
     },
     {
       "id": 66,
       "name": "main-gate",
       "status": "PARTIAL",
-      "evidence": [],
+      "evidence": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/e2e.yml",
+        "historical-main-ci-run:34710294164:attempt-1",
+        "historical-main-e2e-run:34710294163:attempt-1"
+      ],
       "findings": [
-        "no-merge-this-session"
-      ]
+        "main-gate-required-after-next-release-freeze-merge"
+      ],
+      "note": "Main 831e6a37 is fully green, but the audit reconciliation creates a new candidate and therefore requires a fresh post-merge main CI/Docker/Playwright proof."
     },
     {
       "id": 67,
@@ -881,10 +927,10 @@
       ]
     }
   ],
-  "auditFreezeSha": "025a1ebf134a1453b675c315ca641cd0c32918aa",
+  "auditFreezeSha": "831e6a374394916440ddcb0fb03ba88dd1327147",
   "counts": {
-    "VERIFIED": 54,
-    "PARTIAL": 12,
+    "VERIFIED": 59,
+    "PARTIAL": 7,
     "FAILED": 0,
     "BLOCKED": 1
   }

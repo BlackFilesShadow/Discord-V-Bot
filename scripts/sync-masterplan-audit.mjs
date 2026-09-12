@@ -13,6 +13,22 @@ const checkOnly = process.argv.includes('--check');
 
 const STATUS_ORDER = ['VERIFIED', 'PARTIAL', 'FAILED', 'BLOCKED'];
 const STATUS_SET = new Set(STATUS_ORDER);
+const STAGE_EVIDENCE_SOURCES = new Map([
+  [46, 'docs/runtime-baseline-i-matrix.json'],
+  [47, 'docs/runtime-baseline-ii-matrix.json'],
+  [48, 'docs/ai-nitrado-performance-baseline-matrix.json'],
+  [49, 'docs/memory-leak-audit-matrix.json'],
+  [50, 'docs/load-test-matrix.json'],
+  [51, 'docs/soak-test-matrix.json'],
+  [52, 'docs/ram-node-heap-tuning-matrix.json'],
+  [56, 'docs/dashboard-bundle-codesplit-matrix.json'],
+  [57, 'docs/dead-code-legacy-cleanup-matrix.json'],
+  [58, 'docs/full-user-journey-e2e-matrix.json'],
+  [59, 'docs/chaos-test-matrix.json'],
+  [60, 'docs/gesamtaudit-1-code-architecture-matrix.json'],
+  [61, 'docs/gesamtaudit-2-couplings-matrix.json'],
+  [62, 'docs/gesamtaudit-3-production-reality-matrix.json'],
+]);
 
 function readUtf8NoBom(file) {
   const bytes = fs.readFileSync(file);
@@ -78,6 +94,33 @@ function validateAndNormalizeMatrix(source) {
     }
     if (stage.status !== 'VERIFIED' && stage.findings.length === 0) {
       throw new Error(`${stage.status} stage ${stage.id} must identify at least one residual/finding`);
+    }
+  }
+
+  for (const [stageId, relativePath] of STAGE_EVIDENCE_SOURCES) {
+    const evidencePath = path.join(repoRoot, relativePath);
+    const evidence = JSON.parse(readUtf8NoBom(evidencePath));
+    const canonical = stages[stageId - 1];
+    if (evidence.stage !== stageId) {
+      throw new Error(`${relativePath} declares stage ${evidence.stage}; expected ${stageId}`);
+    }
+    if (!STATUS_SET.has(evidence.status)) {
+      throw new Error(`${relativePath} has invalid or missing status ${evidence.status}`);
+    }
+    if (!Array.isArray(evidence.residual)) {
+      throw new Error(`${relativePath} residual must be an array`);
+    }
+    if (evidence.status === 'VERIFIED' && evidence.residual.length > 0) {
+      throw new Error(`${relativePath} is VERIFIED but still has residuals`);
+    }
+    if (evidence.status !== 'VERIFIED' && evidence.residual.length === 0) {
+      throw new Error(`${relativePath} is ${evidence.status} but has no residual`);
+    }
+    if (canonical.status !== evidence.status) {
+      throw new Error(`stage ${stageId} status drift: canonical=${canonical.status}, ${relativePath}=${evidence.status}`);
+    }
+    if (!canonical.evidence.includes(relativePath)) {
+      throw new Error(`stage ${stageId} canonical evidence does not include ${relativePath}`);
     }
   }
 

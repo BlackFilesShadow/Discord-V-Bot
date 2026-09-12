@@ -1,7 +1,8 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "stage": 56,
-  "basedOnMainSha": "69caddd756bdb5e7f3cc5618d2e12e130c3705fd",
+  "status": "PARTIAL",
+  "basedOnMainSha": "831e6a374394916440ddcb0fb03ba88dd1327147",
   "scope": "Dashboard bundle >500kB remediation via measured vendor + route code-splitting.",
   "baselineBefore": {
     "entryJsKbApprox": 1457,
@@ -11,21 +12,34 @@
     "lazyDevPages": "DEV_PAGES use React.lazy + dynamic import('./pages/dev/...')",
     "lazyHeavyRoutes": "Server, ServerSlot, Dev, BotAdmin lazy-loaded",
     "entryNoDevCatalogIcons": "App imports DEV_TOOL_SLUGS (icon-free), not full lucide catalog",
-    "manualChunks": "vite manualChunks: vendor-react/router/query/socket/lucide/misc",
+    "manualChunks": "vite manualChunks: vendor-react/router/query/socket/lucide/misc plus the lazy MapLibre vendor chunk",
     "measureScript": "scripts/measure-dashboard-bundle.mjs requires entry <500kB, every emitted JS chunk <500kB, and vendor split",
     "gateRule": "one complete CI/CD + Verification 2 + Playwright cycle on the final unchanged Stage 56 SHA",
     "artifact": "current Stage 56 gate must re-measure the emitted dashboard assets; evidence from older SHAs is not substituted"
   },
   "cases": [
-    { "id": "entry-under-500kb", "status": "gate-revalidation-required" },
-    { "id": "all-chunks-under-500kb", "status": "gate-revalidation-required" },
+    { "id": "entry-under-500kb", "status": "runtime-verified" },
+    { "id": "all-chunks-under-500kb", "status": "failed" },
     { "id": "vendor-manual-chunks", "status": "architecture-pinned" },
     { "id": "dev-route-lazy", "status": "architecture-pinned" },
     { "id": "heavy-pages-lazy", "status": "architecture-pinned" },
     { "id": "slug-catalog-parity", "status": "architecture-pinned" }
   ],
+  "currentEvidence": {
+    "exactSha": "831e6a374394916440ddcb0fb03ba88dd1327147",
+    "measure": "docs/audit/performance/831e6a374394916440ddcb0fb03ba88dd1327147/56-bundle.json",
+    "entryKb": 92.77,
+    "maxChunkKb": 963.45,
+    "over500kb": [
+      "vendor-radar-map-BheX-_rp.js"
+    ],
+    "measureExitCode": 5,
+    "viteGzipKb": 261.85,
+    "note": "The current production build fails closed because MapLibre's main and shared ESM modules are folded into one lazy vendor chunk. The historical pre-MapLibre measurement cannot close the current gate."
+  },
   "residual": [
-    "gzip figures from vite log; measure script uses raw bytes"
+    "The current lazy vendor-radar-map chunk is 963.45 kB raw and exceeds the unchanged 500 kB contract.",
+    "The CI build job does not yet execute scripts/measure-dashboard-bundle.mjs against its freshly emitted assets."
   ],
   "previousEvidence": {
     "mainSha": "eaf8b42bb5d1fc194416324606f146196d04c8c0",

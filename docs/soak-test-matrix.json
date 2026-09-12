@@ -1,18 +1,41 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "stage": 51,
   "basedOnMainSha": "8f181c7e8f2344f0c78dcd19a3151547f885aa17",
-  "scope": "Short controlled soak with multi-sample heap/RSS series + rate-limit churn bounds.",
+  "scope": "Two independent exact-SHA gate cycles plus a two-hour production-runtime-path soak on isolated CI with real PostgreSQL and loopback HTTP traffic.",
+  "status": "VERIFIED",
   "contracts": {
-    "harness": "scripts/soak-test-smoke.mjs",
+    "shortHarness": "scripts/soak-test-smoke.mjs",
+    "multiHourHarness": "scripts/full-stack-soak-51.ts",
+    "workflow": ".github/workflows/stage51-soak.yml",
+    "exactSha": "b540786f857f16f8ec422288f020b30328034278",
+    "gateCycles": "CI/CD, Verification 2, Playwright and Stage 51 soak all succeeded twice on the unchanged exact SHA",
+    "workflowRuns": "Stage 51 runs 32622474368 and 32628364174; final retained artifact stage51-soak-32628364174-1",
     "rateLimitChurn": "Jest Stage 51 churn + Stage 49 map caps",
-    "artifact": "docs/audit/performance/<sha>/51-soak.json",
-    "honesty": "Not multi-hour production soak"
+    "artifact": "GitHub Actions artifact b540786f857f16f8ec422288f020b30328034278-32628364174-1.json",
+    "honesty": "The two-hour run exercised the production runtime path in isolated CI; it does not claim a credentialed live Discord or production-host soak"
   },
   "cases": [
     { "id": "multi-sample-heap-series", "status": "runtime-verified" },
     { "id": "rate-limit-flood-denies", "status": "runtime-verified" },
-    { "id": "multi-hour-production-soak", "status": "residual-needs-staging" }
+    { "id": "multi-hour-production-soak", "status": "runtime-verified" },
+    { "id": "two-independent-exact-sha-gate-cycles", "status": "runtime-verified" },
+    { "id": "postgresql-loopback-runtime", "status": "runtime-verified" },
+    { "id": "zero-request-failures", "status": "runtime-verified" }
   ],
-  "residual": ["Multi-hour soak with full process set requires staging window"]
+  "measurements": {
+    "durationMs": 7200000,
+    "requests": 1062972,
+    "failures": 0,
+    "httpP99Ms": 5.447,
+    "eventLoopP99Ms": 21.561,
+    "heapGrowthMb": -17.41,
+    "maxHeapUsedMb": 1246.3,
+    "rssGrowthMb": 89.44,
+    "maxRssMb": 1493.34,
+    "maxDbConnections": 5,
+    "maxActiveResources": 18,
+    "allGatesPassed": true
+  },
+  "residual": []
 }

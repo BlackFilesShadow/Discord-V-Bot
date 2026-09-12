@@ -4,6 +4,22 @@ import path from 'node:path';
 
 const root = process.cwd();
 const auditDir = path.join(root, 'docs', 'audit');
+const stageEvidenceSources = new Map([
+  [46, 'docs/runtime-baseline-i-matrix.json'],
+  [47, 'docs/runtime-baseline-ii-matrix.json'],
+  [48, 'docs/ai-nitrado-performance-baseline-matrix.json'],
+  [49, 'docs/memory-leak-audit-matrix.json'],
+  [50, 'docs/load-test-matrix.json'],
+  [51, 'docs/soak-test-matrix.json'],
+  [52, 'docs/ram-node-heap-tuning-matrix.json'],
+  [56, 'docs/dashboard-bundle-codesplit-matrix.json'],
+  [57, 'docs/dead-code-legacy-cleanup-matrix.json'],
+  [58, 'docs/full-user-journey-e2e-matrix.json'],
+  [59, 'docs/chaos-test-matrix.json'],
+  [60, 'docs/gesamtaudit-1-code-architecture-matrix.json'],
+  [61, 'docs/gesamtaudit-2-couplings-matrix.json'],
+  [62, 'docs/gesamtaudit-3-production-reality-matrix.json'],
+]);
 
 const jsonEvidence = [
   'docs/dashboard-api-authentication-matrix.json',
@@ -73,6 +89,31 @@ describe('Masterplan 1-67 audit artifact integrity', () => {
       expect(report).toContain(`| ${status} | ${count} |`);
     }
     expect(report).toContain('| **TOTAL** | **67** |');
+  });
+
+  it('keeps late-stage canonical status aligned with its evidence matrix', () => {
+    const matrix = JSON.parse(read('docs/audit/stage-matrix-1-67.json')) as {
+      stages: Array<{ id: number; status: string; evidence: string[]; findings: string[] }>;
+    };
+
+    for (const [stageId, relativePath] of stageEvidenceSources) {
+      const evidence = JSON.parse(read(relativePath)) as {
+        stage: number;
+        status: string;
+        residual: string[];
+      };
+      const canonical = matrix.stages.find(stage => stage.id === stageId);
+      expect(evidence.stage).toBe(stageId);
+      expect(canonical).toMatchObject({ status: evidence.status });
+      expect(canonical?.evidence).toContain(relativePath);
+      if (evidence.status === 'VERIFIED') {
+        expect(evidence.residual).toEqual([]);
+        expect(canonical?.findings).toEqual([]);
+      } else {
+        expect(evidence.residual.length).toBeGreaterThan(0);
+        expect(canonical?.findings.length).toBeGreaterThan(0);
+      }
+    }
   });
 
   it('keeps the obsolete PowerShell writers disabled or delegated', () => {
