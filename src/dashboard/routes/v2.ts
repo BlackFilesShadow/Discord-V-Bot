@@ -69,6 +69,7 @@ import { devXpViewRouter } from './v2/devXpView';
 import { devSecureExportRouter } from './v2/devSecureExport';
 import { auditRouter } from './v2/audit';
 import { botAdminRouter } from './v2/botAdmin';
+import { botAdminFeedsRouter } from './v2/botAdminFeeds';
 import { botAdminLegacyContractRouter } from './v2/botAdminLegacyContract';
 import { botAdminKnowledgeRouter } from './v2/botAdminKnowledge';
 import { botAdminCommandCenterRouter } from './v2/botAdminCommandCenter';
@@ -181,12 +182,11 @@ v2Router.use('/bot-admin/command-center/feedback', requireGlobalDeveloperIdentit
 v2Router.use('/bot-admin/command-center', requireGlobalBotAdminIdentity, guardBotAdminCommandCenterInput, botAdminCommandCenterSafetyRouter, botAdminCommandCenterRouter);
 
 // Bot-Admin: globale Identitaet + aktive BotAdminSession. Safety-Overrides und
-// Guild-Referenzpruefung muessen vor dem Legacy-Router laufen. XP wird fail-
-// closed in DEV umgeleitet; Danger-Purge und physische Paketloeschung laufen
-// ausschliesslich ueber ihre kanonischen Filesystem-Safety-Services. Der
-// Legacy-Contract-Adapter erzwingt zusaetzlich strikte Query-/Body-Semantik,
-// bevor die historischen Handler ihre Business-Logik ausfuehren.
+// Guild-Referenzpruefung muessen vor dem Legacy-Router laufen. Der kanonische
+// Feed-Adapter wird bewusst vor dem Sammelrouter gemountet, damit dessen alte
+// Feed-Handler nicht mehr erreichbar sind.
 v2Router.use('/bot-admin/feedback', requireGlobalDeveloperIdentity);
+v2Router.use('/bot-admin/feeds', requireGlobalBotAdminIdentity, requireBotAdmin, guardBotAdminGuildReferences, botAdminFeedsRouter);
 v2Router.use('/bot-admin', requireGlobalBotAdminIdentity, botAdminXpRetirementRouter, botAdminDangerSafetyRouter, botAdminSafeValidationRouter, botAdminSafePackageDeleteRouter, guardBotAdminGuildReferences, botAdminLegacyContractRouter, botAdminRouter);
 
 // Letzte v2-Error-Grenze: normale Fehler gehen an den globalen Dashboard-
