@@ -44,4 +44,23 @@ describe('bot-admin feed control-plane architecture', () => {
     expect(guildRoute).toContain('updateCanonicalFeed');
     expect(botAdminRoute).toContain('updateCanonicalFeed');
   });
+
+  test('uses one canonical FeedsTab for guild and bot-admin transports', () => {
+    const feedsTab = read('dashboard-ui/src/components/FeedsTab.tsx');
+    const botAdmin = read('dashboard-ui/src/components/BotAdminTab.tsx');
+
+    expect(feedsTab).toContain("export type FeedTransport = 'guild' | 'bot-admin'");
+    expect(feedsTab).toContain("transport = 'guild'");
+    expect(feedsTab).toContain('/api/v2/bot-admin/feeds');
+    expect(feedsTab).toContain("type FeedType = 'RSS' | 'NEWS' | 'TWITCH' | 'STEAM' | 'YOUTUBE' | 'WEBHOOK'");
+    expect(feedsTab).not.toContain("'TWITTER'");
+    expect(feedsTab).not.toContain("'CUSTOM'");
+
+    expect(botAdmin).toContain("import { FeedsTab } from '@/components/FeedsTab'");
+    expect(botAdmin).toContain('<FeedsTab guildId={guildId} canManage={canManage} transport="bot-admin" />');
+    expect(botAdmin).not.toContain('function FeedsSection');
+    expect(botAdmin).not.toContain('function FeedCreateForm');
+    expect(botAdmin).not.toContain("'TWITTER'");
+    expect(botAdmin).not.toContain("'CUSTOM'");
+  });
 });
