@@ -1,0 +1,51 @@
+name: Stage 56 Bundle Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  bundle-budget:
+    name: Dashboard bundle budget
+    runs-on: ubuntu-latest
+    env:
+      STAGE56_EXACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      STAGE56_OUTPUT_PATH: stage56-artifacts/${{ github.event.pull_request.head.sha || github.sha }}.json
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          lfs: true
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard-ui/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Install dashboard dependencies
+        working-directory: dashboard-ui
+        run: npm ci
+      - name: Build dashboard and enforce Stage 56 budgets
+        working-directory: dashboard-ui
+        run: npm run build
+      - name: Upload Stage 56 exact-SHA evidence
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: stage56-bundle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: stage56-artifacts/*.json
+          if-no-files-found: error
