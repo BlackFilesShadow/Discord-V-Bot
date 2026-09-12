@@ -9,14 +9,19 @@ const m = JSON.parse(r('docs/dashboard-bundle-codesplit-matrix.json')) as {
   status: string;
   basedOnMainSha: string;
   contracts: Record<string, string>;
-  cases: Array<{ id: string }>;
+  cases: Array<{ id: string; status: string }>;
   currentEvidence: {
     exactSha: string;
     measure: string;
     entryKb: number;
-    maxChunkKb: number;
-    over500kb: string[];
+    radarVendorRawKb: number;
+    radarVendorGzipKb: number;
+    oversizedNonRadar: string[];
     measureExitCode: number;
+    contractsPassed: number;
+    stage56Run: string;
+    mainCiRun: string;
+    mainE2eRun: string;
   };
   residual: string[];
 };
@@ -30,16 +35,45 @@ const zoneRadarTab = r('dashboard-ui/src/components/radar/ZoneRadarTab.tsx');
 const zoneEditor = r('dashboard-ui/src/components/radar/ZoneEditor.tsx');
 
 describe('Stage 56 dashboard bundle codesplit', () => {
-  it('keeps the pre-remediation evidence truthful until the new exact-head gate completes', () => {
+  it('binds VERIFIED Stage 56 to the post-merge exact-main evidence', () => {
     expect(m.stage).toBe(56);
-    expect(m.schemaVersion).toBeGreaterThanOrEqual(4);
-    expect(m.status).toBe('PARTIAL');
+    expect(m.schemaVersion).toBeGreaterThanOrEqual(5);
+    expect(m.status).toBe('VERIFIED');
+    expect(m.basedOnMainSha).toBe('3c4abb74c87467eda7edd0ea396afac59b270262');
     expect(m.currentEvidence).toMatchObject({
       exactSha: m.basedOnMainSha,
-      measureExitCode: 5,
+      measureExitCode: 0,
+      entryKb: 92.77,
+      radarVendorRawKb: 963.45,
+      radarVendorGzipKb: 255.71,
+      oversizedNonRadar: [],
+      contractsPassed: 7,
+      stage56Run: '34717052596',
+      mainCiRun: '34717052628',
+      mainE2eRun: '34717052555',
     });
-    expect(m.currentEvidence.over500kb).toEqual([expect.stringMatching(/^vendor-radar-map-.*\.js$/)]);
-    expect(m.residual.length).toBeGreaterThan(0);
+    expect(m.residual).toEqual([]);
+    expect(m.cases.every((c) => c.status === 'runtime-verified' || c.status === 'architecture-pinned')).toBe(true);
+
+    const evidence = JSON.parse(r(m.currentEvidence.measure)) as {
+      stage: number;
+      exactSha: string;
+      entry: { kb: number };
+      radarVendors: Array<{ kb: number; gzipKb: number }>;
+      oversizedNonRadar: string[];
+      contracts: Record<string, boolean>;
+      residual: string[];
+    };
+    expect(evidence.stage).toBe(56);
+    expect(evidence.exactSha).toBe(m.basedOnMainSha);
+    expect(evidence.entry.kb).toBe(m.currentEvidence.entryKb);
+    expect(evidence.oversizedNonRadar).toEqual([]);
+    expect(evidence.radarVendors).toHaveLength(1);
+    expect(evidence.radarVendors[0].kb).toBe(m.currentEvidence.radarVendorRawKb);
+    expect(evidence.radarVendors[0].gzipKb).toBe(m.currentEvidence.radarVendorGzipKb);
+    expect(Object.values(evidence.contracts)).toEqual(expect.arrayContaining([true]));
+    expect(Object.values(evidence.contracts).every(Boolean)).toBe(true);
+    expect(evidence.residual).toEqual([]);
   });
 
   it('App lazy-loads DEV + heavy routes and avoids catalog icon import in entry', () => {

@@ -1,0 +1,182 @@
+{
+  "stage": 56,
+  "kind": "dashboard-bundle-measure",
+  "exactSha": "3c4abb74c87467eda7edd0ea396afac59b270262",
+  "capturedAt": "2026-09-12T20:26:25.787Z",
+  "budgets": {
+    "normalChunkRawKiB": 500,
+    "radarVendorRawKiB": 1024,
+    "radarVendorGzipKiB": 300
+  },
+  "totals": {
+    "jsChunks": 62,
+    "totalJsKb": 2044.03,
+    "totalJsGzipKb": 573.56
+  },
+  "entry": {
+    "name": "index-BPWoqE7d.js",
+    "bytes": 94995,
+    "kb": 92.77,
+    "gzipBytes": 30053,
+    "gzipKb": 29.35
+  },
+  "largest": [
+    {
+      "name": "vendor-radar-map-BheX-_rp.js",
+      "bytes": 986574,
+      "kb": 963.45,
+      "gzipBytes": 261846,
+      "gzipKb": 255.71
+    },
+    {
+      "name": "ServerSlotV3-CTczLmk1.js",
+      "bytes": 175227,
+      "kb": 171.12,
+      "gzipBytes": 40970,
+      "gzipKb": 40.01
+    },
+    {
+      "name": "Server-DRbPzqlS.js",
+      "bytes": 161035,
+      "kb": 157.26,
+      "gzipBytes": 37771,
+      "gzipKb": 36.89
+    },
+    {
+      "name": "vendor-react-C5RGK1zS.js",
+      "bytes": 138714,
+      "kb": 135.46,
+      "gzipBytes": 44375,
+      "gzipKb": 43.33
+    },
+    {
+      "name": "index-BPWoqE7d.js",
+      "bytes": 94995,
+      "kb": 92.77,
+      "gzipBytes": 30053,
+      "gzipKb": 29.35
+    },
+    {
+      "name": "BotAdmin-grh1Frgx.js",
+      "bytes": 89913,
+      "kb": 87.81,
+      "gzipBytes": 21108,
+      "gzipKb": 20.61
+    },
+    {
+      "name": "vendor-misc-DqvAyA2v.js",
+      "bytes": 74565,
+      "kb": 72.82,
+      "gzipBytes": 23733,
+      "gzipKb": 23.18
+    },
+    {
+      "name": "vendor-lucide-Chz8jvA_.js",
+      "bytes": 61618,
+      "kb": 60.17,
+      "gzipBytes": 12077,
+      "gzipKb": 11.79
+    },
+    {
+      "name": "vendor-router-CT20jE2E.js",
+      "bytes": 38749,
+      "kb": 37.84,
+      "gzipBytes": 14062,
+      "gzipKb": 13.73
+    },
+    {
+      "name": "vendor-socket-BlztIDwr.js",
+      "bytes": 31408,
+      "kb": 30.67,
+      "gzipBytes": 9802,
+      "gzipKb": 9.57
+    },
+    {
+      "name": "EmojiPicker-D1RsIXCT.js",
+      "bytes": 29508,
+      "kb": 28.82,
+      "gzipBytes": 11355,
+      "gzipKb": 11.09
+    },
+    {
+      "name": "CommandCenter-DrUjQD2_.js",
+      "bytes": 17130,
+      "kb": 16.73,
+      "gzipBytes": 4587,
+      "gzipKb": 4.48
+    }
+  ],
+  "vendors": [
+    {
+      "name": "vendor-radar-map-BheX-_rp.js",
+      "bytes": 986574,
+      "kb": 963.45,
+      "gzipBytes": 261846,
+      "gzipKb": 255.71
+    },
+    {
+      "name": "vendor-react-C5RGK1zS.js",
+      "bytes": 138714,
+      "kb": 135.46,
+      "gzipBytes": 44375,
+      "gzipKb": 43.33
+    },
+    {
+      "name": "vendor-misc-DqvAyA2v.js",
+      "bytes": 74565,
+      "kb": 72.82,
+      "gzipBytes": 23733,
+      "gzipKb": 23.18
+    },
+    {
+      "name": "vendor-lucide-Chz8jvA_.js",
+      "bytes": 61618,
+      "kb": 60.17,
+      "gzipBytes": 12077,
+      "gzipKb": 11.79
+    },
+    {
+      "name": "vendor-router-CT20jE2E.js",
+      "bytes": 38749,
+      "kb": 37.84,
+      "gzipBytes": 14062,
+      "gzipKb": 13.73
+    },
+    {
+      "name": "vendor-socket-BlztIDwr.js",
+      "bytes": 31408,
+      "kb": 30.67,
+      "gzipBytes": 9802,
+      "gzipKb": 9.57
+    },
+    {
+      "name": "vendor-query-yJyTlalb.js",
+      "bytes": 2967,
+      "kb": 2.9,
+      "gzipBytes": 1372,
+      "gzipKb": 1.34
+    }
+  ],
+  "radarVendors": [
+    {
+      "name": "vendor-radar-map-BheX-_rp.js",
+      "bytes": 986574,
+      "kb": 963.45,
+      "gzipBytes": 261846,
+      "gzipKb": 255.71
+    }
+  ],
+  "oversizedNonRadar": [],
+  "radarRawOverBudget": [],
+  "radarGzipOverBudget": [],
+  "contracts": {
+    "entryUnder500kb": true,
+    "nonRadarChunksUnder500kb": true,
+    "singleLazyRadarVendor": true,
+    "radarVendorRawUnder1MiB": true,
+    "radarVendorGzipUnder300KiB": true,
+    "hasVendorSplit": true,
+    "hasDevRouteChunks": true
+  },
+  "residual": []
+}

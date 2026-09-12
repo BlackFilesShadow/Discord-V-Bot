@@ -7,22 +7,22 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Field | Value |
 | --- | --- |
-| Generated | 2026-09-12T18:33:45.000Z |
-| Final audited/evidence SHA | `831e6a374394916440ddcb0fb03ba88dd1327147` |
-| Audit freeze SHA | `831e6a374394916440ddcb0fb03ba88dd1327147` |
+| Generated | 2026-09-12T20:38:39.000Z |
+| Final audited/evidence SHA | `3c4abb74c87467eda7edd0ea396afac59b270262` |
+| Audit freeze SHA | `3c4abb74c87467eda7edd0ea396afac59b270262` |
 | Stages total | 67 |
 
 ## Recalculated scoreboard
 
 | Status | Count |
 | --- | ---: |
-| VERIFIED | 59 |
-| PARTIAL | 7 |
+| VERIFIED | 60 |
+| PARTIAL | 6 |
 | FAILED | 0 |
 | BLOCKED | 1 |
 | **TOTAL** | **67** |
 
-**Current score: 88 / 100**
+**Current score: 90 / 100**
 
 **PRODUCTION READY: NO**
 
@@ -85,7 +85,7 @@ Do not edit this report, the scoreboard, or the summary manually.
 | 53 | VERIFIED | dependency-audit-controlled-53 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Controlled updates; lockfile + Stage45 high blocking; no blind majors |
 | 54 | VERIFIED | passport-discord-migration-54 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | passport/passport-discord removed; custom PKCE OAuth canonical |
 | 55 | VERIFIED | inflight-glob-cleanup-55 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | No prod inflight; Jest29 glob/inflight dev-only residual classified |
-| 56 | PARTIAL | dashboard-bundle-codesplit-56 | `831e6a374394916440ddcb0fb03ba88dd1327147` | stage-56-current-maplibre-chunk-over-500kb; stage-56-build-gate-does-not-execute-measurement |
+| 56 | VERIFIED | dashboard-bundle-codesplit-56 | `3c4abb74c87467eda7edd0ea396afac59b270262` | Exact-main measurement records a 92.77 KiB entry, zero non-MapLibre chunks over 500 KiB, and exactly one lazy MapLibre vendor at 963.45 KiB raw / 255.71 KiB gzip, within the explicit 1 MiB raw / 300 KiB gzip budget. The budget is enforced by normal dashboard builds and the dedicated exact-SHA Stage 56 workflow. |
 | 57 | VERIFIED | dead-code-legacy-cleanup-57 | `bacdf2eb43691ed4553da0f5008f54f94338376a` | Dynamic imports, filesystem command loading, Discord dispatch, AI tools and Nitrado worker registries are included in the deletion-safety analysis; no speculative mass deletion remains. |
 | 58 | PARTIAL | full-user-journey | `831e6a374394916440ddcb0fb03ba88dd1327147` | F-S4-10; residual-live-discord-gateway |
 | 59 | VERIFIED | chaos | `b3fcb7db4207a9a37b918ef4ba9104fdf070e7e9` | Real PostgreSQL and Redis process kills plus same-client recovery ran twice on isolated PR runners and twice post-merge; circuit, SSRF, path and idempotency fault contracts remain green. |
@@ -100,7 +100,6 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 ## Remaining residuals (priority order)
 
-- Stage 56 (PARTIAL): stage-56-current-maplibre-chunk-over-500kb; stage-56-build-gate-does-not-execute-measurement
 - Stage 58 (PARTIAL): F-S4-10; residual-live-discord-gateway
 - Stage 62 (PARTIAL): live-production-deploy-stage-67; live-backup-restore-requires-authorized-staging
 - Stage 63 (PARTIAL): release-freeze-required-after-final-internal-change

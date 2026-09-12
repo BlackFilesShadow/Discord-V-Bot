@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-12T18:33:45.000Z",
-  "finalAuditedSha": "831e6a374394916440ddcb0fb03ba88dd1327147",
+  "generatedAt": "2026-09-12T20:38:39.000Z",
+  "finalAuditedSha": "3c4abb74c87467eda7edd0ea396afac59b270262",
   "stages": [
     {
       "id": 1,
@@ -742,19 +742,24 @@
     {
       "id": 56,
       "name": "dashboard-bundle-codesplit-56",
-      "status": "PARTIAL",
+      "status": "VERIFIED",
       "evidence": [
         "docs/dashboard-bundle-codesplit-matrix.json",
         "docs/audit/performance/eaf8b42bb5d1fc194416324606f146196d04c8c0/56-bundle.json",
         "docs/audit/performance/831e6a374394916440ddcb0fb03ba88dd1327147/56-bundle.json",
-        "tests/security/dashboardBundleCodesplitArchitecture.test.ts"
+        "docs/audit/performance/3c4abb74c87467eda7edd0ea396afac59b270262/56-bundle.json",
+        "tests/security/dashboardBundleCodesplitArchitecture.test.ts",
+        "implementation-ci-run:34715893543:attempt-1",
+        "implementation-verification2-run:34715893050:attempt-1",
+        "implementation-e2e-run:34715893051:attempt-1",
+        "implementation-stage56-run:34715893047:attempt-1",
+        "main-ci-run:34717052628:attempt-1",
+        "main-e2e-run:34717052555:attempt-1",
+        "main-stage56-run:34717052596:attempt-1"
       ],
-      "findings": [
-        "stage-56-current-maplibre-chunk-over-500kb",
-        "stage-56-build-gate-does-not-execute-measurement"
-      ],
-      "note": "The current main entry remains small, but its lazy MapLibre vendor chunk is 963.45 kB raw. The unchanged 500 kB all-chunk contract therefore fails; historical pre-MapLibre evidence is retained only as history.",
-      "exactSha": "831e6a374394916440ddcb0fb03ba88dd1327147"
+      "findings": [],
+      "note": "Exact-main measurement records a 92.77 KiB entry, zero non-MapLibre chunks over 500 KiB, and exactly one lazy MapLibre vendor at 963.45 KiB raw / 255.71 KiB gzip, within the explicit 1 MiB raw / 300 KiB gzip budget. The budget is enforced by normal dashboard builds and the dedicated exact-SHA Stage 56 workflow.",
+      "exactSha": "3c4abb74c87467eda7edd0ea396afac59b270262"
     },
     {
       "id": 57,
@@ -927,10 +932,10 @@
       ]
     }
   ],
-  "auditFreezeSha": "831e6a374394916440ddcb0fb03ba88dd1327147",
+  "auditFreezeSha": "3c4abb74c87467eda7edd0ea396afac59b270262",
   "counts": {
-    "VERIFIED": 59,
-    "PARTIAL": 7,
+    "VERIFIED": 60,
+    "PARTIAL": 6,
     "FAILED": 0,
     "BLOCKED": 1
   }
