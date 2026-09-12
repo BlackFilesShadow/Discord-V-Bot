@@ -12,7 +12,6 @@ NC='\033[0m'
 
 BOT_DIR="/opt/discord-v-bot"
 BACKUP_DIR="/opt/discord-v-bot-backups"
-DB_NAME="discord_v_bot"
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
 BACKUP_PATH="${BACKUP_DIR}/backup_${TIMESTAMP}"
 KEEP_DAYS=7
@@ -25,12 +24,50 @@ if [[ $EUID -ne 0 ]]; then
   err "Bitte als root ausführen: sudo bash backup.sh"
 fi
 
+if [[ ! -f "$BOT_DIR/docker-compose.yml" ]]; then
+  err "Docker-Compose-Datei fehlt: $BOT_DIR/docker-compose.yml"
+fi
+if [[ ! -f "$BOT_DIR/.env" ]]; then
+  err "Produktions-.env fehlt: $BOT_DIR/.env"
+fi
+if ! command -v docker >/dev/null 2>&1; then
+  err "Docker ist nicht verfügbar."
+fi
+if ! (cd "$BOT_DIR" && docker compose version >/dev/null 2>&1); then
+  err "Docker Compose ist nicht verfügbar."
+fi
+
 mkdir -p "$BACKUP_PATH"
 
-# Datenbank sichern (portabel: ohne Owner/Privileges, mit IF-EXISTS-DROPs).
+cleanup_partial() {
+  if [[ -d "$BACKUP_PATH" ]]; then
+    rm -rf "$BACKUP_PATH" || true
+  fi
+}
+trap cleanup_partial EXIT
+
+# Datenbank direkt aus dem laufenden Produktions-Postgres sichern.
+# PostgreSQL läuft absichtlich nur im Docker-Netz; auf dem Host muss daher
+# weder ein Linux-Benutzer `postgres` noch ein lokales pg_dump installiert sein.
 info "Datenbank wird gesichert..."
-sudo -u postgres pg_dump --no-owner --no-privileges --clean --if-exists "$DB_NAME" \
-  > "${BACKUP_PATH}/database.sql"
+POSTGRES_CONTAINER=$(cd "$BOT_DIR" && docker compose ps -q postgres 2>/dev/null || true)
+if [[ -z "$POSTGRES_CONTAINER" ]]; then
+  err "Postgres-Container wurde nicht gefunden."
+fi
+if [[ "$(docker inspect -f '{{.State.Running}}' "$POSTGRES_CONTAINER" 2>/dev/null || true)" != "true" ]]; then
+  err "Postgres-Container läuft nicht."
+fi
+
+DB_DUMP="${BACKUP_PATH}/database.sql"
+if ! (cd "$BOT_DIR" && docker compose exec -T postgres sh -lc \
+  'PGPASSWORD="${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt im Postgres-Container}" exec pg_dump --no-owner --no-privileges --clean --if-exists -h 127.0.0.1 -U "${POSTGRES_USER:-discordbot}" -d "${POSTGRES_DB:-discord_v_bot}"') \
+  > "$DB_DUMP"; then
+  rm -f "$DB_DUMP"
+  err "Datenbank-Backup über Docker-Postgres fehlgeschlagen."
+fi
+if [[ ! -s "$DB_DUMP" ]]; then
+  err "Datenbank-Backup ist leer."
+fi
 log "Datenbank gesichert"
 
 # .env sichern (nur root lesbar im Backup; enthaelt Secrets).
