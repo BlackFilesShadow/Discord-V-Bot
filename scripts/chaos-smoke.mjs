@@ -1,7 +1,9 @@
 /**
- * Stage 59 — controlled fault injection (in-process, no external infra).
+ * Stage 59 — controlled fault injection (in-process structural/runtime smoke).
  * Exercises: circuit breaker open, SSRF block, path traversal block,
  * rate-limit denial under flood, idempotency store-down contract pin.
+ * Real PostgreSQL/Redis process-kill coverage is executed separately by
+ * scripts/stage59-process-kill-chaos.ts in the dual-run Stage 59 workflow.
  */
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
@@ -96,10 +98,13 @@ async function main() {
     faults: results.map((r) => r.fault),
     results,
     runtime,
-    residual: [
-      'Full multi-service chaos (kill postgres container) needs Docker/staging',
-      'Jest suite injects circuit OPEN + SSRF + rate-limit flood at runtime',
-    ],
+    delegatedRuntimeEvidence: {
+      harness: 'scripts/stage59-process-kill-chaos.ts',
+      workflow: '.github/workflows/stage59-chaos.yml',
+      services: ['postgresql', 'redis'],
+      runs: 2,
+    },
+    residual: [],
   };
 
   console.log = log;
