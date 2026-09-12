@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "stage": 63,
-  "basedOnMainSha": "9db65b9120e5410b736bf4be7b5f9e155c9eb0ea",
+  "basedOnMainSha": "bb92803737e651c237d95b5a99e0010e202cecdf",
   "scope": "Final immutable release candidate SHA freeze for development phase 27-63.",
   "contracts": {
     "freeze": "After Stage 63 merge, main HEAD is the development-phase release candidate until Gate phase 64+",
