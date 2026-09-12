@@ -1,9 +1,9 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "stage": 61,
-  "basedOnMainSha": "6b27bacac6a0f28efa6b70cee42b663e096bd6c5",
-  "scope": "Gesamtaudit 2: cross-domain couplings Discord↔DB↔Nitrado↔AI↔Economy↔Dashboard↔Workers↔Leave/Rejoin↔Audit, rebound to current main after Stage 60 merge.",
-  "status": "PARTIAL",
+  "basedOnMainSha": "43f800ce67bd37f4a51b5f8abff150ae35ebf50a",
+  "scope": "Gesamtaudit 2: cross-domain couplings Discord↔DB↔Nitrado↔AI↔Economy↔Dashboard↔Workers↔Leave/Rejoin↔Audit plus complete current-main runtime event/dynamic-import reachability revalidation after PR #407.",
+  "status": "VERIFIED",
   "contracts": {
     "membership": "requireGuildPermission / GUILD_MEMBERSHIP_REQUIRED",
     "economyScope": "requireSafeDashboardEconomyScope",
@@ -11,7 +11,8 @@
     "leaveRejoin": "guildMemberRemove + leaveCleanupWorker + leaveCleanupRejoin",
     "aiWiring": "runtime → toolRuntime",
     "incidentFailClosed": "devIncident operational actions empty or gated",
-    "currentMainBinding": "Stage-61 evidence must bind to exact current main SHA and must not reuse historical SHA evidence"
+    "currentMainBinding": "Stage-61 evidence binds to exact audited main SHA 43f800ce67bd37f4a51b5f8abff150ae35ebf50a and may not reuse historical SHA evidence",
+    "runtimeReachability": "AST-based graph follows relative static imports, export-from, literal dynamic imports and literal require edges from src/index.ts plus filesystem-loaded command roots; every src/events module must be reachable from the index event registry and opaque dynamic import expressions are forbidden on reachable production paths"
   },
   "cases": [
     { "id": "auth-membership-coupling", "status": "runtime-verified" },
@@ -21,9 +22,18 @@
     { "id": "ai-runtime-tool-wiring", "status": "runtime-verified" },
     { "id": "incident-fail-closed", "status": "runtime-verified" },
     { "id": "current-main-exact-sha-binding", "status": "runtime-verified" },
-    { "id": "full-dynamic-import-orphan-sweep", "status": "residual" }
+    { "id": "full-dynamic-import-orphan-sweep", "status": "runtime-verified" },
+    { "id": "discord-event-registry-reachability", "status": "runtime-verified" },
+    { "id": "filesystem-command-runtime-roots", "status": "runtime-verified" },
+    { "id": "direct-client-listener-inventory", "status": "runtime-verified" }
   ],
-  "residual": [
-    "Automated orphan detection for every event handler remains incomplete without a complete runtime registry/reachability dump"
-  ]
+  "evidence": [
+    "tests/security/stage61RuntimeReachabilityArchitecture.test.ts",
+    "tests/security/gesamtaudit2CouplingsArchitecture.test.ts",
+    "tests/security/deadCodeLegacyCleanupArchitecture.test.ts",
+    "src/index.ts",
+    "src/events/interactionCreateComposite.ts",
+    "src/commands/handler.ts"
+  ],
+  "residual": []
 }
