@@ -31,6 +31,11 @@ export async function replyToOwnerTicketFromDashboard(input: {
     throw new Error('Ticket-Antwort muss zwischen 1 und 1800 Zeichen lang sein.');
   }
 
+  // Bot-Owner-Tickets sind bewusst global: `guildId` ist nur optionale
+  // Herkunftsmetadaten. Die Autorisierungsgrenze wird direkt danach ueber die
+  // kanonische `ownerDiscordId` erzwungen, damit auch Legacy-/DM-Tickets ohne
+  // Guild-Zuordnung sicher erreichbar bleiben.
+  // eslint-disable-next-line local/no-unscoped-prisma-query -- Globaler Bot-Owner-Ticket-Bridge; ownerDiscordId ist der Autorisierungsscope, guildId ist optional.
   const ticket = await prisma.ticket.findUnique({
     where: { id: input.ticketId },
     select: {
@@ -84,6 +89,9 @@ export async function replyToOwnerTicketFromDashboard(input: {
       content,
     },
   });
+  // Nach der Owner-Pruefung ist die eindeutige Ticket-ID bereits autorisiert;
+  // ein kuenstlicher guildId-Filter wuerde globale/null-Guild-Tickets brechen.
+  // eslint-disable-next-line local/no-unscoped-prisma-query -- Autorisierte globale Ticket-ID nach expliziter ownerDiscordId-Pruefung.
   await prisma.ticket.update({
     where: { id: ticket.id },
     data: { updatedAt: new Date() },
