@@ -9,6 +9,7 @@ import { getTwitchCreds, getYouTubeKey } from './feedCredentials';
 import { entriesAfterMarker, fetchFeedDocument, type FeedEntry } from './feedDocument';
 import { getSteamNews, getTwitchStream, getYouTubeEntries } from './platformClients';
 import { feedConfigurationAction } from './feedConfigurationPolicy';
+import { cleanupExpiredFeedDeliveryClaims, deliverFeedItemOnce } from './feedDeliveryClaim';
 
 export interface FeedCreateInitialState {
   mentionRoles?: string[];
@@ -134,7 +135,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, raw.id, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     if (feed.lastItemId && !state.markerFound && toPost.length) {
@@ -160,7 +161,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setFooter({ text: `📡 ${feed.name}` })
         .setTimestamp(validDate(stream.startedAt));
       if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, marker, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: marker, lastChecked: new Date() } });
     return;
@@ -179,7 +180,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, item.id, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     return;
@@ -196,7 +197,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, item.id, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     return;
@@ -276,6 +277,7 @@ function startFeedTimer(client: Client, feed: { id: string; name: string; interv
 }
 
 async function refreshFeedTimers(client: Client): Promise<void> {
+  await cleanupExpiredFeedDeliveryClaims();
   const active = await prisma.feed.findMany({ where: { isActive: true }, select: { id: true, name: true, interval: true } });
   const activeIds = new Set(active.map((feed) => feed.id));
   for (const [id, timer] of feedTimers) {
