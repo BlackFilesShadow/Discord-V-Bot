@@ -72,7 +72,15 @@ function dmMessage(opts: {
   referencedMessage?: unknown;
   referenceFailure?: Error;
 }) {
-  const targetSend = jest.fn().mockResolvedValue({ id: 'relay-message' });
+  // Discord.js stellt auf eingehenden und gesendeten Messages immer eine
+  // Attachment-Collection bereit, auch wenn sie leer ist. Das Routing-Fixture
+  // bildet diesen realen Message-Vertrag ab, damit Attachment-Hardening nicht
+  // faelschlich als Routingfehler gewertet wird.
+  const targetSend = jest.fn().mockResolvedValue({
+    id: 'relay-message',
+    attachments: new Map(),
+    delete: jest.fn().mockResolvedValue(undefined),
+  });
   const fetchUser = jest.fn().mockResolvedValue({ send: targetSend });
   const reply = jest.fn().mockResolvedValue({ id: 'reply-message' });
   const react = jest.fn().mockResolvedValue(undefined);
@@ -83,6 +91,7 @@ function dmMessage(opts: {
   const msg = {
     author: { id: opts.authorId },
     content: opts.content ?? 'Hallo Ticket',
+    attachments: new Map(),
     reference: opts.referenceMessageId ? { messageId: opts.referenceMessageId } : null,
     fetchReference,
     client: { users: { fetch: fetchUser } },
