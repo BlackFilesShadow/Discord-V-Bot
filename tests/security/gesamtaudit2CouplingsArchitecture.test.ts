@@ -4,8 +4,11 @@ import path from 'node:path';
 const r = (p: string) => fs.readFileSync(path.resolve(process.cwd(), p), 'utf8');
 const m = JSON.parse(r('docs/gesamtaudit-2-couplings-matrix.json')) as {
   stage: number;
+  status: string;
   cases: Array<{ id: string; status: string }>;
   contracts: Record<string, string>;
+  evidence?: string[];
+  residual: string[];
 };
 const auth = r('src/dashboard/middleware/auth.ts');
 const incident = r('src/dashboard/routes/v2/devIncident.ts');
@@ -14,12 +17,21 @@ const aiRuntime = r('src/modules/ai/runtime.ts');
 const schema = r('prisma/schema.prisma');
 
 describe('Stage 61 gesamtaudit 2 couplings', () => {
-  it('documents coupling contracts and residual honesty', () => {
+  it('requires the coupling audit and runtime reachability sweep to be complete', () => {
     expect(m.stage).toBe(61);
-    expect(m.cases.some((c) => c.id === 'full-dynamic-import-orphan-sweep' && c.status === 'residual')).toBe(
+    expect(m.status).toBe('VERIFIED');
+    expect(m.cases.some((c) => c.id === 'full-dynamic-import-orphan-sweep' && c.status === 'runtime-verified')).toBe(
       true,
     );
+    expect(m.cases.some((c) => c.id === 'discord-event-registry-reachability' && c.status === 'runtime-verified')).toBe(true);
+    expect(m.cases.some((c) => c.id === 'filesystem-command-runtime-roots' && c.status === 'runtime-verified')).toBe(true);
     expect(m.contracts.nitradoJobs).toMatch(/jobWorker/);
+    expect(m.contracts.runtimeReachability).toMatch(/AST-based graph|dynamic imports|src\/events/i);
+    expect(m.evidence).toEqual(expect.arrayContaining([
+      'tests/security/stage61RuntimeReachabilityArchitecture.test.ts',
+      'tests/security/deadCodeLegacyCleanupArchitecture.test.ts',
+    ]));
+    expect(m.residual).toEqual([]);
     expect(r('tests/security/gesamtaudit2CouplingsArchitecture.test.ts')).not.toMatch(
       /test\.(only|skip)|describe\.(only|skip)/,
     );
