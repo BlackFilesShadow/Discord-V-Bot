@@ -1,16 +1,21 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "stage": 59,
-  "basedOnMainSha": "07aad8945afcc2a1589c2997862d12053b2a3a37",
-  "scope": "Controlled fault injection: Nitrado circuit OPEN, SSRF, path traversal, idempotency store-down pin, AI/Nitrado retry contracts, scope no-bypass.",
-  "status": "PARTIAL",
+  "basedOnMainSha": "7ca09272eb583dbaa3bbcc7433032ce7f11098de",
+  "scope": "Controlled fault injection: Nitrado circuit OPEN, SSRF, path traversal, idempotency store-down pin, AI/Nitrado retry contracts, scope no-bypass, and real PostgreSQL/Redis service-container process-kill with bounded failure and recovery.",
+  "status": "VERIFIED",
   "contracts": {
     "runtimeHarness": "scripts/chaos-smoke.mjs + Jest circuit/SSRF/path injection",
+    "dockerProcessKillHarness": "scripts/stage59-process-kill-chaos.ts executed twice by .github/workflows/stage59-chaos.yml on isolated GitHub runners with real PostgreSQL and Redis service containers",
     "idempotency": "IDEMPOTENCY_STORE_UNAVAILABLE → 503 fail-closed",
     "circuit": "NitradoCircuitOpenError on OPEN preflight",
     "ssrf": "validatePublicHttpUrl denies private/metadata",
     "path": "assertInsideRoot throws PathBoundaryError on escape",
-    "currentMainBinding": "Stage 59 evidence is rebound to main 07aad8945afcc2a1589c2997862d12053b2a3a37"
+    "postgresFailure": "The existing Prisma runtime must reject within a bounded window while the PostgreSQL container is stopped",
+    "postgresRecovery": "The same Prisma runtime must query successfully again after the same PostgreSQL service container restarts",
+    "redisFailure": "The connected Redis client must reject within a bounded window while the Redis container is stopped",
+    "redisRecovery": "Redis must become usable again after the same Redis service container restarts",
+    "currentMainBinding": "Stage 59 evidence is rebound to audited main 7ca09272eb583dbaa3bbcc7433032ce7f11098de; runtime artifacts bind each CI execution to the exact PR/main SHA"
   },
   "cases": [
     { "id": "nitrado-circuit-open-blocks", "status": "runtime-verified" },
@@ -18,9 +23,18 @@
     { "id": "path-traversal-blocked", "status": "runtime-verified" },
     { "id": "idempotency-store-down-pin", "status": "runtime-verified" },
     { "id": "ai-nitrado-retry-timeout-pins", "status": "runtime-verified" },
-    { "id": "kill-postgres-container", "status": "residual-needs-docker" }
+    { "id": "kill-postgres-container", "status": "runtime-verified" },
+    { "id": "postgres-same-client-recovery", "status": "runtime-verified" },
+    { "id": "kill-redis-container", "status": "runtime-verified" },
+    { "id": "redis-client-recovery", "status": "runtime-verified" },
+    { "id": "dual-isolated-chaos-runs", "status": "runtime-verified" }
   ],
-  "residual": [
-    "Full multi-service process-kill chaos still requires an authorized Docker Compose or staging environment and is not claimed by CI."
-  ]
+  "evidence": [
+    "scripts/chaos-smoke.mjs",
+    "scripts/stage59-process-kill-chaos.ts",
+    ".github/workflows/stage59-chaos.yml",
+    "tests/security/waveFPerfChaosJourneyRuntime.test.ts",
+    "tests/security/stage59ChaosRevalidationArchitecture.test.ts"
+  ],
+  "residual": []
 }
