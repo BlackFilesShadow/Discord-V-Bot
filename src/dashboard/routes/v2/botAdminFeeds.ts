@@ -93,9 +93,13 @@ botAdminFeedsRouter.post('/:id/toggle', async (req, res) => {
     return;
   }
 
-  const updated = await prisma.feed.update({ where: { id: feed.id }, data: { isActive: nextActive } });
-  audit(req, 'BOTADMIN_FEED_TOGGLE', { feedId: feed.id, isActive: updated.isActive }, { guildId });
-  res.json({ id: updated.id, isActive: updated.isActive });
+  const updated = await prisma.feed.updateMany({ where: { id: feed.id, guildId }, data: { isActive: nextActive } });
+  if (updated.count !== 1) {
+    res.status(409).json({ error: 'Feed wurde zwischenzeitlich geändert oder ist nicht mehr verfügbar.' });
+    return;
+  }
+  audit(req, 'BOTADMIN_FEED_TOGGLE', { feedId: feed.id, isActive: nextActive }, { guildId });
+  res.json({ id: feed.id, isActive: nextActive });
 });
 
 botAdminFeedsRouter.delete('/:id', async (req, res) => {
@@ -108,7 +112,11 @@ botAdminFeedsRouter.delete('/:id', async (req, res) => {
     return;
   }
 
-  await prisma.feed.delete({ where: { id: feed.id } });
+  const deleted = await prisma.feed.deleteMany({ where: { id: feed.id, guildId } });
+  if (deleted.count !== 1) {
+    res.status(409).json({ error: 'Feed wurde zwischenzeitlich geändert oder ist nicht mehr verfügbar.' });
+    return;
+  }
   audit(req, 'BOTADMIN_FEED_DELETE', { feedId: feed.id }, { guildId });
   res.json({ deleted: true });
 });
