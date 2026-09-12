@@ -25,6 +25,41 @@ import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
  */
 
 const OWNER_ID = (): string | null => config.discord.ownerId || null;
+const RELAY_ATTACHMENT_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
+const DISCORD_MAX_RELAY_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+function relayAttachmentFiles(msg: Message): Array<{ attachment: string; name: string }> {
+  if (!msg.attachments || msg.attachments.size === 0) return [];
+
+  const files: Array<{ attachment: string; name: string }> = [];
+  for (const attachment of msg.attachments.values()) {
+    if (!Number.isSafeInteger(attachment.size) || attachment.size < 0) {
+      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} hat eine ungueltige Groesse.`);
+    }
+    if (attachment.size > DISCORD_MAX_RELAY_ATTACHMENT_BYTES) {
+      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} ist groesser als 25 MiB.`);
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(attachment.url);
+    } catch {
+      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} hat keine gueltige URL.`);
+    }
+    if (parsed.protocol !== 'https:' || !RELAY_ATTACHMENT_HOSTS.has(parsed.hostname.toLowerCase())) {
+      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} verweist nicht auf einen erlaubten Discord-CDN-Host.`);
+    }
+    if (!/^\/(?:ephemeral-)?attachments\//.test(parsed.pathname)) {
+      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} verweist nicht auf einen Discord-Attachment-Pfad.`);
+    }
+
+    files.push({
+      attachment: parsed.toString(),
+      name: attachment.name ?? `attachment-${attachment.id}`,
+    });
+  }
+  return files;
+}
 
 export interface CreateTicketResult {
   success: boolean;
@@ -327,7 +362,12 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
     const senderLabel = fromRole === 'OWNER' ? '🛡️ Owner' : `👤 ${ticket.username}`;
     const header = `**${senderLabel}** · Ticket #${ticket.ticketNumber}`;
     const body = msg.content.slice(0, 1800);
-    await target.send({ content: `${header}\n${body}`, allowedMentions: { parse: [] } });
+    const files = relayAttachmentFiles(msg);
+    await target.send({
+      content: `${header}\n${body}`,
+      ...(files.length > 0 ? { files } : {}),
+      allowedMentions: { parse: [] },
+    });
     try { await msg.react('📨'); } catch { /* optional */ }
     try {
       await msg.reply({
