@@ -11,7 +11,8 @@
  * - BotAdmin: /api/v2/bot-admin/feeds mit aktiver BotAdminSession
  *
  * Nur der HTTP-Transport unterscheidet sich; Feed-Typen, Formulare und
- * Fachverhalten bleiben identisch.
+ * Fachverhalten bleiben identisch. Historische, nicht mehr unterstützte Typen
+ * bleiben sichtbar, können aber nicht neu angelegt, bearbeitet oder reaktiviert werden.
  */
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -33,7 +34,8 @@ export type FeedTransport = 'guild' | 'bot-admin';
 interface ApiFeed {
   id: string;
   name: string;
-  feedType: FeedType;
+  // string statt FeedType: Altbestände wie CUSTOM/TWITTER dürfen die UI nicht crashen.
+  feedType: string;
   url: string;
   channelId: string;
   interval: number;
@@ -72,30 +74,43 @@ const FEED_META: Record<FeedType, { label: string; icon: typeof Rss; hint: strin
   WEBHOOK: { label: 'Webhook (eingehend)', icon: Webhook, hint: 'Frei wählbares Label — liefert eine signierte Webhook-URL.', placeholder: 'z. B. Externes System' },
 };
 
+function isSupportedFeedType(value: string): value is FeedType {
+  return Object.prototype.hasOwnProperty.call(FEED_META, value);
+}
+
+function displayFeedMeta(feedType: string): { label: string; icon: typeof Rss } {
+  if (isSupportedFeedType(feedType)) return FEED_META[feedType];
+  return { label: `Legacy: ${feedType}`, icon: Rss };
+}
+
 function emptyForm(): FeedForm {
   return { name: '', feedType: 'RSS', url: '', channelId: '', interval: '300', mentionRoles: [], pingEnabled: false, youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '' };
 }
 
 function feedToForm(f: ApiFeed): FeedForm {
   return {
-    name: f.name, feedType: f.feedType, url: f.url, channelId: f.channelId,
+    name: f.name,
+    feedType: isSupportedFeedType(f.feedType) ? f.feedType : 'RSS',
+    url: f.url,
+    channelId: f.channelId,
     interval: String(f.interval), mentionRoles: f.mentionRoles ?? [], pingEnabled: (f.mentionRoles?.length ?? 0) > 0,
     youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '',
   };
 }
 
 function FeedViewerCard({ feed }: { feed: ApiFeed }) {
-  const Icon = FEED_META[feed.feedType].icon;
+  const meta = displayFeedMeta(feed.feedType);
+  const Icon = meta.icon;
   return (
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 break-words"><Icon size={16} className="text-accent shrink-0" />{feed.name || FEED_META[feed.feedType].label}</CardTitle>
+            <CardTitle className="flex items-center gap-2 break-words"><Icon size={16} className="text-accent shrink-0" />{feed.name || meta.label}</CardTitle>
             <CardDesc className="mt-1 break-all">{feed.feedType === 'WEBHOOK' ? 'Eingehender Webhook' : feed.url}</CardDesc>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <Badge>{FEED_META[feed.feedType].label}</Badge>
+            <Badge variant={isSupportedFeedType(feed.feedType) ? 'neutral' : 'warn'}>{meta.label}</Badge>
             {feed.isActive ? <Badge variant="ok">Aktiv</Badge> : <Badge variant="neutral">Pausiert</Badge>}
           </div>
         </div>
@@ -178,7 +193,16 @@ export function FeedsTab({ guildId, canManage, transport = 'guild' }: { guildId:
 
   function reset() { setEditingId(null); setCreating(false); setForm(emptyForm()); setWebhookInfo(null); }
   function startCreate() { setCreating(true); setEditingId(null); setForm(emptyForm()); setWebhookInfo(null); }
-  function startEdit(f: ApiFeed) { setEditingId(f.id); setCreating(false); setForm(feedToForm(f)); setWebhookInfo(null); }
+  function startEdit(f: ApiFeed) {
+    if (!isSupportedFeedType(f.feedType)) {
+      toast.warn(`Legacy-Feed ${f.feedType} kann nicht mehr bearbeitet werden. Deaktivieren oder löschen ist weiterhin möglich.`);
+      return;
+    }
+    setEditingId(f.id);
+    setCreating(false);
+    setForm(feedToForm(f));
+    setWebhookInfo(null);
+  }
   function patch(p: Partial<FeedForm>) { setForm(f => ({ ...f, ...p })); }
   async function invalidateFeeds() { await qc.invalidateQueries({ queryKey: feedQueryKey }); }
 
@@ -366,14 +390,21 @@ export function FeedsTab({ guildId, canManage, transport = 'guild' }: { guildId:
           {listQ.isError && <p className="text-danger text-sm break-words">{(listQ.error as Error).message}</p>}
           {feeds.length === 0 && !listQ.isLoading && !listQ.isError && <p className="text-muted text-sm">Noch keine Feeds.</p>}
           {feeds.map(f => {
-            const Icon = FEED_META[f.feedType].icon;
+            const supported = isSupportedFeedType(f.feedType);
+            const rowMeta = displayFeedMeta(f.feedType);
+            const Icon = rowMeta.icon;
             return (
               <div key={f.id} className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${editingId === f.id ? 'border-brand' : 'border-border'}`}>
-                <button type="button" className="flex-1 text-left min-w-0" onClick={() => startEdit(f)}>
+                <button
+                  type="button"
+                  className="flex-1 text-left min-w-0"
+                  onClick={() => startEdit(f)}
+                  title={supported ? 'Feed bearbeiten' : `${rowMeta.label} ist nur noch für Deaktivierung oder Löschung verfügbar`}
+                >
                   <div className="flex items-center gap-2">
                     <Icon size={15} className="text-muted shrink-0" />
                     <span className="text-white text-sm font-medium truncate">{f.name}</span>
-                    <Badge>{FEED_META[f.feedType].label}</Badge>
+                    <Badge variant={supported ? 'neutral' : 'warn'}>{rowMeta.label}</Badge>
                     {f.isActive ? <Badge variant="ok">Aktiv</Badge> : <Badge variant="neutral">Pausiert</Badge>}
                   </div>
                   <div className="text-muted text-xs mt-0.5 truncate">
@@ -382,8 +413,14 @@ export function FeedsTab({ guildId, canManage, transport = 'guild' }: { guildId:
                   </div>
                 </button>
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" title="Jetzt prüfen" onClick={() => testNow(f)} disabled={busy}><PlayCircle size={15} /></Button>
-                  <Button size="sm" variant="ghost" title={f.isActive ? 'Pausieren' : 'Aktivieren'} onClick={() => toggle(f)} disabled={busy}><Power size={15} /></Button>
+                  <Button size="sm" variant="ghost" title="Jetzt prüfen" onClick={() => testNow(f)} disabled={busy || !supported}><PlayCircle size={15} /></Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title={f.isActive ? 'Pausieren' : (supported ? 'Aktivieren' : 'Legacy-Feed kann nicht reaktiviert werden')}
+                    onClick={() => toggle(f)}
+                    disabled={busy || (!f.isActive && !supported)}
+                  ><Power size={15} /></Button>
                   <Button size="sm" variant="ghost" title="Löschen" onClick={() => remove(f)} disabled={busy}><Trash2 size={15} /></Button>
                 </div>
               </div>
