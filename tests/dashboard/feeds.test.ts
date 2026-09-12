@@ -17,6 +17,11 @@ const CH = '222222222222222222';
 const ROLE = '333333333333333301';
 
 interface Row { id: string; [k: string]: unknown }
+interface FeedCreateInitialState {
+  mentionRoles?: string[];
+  webhookSecret?: string | null;
+  credentialsEnc?: string | null;
+}
 const feeds = new Map<string, Row>();
 let seq = 0;
 
@@ -56,13 +61,26 @@ jest.mock('../../src/utils/discordChannel', () => ({
 }));
 
 const runFeedNowMock = jest.fn().mockResolvedValue(undefined);
-const createFeedMock = jest.fn(async (name: string, feedType: string, url: string, channelId: string, interval: number, createdBy: string, guildId: string) => {
+const createFeedMock = jest.fn(async (
+  name: string,
+  feedType: string,
+  url: string,
+  channelId: string,
+  interval: number,
+  createdBy: string,
+  guildId: string,
+  _filters?: Record<string, unknown>,
+  initial: FeedCreateInitialState = {},
+) => {
   seq += 1;
   const id = `f${seq}`;
   feeds.set(id, {
     id, guildId, name, feedType, url, channelId, interval,
-    lastChecked: null, lastItemId: null, isActive: true, mentionRoles: [],
-    webhookSecret: null, createdBy, createdAt: new Date(), updatedAt: new Date(),
+    lastChecked: null, lastItemId: null, isActive: true,
+    mentionRoles: initial.mentionRoles ?? [],
+    webhookSecret: initial.webhookSecret ?? null,
+    credentialsEnc: initial.credentialsEnc ?? null,
+    createdBy, createdAt: new Date(), updatedAt: new Date(),
   });
   return id;
 });
