@@ -61,11 +61,17 @@ const POST_STAGE_V2_MOUNTS = [
   '/guilds/:guildId/nitrado-drift',
   '/guilds/:guildId/radar',
   '/guilds/:guildId/economy/rewards',
+  '/bot-admin/feedback',
+  '/bot-admin/command-center/feedback',
+  '/bot-admin/command-center/feedback-channel',
 ] as const;
 const POST_STAGE_V2_APIS = [
   '/api/v2/guilds/:guildId/nitrado-drift',
   '/api/v2/guilds/:guildId/radar',
   '/api/v2/guilds/:guildId/economy/rewards',
+  '/api/v2/bot-admin/feedback',
+  '/api/v2/bot-admin/command-center/feedback',
+  '/api/v2/bot-admin/command-center/feedback-channel',
 ] as const;
 
 function sortedUnique(values: Iterable<string>): string[] {
