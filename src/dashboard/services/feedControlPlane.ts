@@ -9,6 +9,10 @@ import { validateBotChannelAccess } from '../../utils/discordChannel';
 export const FEED_TYPES = new Set<FeedPlatform>(['RSS', 'NEWS', 'TWITCH', 'STEAM', 'YOUTUBE', 'WEBHOOK']);
 export const FEED_SNOWFLAKE_RE = /^\d{17,20}$/;
 
+export function isSupportedFeedType(value: string): value is FeedPlatform {
+  return FEED_TYPES.has(value as FeedPlatform);
+}
+
 export function parseFeedInterval(value: unknown): number {
   const parsed = typeof value === 'number' ? value : parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return 300;
@@ -54,8 +58,8 @@ export async function createCanonicalFeed(input: {
   const { guildId, createdBy, body } = input;
   let name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
   const rawType = typeof body.feedType === 'string' ? body.feedType.trim().toUpperCase() : '';
-  if (!FEED_TYPES.has(rawType as FeedPlatform)) return { ok: false, error: 'Ungültiger Feed-Typ.' };
-  const feedType = rawType as FeedPlatform;
+  if (!isSupportedFeedType(rawType)) return { ok: false, error: 'Ungültiger Feed-Typ.' };
+  const feedType = rawType;
 
   const url = typeof body.url === 'string' ? body.url.trim() : '';
   const channelId = typeof body.channelId === 'string' ? body.channelId.trim() : '';
