@@ -10,6 +10,11 @@ import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import {
+  prepareTicketRelayAttachments,
+  preparedTicketRelayFiles,
+  verifyTicketRelayAttachments,
+} from './ticketAttachmentRelay';
 
 /**
  * Legacy Owner-DM-Bridge fuer /ticket.
@@ -25,41 +30,6 @@ import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
  */
 
 const OWNER_ID = (): string | null => config.discord.ownerId || null;
-const RELAY_ATTACHMENT_HOSTS = new Set(['cdn.discordapp.com', 'media.discordapp.net']);
-const DISCORD_MAX_RELAY_ATTACHMENT_BYTES = 25 * 1024 * 1024;
-
-function relayAttachmentFiles(msg: Message): Array<{ attachment: string; name: string }> {
-  if (!msg.attachments || msg.attachments.size === 0) return [];
-
-  const files: Array<{ attachment: string; name: string }> = [];
-  for (const attachment of msg.attachments.values()) {
-    if (!Number.isSafeInteger(attachment.size) || attachment.size < 0) {
-      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} hat eine ungueltige Groesse.`);
-    }
-    if (attachment.size > DISCORD_MAX_RELAY_ATTACHMENT_BYTES) {
-      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} ist groesser als 25 MiB.`);
-    }
-
-    let parsed: URL;
-    try {
-      parsed = new URL(attachment.url);
-    } catch {
-      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} hat keine gueltige URL.`);
-    }
-    if (parsed.protocol !== 'https:' || !RELAY_ATTACHMENT_HOSTS.has(parsed.hostname.toLowerCase())) {
-      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} verweist nicht auf einen erlaubten Discord-CDN-Host.`);
-    }
-    if (!/^\/(?:ephemeral-)?attachments\//.test(parsed.pathname)) {
-      throw new Error(`Ticket-Anhang ${attachment.name ?? attachment.id} verweist nicht auf einen Discord-Attachment-Pfad.`);
-    }
-
-    files.push({
-      attachment: parsed.toString(),
-      name: attachment.name ?? `attachment-${attachment.id}`,
-    });
-  }
-  return files;
-}
 
 export interface CreateTicketResult {
   success: boolean;
@@ -352,22 +322,44 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
       ticketId: ticket.id,
       fromDiscordId: userId,
       fromRole,
-      content: msg.content.slice(0, 4000),
+      content: msg.content,
     },
   });
   await prisma.ticket.update({ where: { id: ticket.id }, data: { updatedAt: new Date() } });
 
+  const sentRelayMessages: Message[] = [];
   try {
     const target = await msg.client.users.fetch(targetId);
     const senderLabel = fromRole === 'OWNER' ? '🛡️ Owner' : `👤 ${ticket.username}`;
     const header = `**${senderLabel}** · Ticket #${ticket.ticketNumber}`;
-    const body = msg.content.slice(0, 1800);
-    const files = relayAttachmentFiles(msg);
-    await target.send({
-      content: `${header}\n${body}`,
-      ...(files.length > 0 ? { files } : {}),
-      allowedMentions: { parse: [] },
-    });
+    const preparedAttachments = await prepareTicketRelayAttachments(msg.attachments.values());
+    const files = preparedTicketRelayFiles(preparedAttachments);
+    const combinedContent = `${header}\n${msg.content}`;
+
+    if (combinedContent.length <= 2000) {
+      sentRelayMessages.push(await target.send({
+        content: combinedContent,
+        ...(files.length > 0 ? { files } : {}),
+        allowedMentions: { parse: [] },
+      }));
+    } else {
+      // Discord-Nachrichten koennen selbst bis an das Content-Limit reichen.
+      // Der Ticket-Header wird dann separat gesendet, statt den Originaltext
+      // abzuschneiden. So bleiben Unicode-Emojis und Custom-Emote-Syntax exakt.
+      sentRelayMessages.push(await target.send({
+        content: header,
+        allowedMentions: { parse: [] },
+      }));
+      sentRelayMessages.push(await target.send({
+        content: msg.content,
+        ...(files.length > 0 ? { files } : {}),
+        allowedMentions: { parse: [] },
+      }));
+    }
+
+    const attachmentMessage = sentRelayMessages[sentRelayMessages.length - 1];
+    await verifyTicketRelayAttachments(attachmentMessage.attachments.values(), preparedAttachments);
+
     try { await msg.react('📨'); } catch { /* optional */ }
     try {
       await msg.reply({
@@ -376,6 +368,9 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
       });
     } catch { /* optional */ }
   } catch (e) {
+    for (const sent of [...sentRelayMessages].reverse()) {
+      try { await sent.delete(); } catch { /* best effort: kein ungepruefter Relay soll liegen bleiben */ }
+    }
     logger.warn(`Ticket #${ticket.ticketNumber}: Relay-DM an ${targetId} fehlgeschlagen`, { e: String(e) });
     try {
       await msg.reply({
