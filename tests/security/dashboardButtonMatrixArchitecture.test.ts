@@ -64,6 +64,7 @@ const CURRENT_FUNCTION_HELP_BUTTON = 'dashboard-ui/src/components/ui/FunctionHel
 const CURRENT_RADAR_TAB = 'dashboard-ui/src/components/radar/ZoneRadarTab.tsx';
 const CURRENT_RADAR_EDITOR = 'dashboard-ui/src/components/radar/ZoneEditor.tsx';
 const CURRENT_BOT_ADMIN_OWNER_TICKETS = 'dashboard-ui/src/components/BotAdminOwnerTickets.tsx';
+const CURRENT_BOT_ADMIN_TAB = 'dashboard-ui/src/components/BotAdminTab.tsx';
 const CURRENT_BOT_ADMIN_PAGE = 'dashboard-ui/src/pages/BotAdmin.tsx';
 
 const REVIEWED_POST_STAGE_FILES = new Set([
@@ -82,6 +83,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_RADAR_TAB,
   CURRENT_RADAR_EDITOR,
   CURRENT_BOT_ADMIN_OWNER_TICKETS,
+  CURRENT_BOT_ADMIN_TAB,
   CURRENT_BOT_ADMIN_PAGE,
 ]);
 
