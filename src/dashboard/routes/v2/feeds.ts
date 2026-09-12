@@ -1,309 +1,187 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
  * Feeds-Routen — Live-Feeds (RSS, News, Twitch, Steam, YouTube, Webhook) pro Guild.
  * Dashboard-only: der frühere Slash-Command /feed wurde hierher migriert.
  *
- *   GET    /                    Feeds der Guild auflisten
- *   GET    /:id                 Einzelner Feed
- *   POST   /                    Feed anlegen
- *   PUT    /:id                 Feed aktualisieren
- *   DELETE /:id                 Feed löschen
- *   POST   /:id/toggle          Feed aktivieren/deaktivieren
- *   POST   /:id/test            Feed jetzt sofort prüfen
- *   POST   /:id/roles           Ping-Rolle hinzufügen
- *   DELETE /:id/roles/:roleId   Ping-Rolle entfernen
- *   GET    /:id/webhook         Webhook-URL + Secret (nur WEBHOOK-Typ)
- *   POST   /:id/webhook/rotate  Neues Webhook-Secret erzeugen
- *
- * Strikte guildId-Scope-Prüfung: jede Prisma-Query trägt guildId (+ Legacy null wird
- * NICHT vermischt — nur eigene Guild). SSRF-Schutz für RSS/NEWS/YOUTUBE-URLs.
+ * Fachlogik und Persistenz-Mutationen laufen über feedControlPlane.ts. Diese
+ * Route besitzt nur Guild-Auth, Audit und Socket-Emissionen. Dadurch teilen
+ * Guild-Dashboard und BotAdmin dieselbe Feed-Control-Plane, ohne ihre
+ * Autorisierungsgrenzen zu vermischen.
  */
 
-import { Router } from 'express';
-import { PermissionFlagsBits } from 'discord.js';
+import { Router, type Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
-import prisma from '../../../database/prisma';
-import { config } from '../../../config';
-import { resolveFeedSource } from '../../../modules/feeds/urlResolver';
-import { validateBotChannelAccess } from '../../../utils/discordChannel';
-import { tryGetDashboardClient } from '../../clientRegistry';
-import { createFeed, runFeedNow } from '../../../modules/feeds/feedManager';
-import { generateWebhookSecret } from '../../../modules/feeds/webhookReceiver';
+import {
+  addCanonicalFeedRole,
+  createCanonicalFeed,
+  deleteCanonicalFeed,
+  feedControlHttpStatus,
+  feedToApi,
+  findCanonicalFeed,
+  getCanonicalFeedWebhook,
+  listCanonicalFeeds,
+  removeCanonicalFeedRole,
+  rotateCanonicalFeedWebhook,
+  testCanonicalFeed,
+  toggleCanonicalFeed,
+  updateCanonicalFeed,
+  type FeedControlFailure,
+} from '../../services/feedControlPlane';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
-import { resolveCredentialUpdate } from '../../../modules/feeds/feedCredentials';
 
 export const feedsRouter = Router({ mergeParams: true });
 
-const SNOWFLAKE_RE = /^\d{17,20}$/;
-const FEED_TYPES = new Set(['RSS', 'NEWS', 'TWITCH', 'STEAM', 'YOUTUBE', 'WEBHOOK']);
-
-interface FeedRow {
-  id: string;
-  guildId: string | null;
-  name: string;
-  feedType: string;
-  url: string;
-  channelId: string;
-  interval: number;
-  lastChecked: Date | null;
-  lastItemId: string | null;
-  isActive: boolean;
-  mentionRoles: string[];
-  webhookSecret: string | null;
-  credentialsEnc: string | null;
-  createdBy: string;
-  createdAt: Date;
-  updatedAt: Date;
+function respondFailure(res: Response, result: FeedControlFailure): void {
+  res.status(feedControlHttpStatus(result.code)).json({ error: result.error });
 }
 
-function feedToApi(f: FeedRow) {
-  return {
-    id: f.id,
-    name: f.name,
-    feedType: f.feedType,
-    url: f.url,
-    channelId: f.channelId,
-    interval: f.interval,
-    lastChecked: f.lastChecked,
-    isActive: f.isActive,
-    mentionRoles: f.mentionRoles ?? [],
-    hasWebhookSecret: f.webhookSecret != null,
-    hasCredentials: f.credentialsEnc != null,
-    createdBy: f.createdBy,
-    createdAt: f.createdAt,
-    updatedAt: f.updatedAt,
-  };
-}
-
-// ── Validierung ───────────────────────────────────────────────────────────────
-// Technische Validierung/Erkennung erfolgt zentral in der URL-Resolver-Engine
-// (src/modules/feeds/urlResolver.ts). Hier wird nur delegiert.
-
-function parseInterval(v: unknown): number {
-  const n = typeof v === 'number' ? v : parseInt(String(v ?? ''), 10);
-  if (!Number.isFinite(n)) return 300;
-  return Math.min(86400, Math.max(60, Math.trunc(n)));
-}
-
-function normalizeRoleIds(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return [...new Set(v.filter((x): x is string => typeof x === 'string' && SNOWFLAKE_RE.test(x)))].slice(0, 20);
-}
-
-/** Lädt einen Feed strikt guild-scoped. */
-async function findGuildFeed(guildId: string, id: string): Promise<FeedRow | null> {
-  const feed = await prisma.feed.findFirst({ where: { id, guildId } });
-  return feed as FeedRow | null;
-}
-
-async function ensureChannel(guildId: string, channelId: string): Promise<{ ok: boolean; reason?: string }> {
-  const client = tryGetDashboardClient();
-  if (!client) return { ok: true }; // Ohne Client: Persistenz erlauben, Prüfung beim Senden.
-  const res = await validateBotChannelAccess(client, guildId, channelId, [
-    PermissionFlagsBits.ViewChannel,
-    PermissionFlagsBits.SendMessages,
-    PermissionFlagsBits.EmbedLinks,
-  ]);
-  return res.ok ? { ok: true } : { ok: false, reason: res.reason };
-}
-
-// ── Routen ────────────────────────────────────────────────────────────────────
 feedsRouter.get('/', requireGuildPermission('feeds.view'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const feeds = await prisma.feed.findMany({
-    where: { guildId },
-    orderBy: { createdAt: 'desc' },
-  });
-  res.json({ feeds: (feeds as FeedRow[]).map(feedToApi) });
+  const feeds = await listCanonicalFeeds(guildId);
+  res.json({ feeds: feeds.map(feedToApi) });
 });
 
 feedsRouter.get('/:id', requireGuildPermission('feeds.view'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const feed = await findGuildFeed(guildId, req.params.id);
+  const feed = await findCanonicalFeed(guildId, String(req.params.id));
   if (!feed) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
   res.json(feedToApi(feed));
 });
 
 feedsRouter.post('/', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId, actorDiscordId } = req.guildScope!;
-  const body = req.body ?? {};
-  let name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
-  const feedType = typeof body.feedType === 'string' ? body.feedType.trim().toUpperCase() : '';
-  const url = typeof body.url === 'string' ? body.url.trim() : '';
-  const channelId = typeof body.channelId === 'string' ? body.channelId.trim() : '';
-  const interval = parseInterval(body.interval);
+  const created = await createCanonicalFeed({
+    guildId,
+    createdBy: actorDiscordId,
+    body: (req.body ?? {}) as Record<string, unknown>,
+  });
+  if (!created.ok) { res.status(400).json({ error: created.error }); return; }
 
-  if (!FEED_TYPES.has(feedType)) { res.status(400).json({ error: 'Ungültiger Feed-Typ.' }); return; }
-  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
-  const resolved = resolveFeedSource(feedType, url);
-  if (!resolved.ok) { res.status(400).json({ error: resolved.reason }); return; }
-  // Anzeigename optional (v. a. News) -> aus der Quelle ableiten. Nur Anzeige.
-  if (!name) name = resolved.resolved.display.slice(0, 100);
-  if (!name) { res.status(400).json({ error: 'Name ist erforderlich.' }); return; }
-  const chk = await ensureChannel(guildId, channelId);
-  if (!chk.ok) { res.status(400).json({ error: chk.reason ?? 'Ziel-Channel ungültig.' }); return; }
-
-  // Optionale pro-Feed API-Keys (verschluesselt) VOR dem Anlegen validieren,
-  // damit kein halbfertiger Datensatz entsteht.
-  const cred = resolveCredentialUpdate(feedType, body as Record<string, unknown>);
-  if (!cred.ok) { res.status(400).json({ error: cred.error }); return; }
-  const credEnc = cred.change ? cred.value : null;
-
-  // Technische Grundlage ist ausschliesslich die normalisierte URL/Quelle.
-  const feedId = await createFeed(name, feedType, resolved.resolved.url, channelId, interval, actorDiscordId, guildId);
-
-  const mentionRoles = normalizeRoleIds(body.mentionRoles);
-  let webhookSecret: string | null = null;
-  if (feedType === 'WEBHOOK') webhookSecret = generateWebhookSecret();
-  if (mentionRoles.length || webhookSecret || credEnc) {
-    await prisma.feed.update({
-      where: { id: feedId },
-      data: { mentionRoles, webhookSecret: webhookSecret ?? undefined, credentialsEnc: credEnc ?? undefined },
-    });
-  }
-
-  const feed = await findGuildFeed(guildId, feedId);
-  logAuditDb('FEED_CREATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId, name, feedType, credentialsSet: credEnc != null } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId } });
-  res.status(201).json(feedToApi(feed!));
+  const feed = await findCanonicalFeed(guildId, created.feedId);
+  if (!feed) { res.status(409).json({ error: 'Feed wurde erstellt, konnte danach aber nicht geladen werden.' }); return; }
+  logAuditDb('FEED_CREATED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: {
+      feedId: created.feedId,
+      name: created.name,
+      feedType: created.feedType,
+      credentialsSet: created.credentialsSet,
+    },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: created.feedId } });
+  res.status(201).json(feedToApi(feed));
 });
 
 feedsRouter.put('/:id', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
+  const result = await updateCanonicalFeed({
+    guildId,
+    id: String(req.params.id),
+    body: (req.body ?? {}) as Record<string, unknown>,
+  });
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  const body = req.body ?? {};
-  const data: Record<string, unknown> = {};
-
-  if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim().slice(0, 100);
-  if (body.interval !== undefined) data.interval = parseInterval(body.interval);
-  if (body.mentionRoles !== undefined) data.mentionRoles = normalizeRoleIds(body.mentionRoles);
-
-  // Typ/URL dürfen geändert werden — dann erneut validieren.
-  const newType = typeof body.feedType === 'string' ? body.feedType.trim().toUpperCase() : existing.feedType;
-  if (body.feedType !== undefined && !FEED_TYPES.has(newType)) {
-    res.status(400).json({ error: 'Ungültiger Feed-Typ.' }); return;
-  }
-  if (body.url !== undefined || body.feedType !== undefined) {
-    const url = typeof body.url === 'string' ? body.url.trim() : existing.url;
-    const resolved = resolveFeedSource(newType, url);
-    if (!resolved.ok) { res.status(400).json({ error: resolved.reason }); return; }
-    data.feedType = newType;
-    data.url = resolved.resolved.url;
-    // Bei Typ-/Quellwechsel Duplikat-Marker zurücksetzen.
-    data.lastItemId = null;
-    // Typwechsel -> alte, typ-fremde Credentials verwerfen (neue koennen unten folgen).
-    if (newType !== existing.feedType) data.credentialsEnc = null;
-  }
-
-  // Optionale pro-Feed API-Keys (verschluesselt) setzen/entfernen.
-  const cred = resolveCredentialUpdate(newType, body as Record<string, unknown>);
-  if (!cred.ok) { res.status(400).json({ error: cred.error }); return; }
-  if (cred.change) data.credentialsEnc = cred.value;
-
-  if (typeof body.channelId === 'string') {
-    if (!SNOWFLAKE_RE.test(body.channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
-    const chk = await ensureChannel(guildId, body.channelId);
-    if (!chk.ok) { res.status(400).json({ error: chk.reason ?? 'Ziel-Channel ungültig.' }); return; }
-    data.channelId = body.channelId;
-  }
-
-  await prisma.feed.update({ where: { id: existing.id }, data });
-  const feed = await findGuildFeed(guildId, existing.id);
-  logAuditDb('FEED_UPDATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, credentialsChanged: cred.change } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
-  res.json(feedToApi(feed!));
+  logAuditDb('FEED_UPDATED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id, credentialsChanged: result.credentialsChanged },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: result.feed.id } });
+  res.json(feedToApi(result.feed));
 });
 
 feedsRouter.delete('/:id', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
+  const result = await deleteCanonicalFeed(guildId, String(req.params.id));
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  await prisma.feed.delete({ where: { id: existing.id } });
-  logAuditDb('FEED_DELETED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, name: existing.name } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
+  logAuditDb('FEED_DELETED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id, name: result.feed.name },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: result.feed.id } });
   res.json({ ok: true });
 });
 
 feedsRouter.post('/:id/toggle', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
+  const result = await toggleCanonicalFeed({
+    guildId,
+    id: String(req.params.id),
+    isActive: typeof req.body?.isActive === 'boolean' ? req.body.isActive : undefined,
+  });
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  const next = typeof req.body?.isActive === 'boolean' ? req.body.isActive : !existing.isActive;
-  await prisma.feed.update({ where: { id: existing.id }, data: { isActive: next } });
-  logAuditDb('FEED_TOGGLED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, isActive: next } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
-  res.json({ ok: true, isActive: next });
+  logAuditDb('FEED_TOGGLED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id, isActive: result.isActive },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: result.feed.id } });
+  res.json({ ok: true, isActive: result.isActive });
 });
 
 feedsRouter.post('/:id/test', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
+  const result = await testCanonicalFeed(guildId, String(req.params.id));
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  const client = tryGetDashboardClient();
-  if (!client) { res.status(503).json({ error: 'Bot-Client nicht verfügbar.' }); return; }
-
-  try {
-    await runFeedNow(client, existing.id);
-  } catch (e) {
-    res.status(502).json({ error: `Feed-Prüfung fehlgeschlagen: ${String((e as Error)?.message ?? e).slice(0, 300)}` });
-    return;
-  }
-  logAuditDb('FEED_TESTED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
+  logAuditDb('FEED_TESTED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id },
+  });
   res.json({ ok: true });
 });
 
 feedsRouter.post('/:id/roles', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
-
   const roleId = typeof req.body?.roleId === 'string' ? req.body.roleId.trim() : '';
-  if (!SNOWFLAKE_RE.test(roleId)) { res.status(400).json({ error: 'Ungültige roleId.' }); return; }
+  const result = await addCanonicalFeedRole(guildId, String(req.params.id), roleId);
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  const roles = [...new Set([...(existing.mentionRoles ?? []), roleId])].slice(0, 20);
-  await prisma.feed.update({ where: { id: existing.id }, data: { mentionRoles: roles } });
-  logAuditDb('FEED_ROLE_ADDED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, roleId } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
-  res.json({ ok: true, mentionRoles: roles });
+  logAuditDb('FEED_ROLE_ADDED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id, roleId },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: result.feed.id } });
+  res.json({ ok: true, mentionRoles: result.mentionRoles });
 });
 
 feedsRouter.delete('/:id/roles/:roleId', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
+  const roleId = String(req.params.roleId);
+  const result = await removeCanonicalFeedRole(guildId, String(req.params.id), roleId);
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  const roles = (existing.mentionRoles ?? []).filter((r) => r !== req.params.roleId);
-  await prisma.feed.update({ where: { id: existing.id }, data: { mentionRoles: roles } });
-  logAuditDb('FEED_ROLE_REMOVED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id, roleId: req.params.roleId } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: existing.id } });
-  res.json({ ok: true, mentionRoles: roles });
+  logAuditDb('FEED_ROLE_REMOVED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id, roleId },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: result.feed.id } });
+  res.json({ ok: true, mentionRoles: result.mentionRoles });
 });
 
 feedsRouter.get('/:id/webhook', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
-  if (existing.feedType !== 'WEBHOOK') { res.status(400).json({ error: 'Nur WEBHOOK-Feeds haben ein Secret.' }); return; }
-
-  const base = (config.dashboard?.url || '').replace(/\/$/, '');
-  const webhookUrl = base ? `${base}/webhooks/feed/${existing.id}` : `/webhooks/feed/${existing.id}`;
-  res.json({ webhookUrl, secret: existing.webhookSecret, hmacHeader: 'X-Signature (HMAC-SHA256 über Roh-Body)' });
+  const result = await getCanonicalFeedWebhook(guildId, String(req.params.id));
+  if (!result.ok) { respondFailure(res, result); return; }
+  res.json({ webhookUrl: result.webhookUrl, secret: result.secret, hmacHeader: result.hmacHeader });
 });
 
 feedsRouter.post('/:id/webhook/rotate', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId } = req.guildScope!;
-  const existing = await findGuildFeed(guildId, req.params.id);
-  if (!existing) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
-  if (existing.feedType !== 'WEBHOOK') { res.status(400).json({ error: 'Nur WEBHOOK-Feeds haben ein Secret.' }); return; }
+  const result = await rotateCanonicalFeedWebhook(guildId, String(req.params.id));
+  if (!result.ok) { respondFailure(res, result); return; }
 
-  const secret = generateWebhookSecret();
-  await prisma.feed.update({ where: { id: existing.id }, data: { webhookSecret: secret } });
-  logAuditDb('FEED_WEBHOOK_SECRET_ROTATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId: existing.id } });
-  res.json({ ok: true, secret });
+  logAuditDb('FEED_WEBHOOK_SECRET_ROTATED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: { feedId: result.feed.id },
+  });
+  res.json({ ok: true, secret: result.secret });
 });

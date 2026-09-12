@@ -20,7 +20,7 @@ function Json({ value }: { value: unknown }) {
   return <pre className="text-[11px] whitespace-pre-wrap break-all bg-bg-elev rounded-md p-3 max-h-80 overflow-auto">{JSON.stringify(value, null, 2)}</pre>;
 }
 
-export function BotAdminCommandCenter({ base = '/api/v2/bot-admin' }: { base?: string }) {
+export function BotAdminCommandCenter({ base = '/api/v2/bot-admin', showFeedback = false }: { base?: string; showFeedback?: boolean }) {
   const center = `${base}/command-center`;
   const [tab, setTab] = useState<Tab>('system');
   const guildsQ = useQuery({ queryKey: [base, 'guilds'], queryFn: () => api.get<{ items: Guild[] }>(`${base}/guilds`) });
@@ -33,12 +33,17 @@ export function BotAdminCommandCenter({ base = '/api/v2/bot-admin' }: { base?: s
     { key: 'feedback', label: 'Feedback', icon: MessageSquare },
     { key: 'maintenance', label: 'Validierung & Löschen', icon: ShieldAlert },
   ];
+  const visibleTabs = showFeedback ? tabs : tabs.filter(item => item.key !== 'feedback');
+
+  useEffect(() => {
+    if (!showFeedback && tab === 'feedback') setTab('system');
+  }, [showFeedback, tab]);
 
   return <div className="space-y-4">
     <div className="flex flex-wrap gap-2">
-      {tabs.map(t => <Button key={t.key} size="sm" variant={tab === t.key ? 'primary' : 'ghost'} onClick={() => setTab(t.key)}><t.icon className="h-4 w-4" />{t.label}</Button>)}
+      {visibleTabs.map(t => <Button key={t.key} size="sm" variant={tab === t.key ? 'primary' : 'ghost'} onClick={() => setTab(t.key)}><t.icon className="h-4 w-4" />{t.label}</Button>)}
     </div>
-    {(tab === 'triggers' || tab === 'feedback') && <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+    {(tab === 'triggers' || (showFeedback && tab === 'feedback')) && <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
       <span className="text-xs text-muted">Server:</span>
       <Select value={guildId} onChange={e => setGuildId(e.target.value)} className="sm:!w-auto">
         <option value="">— Server wählen —</option>
@@ -49,7 +54,7 @@ export function BotAdminCommandCenter({ base = '/api/v2/bot-admin' }: { base?: s
     {tab === 'audit' && <Audit center={center} />}
     {tab === 'providers' && <Providers center={center} />}
     {tab === 'triggers' && <Triggers center={center} guildId={guildId} />}
-    {tab === 'feedback' && <Feedback center={center} guildId={guildId} />}
+    {showFeedback && tab === 'feedback' && <Feedback center={center} guildId={guildId} />}
     {tab === 'maintenance' && <Maintenance center={center} />}
   </div>;
 }
@@ -252,7 +257,7 @@ function Feedback({ center, guildId }: { center: string; guildId: string }) {
           <Button size="sm" onClick={() => save.mutate('guild')} loading={save.isPending} disabled={!guildId || cfg.isLoading || cfg.isError}>Guild setzen</Button>
         </div>
       </div>
-      <p className="text-[11px] text-muted mt-2">Der globale Fallback ist Bot-Owner-only. Für die ausgewählte Guild werden nur erreichbare Text-/Ankündigungskanäle angeboten.</p>
+      <p className="text-[11px] text-muted mt-2">Feedback-Verwaltung ist ausschließlich für die globale DEV-/Owner-Identität freigeschaltet. Für die ausgewählte Guild werden nur erreichbare Text-/Ankündigungskanäle angeboten.</p>
     </Card>
     <Card>
       <h2 className="font-semibold mb-3">Feedback-Status / Admin-Notiz</h2>

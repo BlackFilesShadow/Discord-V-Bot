@@ -1,5 +1,6 @@
 import { Router, type Request, type RequestHandler, type Response } from 'express';
 import { requireBotAdmin } from '../../middleware/auth';
+import { botAdminTicketReplyRouter } from './botAdminTicketReply';
 
 /**
  * Strict fail-closed contract for the legacy Bot-Admin collection router.
@@ -204,6 +205,11 @@ botAdminLegacyContractRouter.get('/validate', requireBotAdmin, validateBotAdminP
 botAdminLegacyContractRouter.get('/packages', requireBotAdmin, validateBotAdminPagination, packageStatus, searchQuery);
 botAdminLegacyContractRouter.get('/users', requireBotAdmin, validateBotAdminPagination, userFilter, searchQuery);
 botAdminLegacyContractRouter.get('/tickets', requireBotAdmin, validateBotAdminPagination, ticketStatus);
+
+// Owner-Ticket-Antworten bleiben bewusst in einem isolierten Router: Nur die
+// konkrete Reply-Route erhaelt den globalen DEV-/Owner-Gate. Bestehende
+// BotAdmin-Lese-/Close-Rechte fuer Tickets werden dadurch nicht veraendert.
+botAdminLegacyContractRouter.use('/tickets', botAdminTicketReplyRouter);
 
 // Global Bot-Admin mutation contract. Legacy handlers still own business logic,
 // but they may no longer coerce malformed arrays/numbers into valid enum values

@@ -17,6 +17,11 @@ const CH = '222222222222222222';
 const ROLE = '333333333333333301';
 
 interface Row { id: string; [k: string]: unknown }
+interface FeedCreateInitialState {
+  mentionRoles?: string[];
+  webhookSecret?: string | null;
+  credentialsEnc?: string | null;
+}
 const feeds = new Map<string, Row>();
 let seq = 0;
 
@@ -35,10 +40,20 @@ const prismaMock = {
       Object.assign(r, data);
       return r;
     }),
+    updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const found = [...feeds.values()].filter(r => match(r, where));
+      for (const r of found) Object.assign(r, data, { updatedAt: new Date() });
+      return { count: found.length };
+    }),
     delete: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const r = feeds.get(where.id as string)!;
       feeds.delete(where.id as string);
       return r;
+    }),
+    deleteMany: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      const found = [...feeds.values()].filter(r => match(r, where));
+      for (const r of found) feeds.delete(r.id);
+      return { count: found.length };
     }),
   },
 };
@@ -56,13 +71,26 @@ jest.mock('../../src/utils/discordChannel', () => ({
 }));
 
 const runFeedNowMock = jest.fn().mockResolvedValue(undefined);
-const createFeedMock = jest.fn(async (name: string, feedType: string, url: string, channelId: string, interval: number, createdBy: string, guildId: string) => {
+const createFeedMock = jest.fn(async (
+  name: string,
+  feedType: string,
+  url: string,
+  channelId: string,
+  interval: number,
+  createdBy: string,
+  guildId: string,
+  _filters?: Record<string, unknown>,
+  initial: FeedCreateInitialState = {},
+) => {
   seq += 1;
   const id = `f${seq}`;
   feeds.set(id, {
     id, guildId, name, feedType, url, channelId, interval,
-    lastChecked: null, lastItemId: null, isActive: true, mentionRoles: [],
-    webhookSecret: null, createdBy, createdAt: new Date(), updatedAt: new Date(),
+    lastChecked: null, lastItemId: null, isActive: true,
+    mentionRoles: initial.mentionRoles ?? [],
+    webhookSecret: initial.webhookSecret ?? null,
+    credentialsEnc: initial.credentialsEnc ?? null,
+    createdBy, createdAt: new Date(), updatedAt: new Date(),
   });
   return id;
 });
@@ -184,6 +212,18 @@ describe('Feeds-Router — toggle / test / roles / webhook', () => {
     const res = await request(app).post(`${BASE}/${c.body.id}/toggle`).send({ isActive: false });
     expect(res.status).toBe(200);
     expect(res.body.isActive).toBe(false);
+  });
+
+  it('reaktiviert keine nicht mehr unterstützten Legacy-Typen', async () => {
+    feeds.set('legacy', {
+      id: 'legacy', guildId: GID, name: 'Legacy', feedType: 'CUSTOM', url: 'legacy', channelId: CH,
+      interval: 300, lastChecked: null, lastItemId: null, isActive: false, mentionRoles: [], webhookSecret: null,
+      credentialsEnc: null, createdBy: ACTOR, createdAt: new Date(), updatedAt: new Date(),
+    });
+    const res = await request(makeApp()).post(`${BASE}/legacy/toggle`).send({ isActive: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/Legacy-Feed-Typ CUSTOM/);
+    expect(feeds.get('legacy')?.isActive).toBe(false);
   });
 
   it('prüft einen Feed sofort (test)', async () => {

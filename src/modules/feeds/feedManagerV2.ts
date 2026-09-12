@@ -9,6 +9,13 @@ import { getTwitchCreds, getYouTubeKey } from './feedCredentials';
 import { entriesAfterMarker, fetchFeedDocument, type FeedEntry } from './feedDocument';
 import { getSteamNews, getTwitchStream, getYouTubeEntries } from './platformClients';
 import { feedConfigurationAction } from './feedConfigurationPolicy';
+import { cleanupExpiredFeedDeliveryClaims, deliverFeedItemOnce } from './feedDeliveryClaim';
+
+export interface FeedCreateInitialState {
+  mentionRoles?: string[];
+  webhookSecret?: string | null;
+  credentialsEnc?: string | null;
+}
 
 export async function createFeed(
   name: string,
@@ -19,9 +26,22 @@ export async function createFeed(
   createdBy: string,
   guildId: string,
   filters?: Record<string, unknown>,
+  initial: FeedCreateInitialState = {},
 ): Promise<string> {
   const feed = await prisma.feed.create({
-    data: { name, feedType: feedType as any, url, channelId, guildId, interval, createdBy, filters: filters as any },
+    data: {
+      name,
+      feedType: feedType as any,
+      url,
+      channelId,
+      guildId,
+      interval,
+      createdBy,
+      filters: filters as any,
+      ...(initial.mentionRoles !== undefined ? { mentionRoles: initial.mentionRoles } : {}),
+      ...(initial.webhookSecret !== undefined ? { webhookSecret: initial.webhookSecret } : {}),
+      ...(initial.credentialsEnc !== undefined ? { credentialsEnc: initial.credentialsEnc } : {}),
+    },
   });
   logAudit('FEED_CREATED', 'FEED', { feedId: feed.id, name, feedType, channelId, createdBy });
   return feed.id;
@@ -85,9 +105,9 @@ async function translateNews(entry: FeedEntry): Promise<FeedEntry> {
   return { ...entry, title, description };
 }
 
-async function processFeedInner(client: Client, feedId: string): Promise<void> {
+async function processFeedInner(client: Client, feedId: string, allowInactive = false): Promise<void> {
   const feed = await prisma.feed.findUnique({ where: { id: feedId } });
-  if (!feed || !feed.isActive) return;
+  if (!feed || (!feed.isActive && !allowInactive)) return;
 
   const channel = await client.channels.fetch(feed.channelId).catch(() => null) as TextChannel | null;
   if (!channel || !channel.guild) throw new Error('Ziel-Channel ist nicht erreichbar.');
@@ -115,7 +135,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, raw.id, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     if (feed.lastItemId && !state.markerFound && toPost.length) {
@@ -141,7 +161,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         .setFooter({ text: `📡 ${feed.name}` })
         .setTimestamp(validDate(stream.startedAt));
       if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, marker, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: marker, lastChecked: new Date() } });
     return;
@@ -160,7 +180,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, item.id, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     return;
@@ -177,7 +197,7 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await send(embed);
+      await deliverFeedItemOnce(feed.id, item.id, () => send(embed));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     return;
@@ -191,7 +211,13 @@ async function processFeedInner(client: Client, feedId: string): Promise<void> {
   throw new Error(`Nicht unterstützter Feed-Typ: ${feed.feedType}`);
 }
 
-async function processFeed(client: Client, feedId: string, ignoreBackoff = false, propagateError = false): Promise<void> {
+async function processFeed(
+  client: Client,
+  feedId: string,
+  ignoreBackoff = false,
+  propagateError = false,
+  allowInactive = false,
+): Promise<void> {
   const currentBackoff = feedBackoff.get(feedId);
   if (!ignoreBackoff && currentBackoff && currentBackoff.until > Date.now()) return;
   if (processingFeeds.has(feedId)) {
@@ -200,7 +226,7 @@ async function processFeed(client: Client, feedId: string, ignoreBackoff = false
   }
   processingFeeds.add(feedId);
   try {
-    await processFeedInner(client, feedId);
+    await processFeedInner(client, feedId, allowInactive);
     feedBackoff.delete(feedId);
   } catch (error) {
     const previous = feedBackoff.get(feedId)?.count ?? 0;
@@ -239,7 +265,7 @@ async function processFeed(client: Client, feedId: string, ignoreBackoff = false
 }
 
 export async function runFeedNow(client: Client, feedId: string): Promise<void> {
-  await processFeed(client, feedId, true, true);
+  await processFeed(client, feedId, true, true, true);
 }
 
 function startFeedTimer(client: Client, feed: { id: string; name: string; interval: number }): void {
@@ -251,6 +277,7 @@ function startFeedTimer(client: Client, feed: { id: string; name: string; interv
 }
 
 async function refreshFeedTimers(client: Client): Promise<void> {
+  await cleanupExpiredFeedDeliveryClaims();
   const active = await prisma.feed.findMany({ where: { isActive: true }, select: { id: true, name: true, interval: true } });
   const activeIds = new Set(active.map((feed) => feed.id));
   for (const [id, timer] of feedTimers) {

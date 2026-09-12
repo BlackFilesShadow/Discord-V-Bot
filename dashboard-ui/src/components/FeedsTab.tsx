@@ -6,7 +6,13 @@
  * Deutsche übersetzt. Neue Feeds/Streams werden im Ziel-Channel als Embed
  * gepostet (Name + Channel-Link + Quell-URL), optional mit Rollen-Ping.
  *
- * Backend: /api/v2/guilds/:guildId/feeds
+ * Die Oberfläche ist kanonisch für beide autorisierten Control-Planes:
+ * - Guild-Dashboard: /api/v2/guilds/:guildId/feeds mit feeds.view/manage
+ * - BotAdmin: /api/v2/bot-admin/feeds mit aktiver BotAdminSession
+ *
+ * Nur der HTTP-Transport unterscheidet sich; Feed-Typen, Formulare und
+ * Fachverhalten bleiben identisch. Historische, nicht mehr unterstützte Typen
+ * bleiben sichtbar, können aber nicht neu angelegt, bearbeitet oder reaktiviert werden.
  */
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,11 +29,13 @@ import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 
 type FeedType = 'RSS' | 'NEWS' | 'TWITCH' | 'STEAM' | 'YOUTUBE' | 'WEBHOOK';
+export type FeedTransport = 'guild' | 'bot-admin';
 
 interface ApiFeed {
   id: string;
   name: string;
-  feedType: FeedType;
+  // string statt FeedType: Altbestände wie CUSTOM/TWITTER dürfen die UI nicht crashen.
+  feedType: string;
   url: string;
   channelId: string;
   interval: number;
@@ -66,30 +74,43 @@ const FEED_META: Record<FeedType, { label: string; icon: typeof Rss; hint: strin
   WEBHOOK: { label: 'Webhook (eingehend)', icon: Webhook, hint: 'Frei wählbares Label — liefert eine signierte Webhook-URL.', placeholder: 'z. B. Externes System' },
 };
 
+function isSupportedFeedType(value: string): value is FeedType {
+  return Object.prototype.hasOwnProperty.call(FEED_META, value);
+}
+
+function displayFeedMeta(feedType: string): { label: string; icon: typeof Rss } {
+  if (isSupportedFeedType(feedType)) return FEED_META[feedType];
+  return { label: `Legacy: ${feedType}`, icon: Rss };
+}
+
 function emptyForm(): FeedForm {
   return { name: '', feedType: 'RSS', url: '', channelId: '', interval: '300', mentionRoles: [], pingEnabled: false, youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '' };
 }
 
 function feedToForm(f: ApiFeed): FeedForm {
   return {
-    name: f.name, feedType: f.feedType, url: f.url, channelId: f.channelId,
+    name: f.name,
+    feedType: isSupportedFeedType(f.feedType) ? f.feedType : 'RSS',
+    url: f.url,
+    channelId: f.channelId,
     interval: String(f.interval), mentionRoles: f.mentionRoles ?? [], pingEnabled: (f.mentionRoles?.length ?? 0) > 0,
     youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '',
   };
 }
 
 function FeedViewerCard({ feed }: { feed: ApiFeed }) {
-  const Icon = FEED_META[feed.feedType].icon;
+  const meta = displayFeedMeta(feed.feedType);
+  const Icon = meta.icon;
   return (
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 break-words"><Icon size={16} className="text-accent shrink-0" />{feed.name || FEED_META[feed.feedType].label}</CardTitle>
+            <CardTitle className="flex items-center gap-2 break-words"><Icon size={16} className="text-accent shrink-0" />{feed.name || meta.label}</CardTitle>
             <CardDesc className="mt-1 break-all">{feed.feedType === 'WEBHOOK' ? 'Eingehender Webhook' : feed.url}</CardDesc>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            <Badge>{FEED_META[feed.feedType].label}</Badge>
+            <Badge variant={isSupportedFeedType(feed.feedType) ? 'neutral' : 'warn'}>{meta.label}</Badge>
             {feed.isActive ? <Badge variant="ok">Aktiv</Badge> : <Badge variant="neutral">Pausiert</Badge>}
           </div>
         </div>
@@ -112,24 +133,42 @@ function FeedViewerCard({ feed }: { feed: ApiFeed }) {
   );
 }
 
-export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: boolean }) {
+export function FeedsTab({ guildId, canManage, transport = 'guild' }: { guildId: string; canManage: boolean; transport?: FeedTransport }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const feedQueryKey = ['feeds', transport, guildId] as const;
+
+  function feedPath(suffix = ''): string {
+    if (transport === 'bot-admin') {
+      return `/api/v2/bot-admin/feeds${suffix}?guildId=${encodeURIComponent(guildId)}`;
+    }
+    return `/api/v2/guilds/${guildId}/feeds${suffix}`;
+  }
 
   const listQ = useQuery({
-    queryKey: ['feeds', guildId],
-    queryFn: () => api.get<{ feeds: ApiFeed[] }>(`/api/v2/guilds/${guildId}/feeds`),
+    queryKey: feedQueryKey,
+    queryFn: async () => {
+      if (transport === 'bot-admin') {
+        const result = await api.get<{ items: ApiFeed[] }>(feedPath());
+        return { feeds: result.items };
+      }
+      return api.get<{ feeds: ApiFeed[] }>(feedPath());
+    },
     enabled: !!guildId,
     retry: false,
   });
   const channelsQ = useQuery({
-    queryKey: ['guild-channels', guildId],
-    queryFn: () => api.get<{ channels: DiscordChannel[] }>(`/api/v2/guilds/${guildId}/channels`),
+    queryKey: ['feed-channels', transport, guildId],
+    queryFn: () => api.get<{ channels: DiscordChannel[] }>(
+      transport === 'bot-admin' ? feedPath('/channels') : `/api/v2/guilds/${guildId}/channels`,
+    ),
     enabled: !!guildId && canManage,
   });
   const rolesQ = useQuery({
-    queryKey: ['guild-roles', guildId],
-    queryFn: () => api.get<{ roles: DiscordRole[] }>(`/api/v2/guilds/${guildId}/roles`),
+    queryKey: ['feed-roles', transport, guildId],
+    queryFn: () => api.get<{ roles: DiscordRole[] }>(
+      transport === 'bot-admin' ? feedPath('/roles') : `/api/v2/guilds/${guildId}/roles`,
+    ),
     enabled: !!guildId && canManage,
   });
 
@@ -154,8 +193,18 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
 
   function reset() { setEditingId(null); setCreating(false); setForm(emptyForm()); setWebhookInfo(null); }
   function startCreate() { setCreating(true); setEditingId(null); setForm(emptyForm()); setWebhookInfo(null); }
-  function startEdit(f: ApiFeed) { setEditingId(f.id); setCreating(false); setForm(feedToForm(f)); setWebhookInfo(null); }
+  function startEdit(f: ApiFeed) {
+    if (!isSupportedFeedType(f.feedType)) {
+      toast.warn(`Legacy-Feed ${f.feedType} kann nicht mehr bearbeitet werden. Deaktivieren oder löschen ist weiterhin möglich.`);
+      return;
+    }
+    setEditingId(f.id);
+    setCreating(false);
+    setForm(feedToForm(f));
+    setWebhookInfo(null);
+  }
   function patch(p: Partial<FeedForm>) { setForm(f => ({ ...f, ...p })); }
+  async function invalidateFeeds() { await qc.invalidateQueries({ queryKey: feedQueryKey }); }
 
   function toggleRole(id: string) {
     setForm(f => ({
@@ -201,14 +250,14 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
     setBusy(true);
     try {
       if (editingId) {
-        await api.put(`/api/v2/guilds/${guildId}/feeds/${editingId}`, payload());
+        await api.put(feedPath(`/${editingId}`), payload());
       } else {
-        const created = await api.post<ApiFeed>(`/api/v2/guilds/${guildId}/feeds`, payload());
+        const created = await api.post<ApiFeed>(feedPath(), payload());
         setEditingId(created.id);
         setCreating(false);
         if (created.feedType === 'WEBHOOK') await loadWebhook(created.id);
       }
-      await qc.invalidateQueries({ queryKey: ['feeds', guildId] });
+      await invalidateFeeds();
       toast.success('Feed gespeichert.');
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Speichern fehlgeschlagen.');
@@ -225,8 +274,8 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
       const body = form.feedType === 'YOUTUBE'
         ? { youtubeApiKey: '' }
         : { twitchClientId: '', twitchClientSecret: '' };
-      await api.put(`/api/v2/guilds/${guildId}/feeds/${editingId}`, body);
-      await qc.invalidateQueries({ queryKey: ['feeds', guildId] });
+      await api.put(feedPath(`/${editingId}`), body);
+      await invalidateFeeds();
       patch({ youtubeApiKey: '', twitchClientId: '', twitchClientSecret: '' });
       toast.success('Eigener Key entfernt — globaler Key wird genutzt.');
     } catch (e) {
@@ -239,8 +288,8 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
   async function toggle(f: ApiFeed) {
     setBusy(true);
     try {
-      await api.post(`/api/v2/guilds/${guildId}/feeds/${f.id}/toggle`, { isActive: !f.isActive });
-      await qc.invalidateQueries({ queryKey: ['feeds', guildId] });
+      await api.post(feedPath(`/${f.id}/toggle`), { isActive: !f.isActive });
+      await invalidateFeeds();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Aktion fehlgeschlagen.');
     } finally {
@@ -251,9 +300,9 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
   async function testNow(f: ApiFeed) {
     setBusy(true);
     try {
-      await api.post(`/api/v2/guilds/${guildId}/feeds/${f.id}/test`, {});
+      await api.post(feedPath(`/${f.id}/test`), {});
       toast.success('Feed wurde jetzt geprüft.');
-      await qc.invalidateQueries({ queryKey: ['feeds', guildId] });
+      await invalidateFeeds();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : 'Prüfung fehlgeschlagen.');
     } finally {
@@ -265,8 +314,8 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
     if (!confirm(`Feed „${f.name}" wirklich löschen?`)) return;
     setBusy(true);
     try {
-      await api.del(`/api/v2/guilds/${guildId}/feeds/${f.id}`);
-      await qc.invalidateQueries({ queryKey: ['feeds', guildId] });
+      await api.del(feedPath(`/${f.id}`));
+      await invalidateFeeds();
       if (editingId === f.id) reset();
       toast.success('Feed gelöscht.');
     } catch (e) {
@@ -278,15 +327,15 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
 
   async function loadWebhook(id: string) {
     try {
-      const r = await api.get<{ webhookUrl: string; secret: string }>(`/api/v2/guilds/${guildId}/feeds/${id}/webhook`);
-      setWebhookInfo({ url: r.webhookUrl, secret: r.secret });
+      const r = await api.get<{ webhookUrl: string; secret: string | null }>(feedPath(`/${id}/webhook`));
+      setWebhookInfo({ url: r.webhookUrl, secret: r.secret ?? '' });
     } catch { /* ignore */ }
   }
 
   async function rotateWebhook(id: string) {
     setBusy(true);
     try {
-      const r = await api.post<{ secret: string }>(`/api/v2/guilds/${guildId}/feeds/${id}/webhook/rotate`, {});
+      const r = await api.post<{ secret: string }>(feedPath(`/${id}/webhook/rotate`), {});
       setWebhookInfo(w => (w ? { ...w, secret: r.secret } : w));
       toast.success('Neues Webhook-Secret erzeugt.');
     } catch (e) {
@@ -341,14 +390,21 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
           {listQ.isError && <p className="text-danger text-sm break-words">{(listQ.error as Error).message}</p>}
           {feeds.length === 0 && !listQ.isLoading && !listQ.isError && <p className="text-muted text-sm">Noch keine Feeds.</p>}
           {feeds.map(f => {
-            const Icon = FEED_META[f.feedType].icon;
+            const supported = isSupportedFeedType(f.feedType);
+            const rowMeta = displayFeedMeta(f.feedType);
+            const Icon = rowMeta.icon;
             return (
               <div key={f.id} className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${editingId === f.id ? 'border-brand' : 'border-border'}`}>
-                <button className="flex-1 text-left min-w-0" onClick={() => startEdit(f)}>
+                <button
+                  type="button"
+                  className="flex-1 text-left min-w-0"
+                  onClick={() => startEdit(f)}
+                  title={supported ? 'Feed bearbeiten' : `${rowMeta.label} ist nur noch für Deaktivierung oder Löschung verfügbar`}
+                >
                   <div className="flex items-center gap-2">
                     <Icon size={15} className="text-muted shrink-0" />
                     <span className="text-white text-sm font-medium truncate">{f.name}</span>
-                    <Badge>{FEED_META[f.feedType].label}</Badge>
+                    <Badge variant={supported ? 'neutral' : 'warn'}>{rowMeta.label}</Badge>
                     {f.isActive ? <Badge variant="ok">Aktiv</Badge> : <Badge variant="neutral">Pausiert</Badge>}
                   </div>
                   <div className="text-muted text-xs mt-0.5 truncate">
@@ -357,8 +413,14 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
                   </div>
                 </button>
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" title="Jetzt prüfen" onClick={() => testNow(f)} disabled={busy}><PlayCircle size={15} /></Button>
-                  <Button size="sm" variant="ghost" title={f.isActive ? 'Pausieren' : 'Aktivieren'} onClick={() => toggle(f)} disabled={busy}><Power size={15} /></Button>
+                  <Button size="sm" variant="ghost" title="Jetzt prüfen" onClick={() => testNow(f)} disabled={busy || !supported}><PlayCircle size={15} /></Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    title={f.isActive ? 'Pausieren' : (supported ? 'Aktivieren' : 'Legacy-Feed kann nicht reaktiviert werden')}
+                    onClick={() => toggle(f)}
+                    disabled={busy || (!f.isActive && !supported)}
+                  ><Power size={15} /></Button>
                   <Button size="sm" variant="ghost" title="Löschen" onClick={() => remove(f)} disabled={busy}><Trash2 size={15} /></Button>
                 </div>
               </div>
@@ -399,7 +461,6 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
               </Field>
             )}
 
-            {/* Optionaler pro-Feed YouTube-Key (write-only). Leer = globaler Key. */}
             {form.feedType === 'YOUTUBE' && (
               <Field label="YouTube-API-Key (optional, eigenes Kontingent)">
                 <Input
@@ -417,7 +478,6 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
               </Field>
             )}
 
-            {/* Optionale pro-Feed Twitch-Credentials (write-only). Leer = globale App. */}
             {form.feedType === 'TWITCH' && (
               <Field label="Twitch-App (optional, eigene Client-ID/Secret)">
                 <div className="grid grid-cols-2 gap-2">
@@ -464,6 +524,7 @@ export function FeedsTab({ guildId, canManage }: { guildId: string; canManage: b
                     {selectableRoles.length === 0 && <span className="text-muted text-xs">Keine Rollen verfügbar.</span>}
                     {selectableRoles.map(r => (
                       <button
+                        type="button"
                         key={r.id}
                         onClick={() => toggleRole(r.id)}
                         className={`text-xs rounded px-2 py-1 border transition-colors ${form.mentionRoles.includes(r.id) ? 'border-brand bg-brand/20 text-white' : 'border-border text-muted hover:text-white'}`}
@@ -510,6 +571,7 @@ function CopyRow({ label, value, toast, mono }: { label: string; value: string; 
       <span className="text-muted text-xs w-12 shrink-0">{label}</span>
       <code className={`flex-1 truncate text-xs text-white/90 ${mono ? 'font-mono' : ''}`}>{value}</code>
       <button
+        type="button"
         className="text-muted hover:text-white"
         title="Kopieren"
         onClick={() => { void navigator.clipboard.writeText(value); toast.success(`${label} kopiert.`); }}

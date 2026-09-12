@@ -57,15 +57,24 @@ const POST_STAGE_PUBLIC_ROUTES = [
   '<Route path="/legal/terms" element={<Terms />} />',
 ] as const;
 const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino', 'radar'] as const;
+const POST_STAGE_BOT_ADMIN_VIEWS = ['tickets'] as const;
 const POST_STAGE_V2_MOUNTS = [
   '/guilds/:guildId/nitrado-drift',
   '/guilds/:guildId/radar',
   '/guilds/:guildId/economy/rewards',
+  '/bot-admin/feedback',
+  '/bot-admin/feeds',
+  '/bot-admin/command-center/feedback',
+  '/bot-admin/command-center/feedback-channel',
 ] as const;
 const POST_STAGE_V2_APIS = [
   '/api/v2/guilds/:guildId/nitrado-drift',
   '/api/v2/guilds/:guildId/radar',
   '/api/v2/guilds/:guildId/economy/rewards',
+  '/api/v2/bot-admin/feedback',
+  '/api/v2/bot-admin/feeds',
+  '/api/v2/bot-admin/command-center/feedback',
+  '/api/v2/bot-admin/command-center/feedback-channel',
 ] as const;
 
 function sortedUnique(values: Iterable<string>): string[] {
@@ -139,7 +148,7 @@ describe('stage 23 dashboard surface inventory architecture', () => {
 
     expect(sortedUnique(inventory.serverTabs)).toEqual(quotedUnion(server, 'Tab'));
     expect(sortedUnique([...inventory.slotTabs, ...POST_STAGE_SLOT_TABS])).toEqual(quotedUnion(slot, 'Tab'));
-    expect(sortedUnique(inventory.botAdminViews)).toEqual(
+    expect(sortedUnique([...inventory.botAdminViews, ...POST_STAGE_BOT_ADMIN_VIEWS])).toEqual(
       sortedUnique(botAdmin.match(/view === '([^']+)'/g)?.map(value => value.match(/'([^']+)'/)?.[1] ?? '') ?? []),
     );
     expect(inventory.devCatalogSlugs).toEqual(

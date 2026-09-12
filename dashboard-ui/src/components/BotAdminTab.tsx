@@ -12,7 +12,7 @@
  * Wissensbank) und erwarten eine guildId, die ueber den Server-Selektor
  * gewaehlt wird. XP-Konfiguration ist DEV-only und lebt im DEV Command Center.
  */
-import { useState, type ReactNode, type ComponentType } from 'react';
+import { useEffect, useState, type ReactNode, type ComponentType } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   LayoutDashboard, Gavel, MessageSquare, Megaphone, UploadCloud, Download, ShieldCheck,
@@ -29,6 +29,7 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
+import { FeedsTab } from '@/components/FeedsTab';
 import { functionHelpFor } from '@/lib/functionHelp';
 
 type SectionKey =
@@ -66,12 +67,17 @@ const GUILD_SCOPED = new Set<SectionKey>(['selfroles', 'feeds', 'translate', 'kn
 
 interface GuildOption { id: string; name: string; memberCount: number }
 
-export function BotAdminTab() {
+export function BotAdminTab({ showFeedback = false }: { showFeedback?: boolean }) {
   const [section, setSection] = useState<SectionKey>('overview');
   const [guildId, setGuildId] = useState<string>('');
   const base = '/api/v2/bot-admin';
   const canManage = true;
   const canDanger = true;
+  const visibleSections = showFeedback ? SECTIONS : SECTIONS.filter(item => item.key !== 'feedback');
+
+  useEffect(() => {
+    if (!showFeedback && section === 'feedback') setSection('overview');
+  }, [showFeedback, section]);
 
   const guildsQ = useQuery({
     queryKey: [base, 'guilds'],
@@ -84,7 +90,7 @@ export function BotAdminTab() {
     <div className="grid gap-5 lg:grid-cols-[200px_1fr]">
       {/* Subnavigation */}
       <nav className="space-y-1 lg:sticky lg:top-4 self-start" aria-label="Bot-Admin-Bereiche">
-        {SECTIONS.map(s => {
+        {visibleSections.map(s => {
           const Icon = s.icon;
           const active = section === s.key;
           return (
@@ -122,9 +128,9 @@ export function BotAdminTab() {
           <Card glow><EmptyState icon={Inbox} title="Server wählen" desc="Bitte oben einen Server auswählen, um diesen Bereich zu verwalten." /></Card>
         ) : (
           <>
-            {section === 'overview' && <OverviewSection base={base} onJump={setSection} />}
+            {section === 'overview' && <OverviewSection base={base} onJump={setSection} showFeedback={showFeedback} />}
             {section === 'appeals' && <AppealsSection base={base} canManage={canManage} />}
-            {section === 'feedback' && <FeedbackSection base={base} canManage={canManage} />}
+            {showFeedback && section === 'feedback' && <FeedbackSection base={base} canManage={canManage} />}
             {section === 'broadcast' && <BroadcastSection base={base} canManage={canManage} canDanger={canDanger} />}
             {section === 'upload' && <UploadSection base={base} canManage={canManage} />}
             {section === 'export' && <ExportSection base={base} canManage={canManage} canDanger={canDanger} />}
@@ -133,7 +139,7 @@ export function BotAdminTab() {
             {section === 'users' && <UsersSection base={base} canManage={canManage} canDanger={canDanger} />}
             {section === 'tickets' && <TicketsSection base={base} canManage={canManage} />}
             {section === 'selfroles' && <SelfrolesSection base={base} guildId={guildId} canManage={canManage} />}
-            {section === 'feeds' && <FeedsSection base={base} guildId={guildId} canManage={canManage} />}
+            {section === 'feeds' && <FeedsTab guildId={guildId} canManage={canManage} transport="bot-admin" />}
             {section === 'translate' && <TranslateSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'knowledge' && <KnowledgeSection base={base} guildId={guildId} canManage={canManage} />}
             {section === 'danger' && <DangerSection base={base} canDanger={canDanger} />}
@@ -216,7 +222,7 @@ interface OverviewData {
   recentAdminActions: Array<{ id: string; action: string; createdAt: string }>;
 }
 
-function OverviewSection({ base, onJump }: { base: string; onJump: (s: SectionKey) => void }) {
+function OverviewSection({ base, onJump, showFeedback }: { base: string; onJump: (s: SectionKey) => void; showFeedback: boolean }) {
   const q = useQuery({ queryKey: [base, 'overview'], queryFn: () => api.get<OverviewData>(`${base}/overview`) });
   const s = q.data?.stats;
   const stat = (label: string, value: ReactNode, jump: SectionKey, danger?: boolean) => (
@@ -236,7 +242,7 @@ function OverviewSection({ base, onJump }: { base: string; onJump: (s: SectionKe
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {stat('Offene Appeals', s.openAppeals, 'appeals')}
-            {stat('Neues Feedback', s.newFeedback, 'feedback')}
+            {showFeedback && stat('Neues Feedback', s.newFeedback, 'feedback')}
             {stat('Ausstehende Validierungen', s.pendingValidations, 'validate')}
             {stat('Upload-Status', s.uploadEnabled ? 'AN' : 'AUS', 'upload', !s.uploadEnabled)}
             {stat('Gesperrte Nutzer', s.suspendedUsers, 'users')}
@@ -816,73 +822,6 @@ function SelfroleOptionForm({ onSubmit, loading }: { onSubmit: (b: unknown) => v
       <Input value={label} onChange={e => setLabel(e.target.value)} placeholder="Label" className="!text-sm" />
       <Input value={roleId} onChange={e => setRoleId(e.target.value)} placeholder="Rollen-ID" className="!text-sm" />
       <Button size="sm" variant="secondary" disabled={!roleId.trim() || !label.trim()} loading={loading} onClick={() => { onSubmit({ roleId, label }); setRoleId(''); setLabel(''); }}>+</Button>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════
-// FEEDS
-// ════════════════════════════════════════════════════════════════════════
-interface FeedRow { id: string; name: string; feedType: string; url: string; channelId: string; isActive: boolean; interval: number }
-
-function FeedsSection({ base, guildId, canManage }: { base: string; guildId: string; canManage: boolean }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [showCreate, setShowCreate] = useState(false);
-  const g = (p: string) => `${base}${p}${p.includes('?') ? '&' : '?'}guildId=${guildId}`;
-  const q = useQuery({ queryKey: [base, 'feeds', guildId], queryFn: () => api.get<{ items: FeedRow[] }>(g('/feeds')), enabled: !!guildId });
-  const inv = () => qc.invalidateQueries({ queryKey: [base, 'feeds', guildId] });
-  const create = useMutation({ mutationFn: (b: unknown) => api.post(g('/feeds'), b), onSuccess: () => { toast.success('Feed erstellt.'); inv(); setShowCreate(false); }, onError: e => toast.error(errMsg(e)) });
-  const toggle = useMutation({ mutationFn: (id: string) => api.post(g(`/feeds/${id}/toggle`)), onSuccess: () => inv(), onError: e => toast.error(errMsg(e)) });
-  const del = useMutation({ mutationFn: (id: string) => api.del(g(`/feeds/${id}`)), onSuccess: () => { toast.success('Gelöscht.'); inv(); }, onError: e => toast.error(errMsg(e)) });
-  return (
-    <Card glow>
-      <SectionHeader title="Feeds" desc="Feed-Quellen (früher /feed)" onRefresh={() => q.refetch()} loading={q.isFetching}
-        action={canManage ? <Button size="sm" onClick={() => setShowCreate(s => !s)}>{showCreate ? 'Abbrechen' : 'Neuer Feed'}</Button> : undefined} />
-      <ReadOnlyHint canManage={canManage} />
-      {showCreate && <FeedCreateForm onSubmit={b => create.mutate(b)} loading={create.isPending} />}
-      {q.data && q.data.items.length === 0 && !showCreate && <EmptyState icon={Inbox} title="Keine Feeds" />}
-      <div className="space-y-2">
-        {q.data?.items.map(f => (
-          <Card key={f.id} className="!p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-semibold text-white truncate">{f.name}</span>
-                  <Badge variant="info">{f.feedType}</Badge>
-                  <Badge variant={f.isActive ? 'ok' : 'neutral'}>{f.isActive ? 'aktiv' : 'inaktiv'}</Badge>
-                </div>
-                <p className="text-xs text-muted mt-0.5 truncate">{f.url}</p>
-                <p className="text-[11px] text-muted">Channel: {f.channelId} · alle {f.interval}s</p>
-              </div>
-              {canManage && (
-                <div className="flex gap-1 shrink-0">
-                  <Button size="sm" variant="ghost" onClick={() => toggle.mutate(f.id)} loading={toggle.isPending}>{f.isActive ? 'Aus' : 'An'}</Button>
-                  <Button size="sm" variant="danger" onClick={() => del.mutate(f.id)} loading={del.isPending} aria-label={`Feed ${f.name} löschen`}><Trash2 className="h-4 w-4" /></Button>
-                </div>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-function FeedCreateForm({ onSubmit, loading }: { onSubmit: (b: unknown) => void; loading: boolean }) {
-  const [name, setName] = useState('');
-  const [feedType, setFeedType] = useState('RSS');
-  const [url, setUrl] = useState('');
-  const [channelId, setChannelId] = useState('');
-  const [interval, setInterval] = useState('300');
-  return (
-    <div className="p-3 mb-3 rounded-md bg-bg-elev border border-border space-y-2">
-      <Input value={name} onChange={e => setName(e.target.value)} placeholder="Name" />
-      <Select value={feedType} onChange={e => setFeedType(e.target.value)}>{['RSS', 'TWITCH', 'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'].map(t => <option key={t} value={t}>{t}</option>)}</Select>
-      <Input value={url} onChange={e => setUrl(e.target.value)} placeholder="URL" />
-      <Input value={channelId} onChange={e => setChannelId(e.target.value)} placeholder="Channel-ID" />
-      <Input value={interval} onChange={e => setInterval(e.target.value)} placeholder="Intervall (Sek.)" type="number" />
-      <Button size="sm" disabled={!name.trim() || !url.trim() || !channelId.trim()} loading={loading} onClick={() => onSubmit({ name, feedType, url, channelId, interval: Number(interval) })}>Erstellen</Button>
     </div>
   );
 }

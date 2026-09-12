@@ -10,6 +10,11 @@ import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { logger, logAudit } from '../../utils/logger';
 import { Colors, Brand, vEmbed } from '../../utils/embedDesign';
+import {
+  prepareTicketRelayAttachments,
+  preparedTicketRelayFiles,
+  verifyTicketRelayAttachments,
+} from './ticketAttachmentRelay';
 
 /**
  * Legacy Owner-DM-Bridge fuer /ticket.
@@ -317,17 +322,44 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
       ticketId: ticket.id,
       fromDiscordId: userId,
       fromRole,
-      content: msg.content.slice(0, 4000),
+      content: msg.content,
     },
   });
   await prisma.ticket.update({ where: { id: ticket.id }, data: { updatedAt: new Date() } });
 
+  const sentRelayMessages: Message[] = [];
   try {
     const target = await msg.client.users.fetch(targetId);
     const senderLabel = fromRole === 'OWNER' ? '🛡️ Owner' : `👤 ${ticket.username}`;
     const header = `**${senderLabel}** · Ticket #${ticket.ticketNumber}`;
-    const body = msg.content.slice(0, 1800);
-    await target.send({ content: `${header}\n${body}`, allowedMentions: { parse: [] } });
+    const preparedAttachments = await prepareTicketRelayAttachments(msg.attachments.values());
+    const files = preparedTicketRelayFiles(preparedAttachments);
+    const combinedContent = `${header}\n${msg.content}`;
+
+    if (combinedContent.length <= 2000) {
+      sentRelayMessages.push(await target.send({
+        content: combinedContent,
+        ...(files.length > 0 ? { files } : {}),
+        allowedMentions: { parse: [] },
+      }));
+    } else {
+      // Discord-Nachrichten koennen selbst bis an das Content-Limit reichen.
+      // Der Ticket-Header wird dann separat gesendet, statt den Originaltext
+      // abzuschneiden. So bleiben Unicode-Emojis und Custom-Emote-Syntax exakt.
+      sentRelayMessages.push(await target.send({
+        content: header,
+        allowedMentions: { parse: [] },
+      }));
+      sentRelayMessages.push(await target.send({
+        content: msg.content,
+        ...(files.length > 0 ? { files } : {}),
+        allowedMentions: { parse: [] },
+      }));
+    }
+
+    const attachmentMessage = sentRelayMessages[sentRelayMessages.length - 1];
+    await verifyTicketRelayAttachments(attachmentMessage.attachments.values(), preparedAttachments);
+
     try { await msg.react('📨'); } catch { /* optional */ }
     try {
       await msg.reply({
@@ -336,6 +368,9 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
       });
     } catch { /* optional */ }
   } catch (e) {
+    for (const sent of [...sentRelayMessages].reverse()) {
+      try { await sent.delete(); } catch { /* best effort: kein ungepruefter Relay soll liegen bleiben */ }
+    }
     logger.warn(`Ticket #${ticket.ticketNumber}: Relay-DM an ${targetId} fehlgeschlagen`, { e: String(e) });
     try {
       await msg.reply({
