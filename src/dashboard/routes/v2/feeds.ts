@@ -27,11 +27,12 @@ import { config } from '../../../config';
 import { resolveFeedSource } from '../../../modules/feeds/urlResolver';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { createFeed, runFeedNow } from '../../../modules/feeds/feedManager';
+import { runFeedNow } from '../../../modules/feeds/feedManager';
 import { generateWebhookSecret } from '../../../modules/feeds/webhookReceiver';
 import { logAuditDb } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { resolveCredentialUpdate } from '../../../modules/feeds/feedCredentials';
+import { createCanonicalFeed } from '../../services/feedControlPlane';
 
 export const feedsRouter = Router({ mergeParams: true });
 
@@ -127,45 +128,25 @@ feedsRouter.get('/:id', requireGuildPermission('feeds.view'), async (req, res) =
 
 feedsRouter.post('/', requireGuildPermission('feeds.manage'), async (req, res) => {
   const { guildId, actorDiscordId } = req.guildScope!;
-  const body = req.body ?? {};
-  let name = typeof body.name === 'string' ? body.name.trim().slice(0, 100) : '';
-  const feedType = typeof body.feedType === 'string' ? body.feedType.trim().toUpperCase() : '';
-  const url = typeof body.url === 'string' ? body.url.trim() : '';
-  const channelId = typeof body.channelId === 'string' ? body.channelId.trim() : '';
-  const interval = parseInterval(body.interval);
+  const created = await createCanonicalFeed({
+    guildId,
+    createdBy: actorDiscordId,
+    body: (req.body ?? {}) as Record<string, unknown>,
+  });
+  if (!created.ok) { res.status(400).json({ error: created.error }); return; }
 
-  if (!FEED_TYPES.has(feedType)) { res.status(400).json({ error: 'Ungültiger Feed-Typ.' }); return; }
-  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
-  const resolved = resolveFeedSource(feedType, url);
-  if (!resolved.ok) { res.status(400).json({ error: resolved.reason }); return; }
-  // Anzeigename optional (v. a. News) -> aus der Quelle ableiten. Nur Anzeige.
-  if (!name) name = resolved.resolved.display.slice(0, 100);
-  if (!name) { res.status(400).json({ error: 'Name ist erforderlich.' }); return; }
-  const chk = await ensureChannel(guildId, channelId);
-  if (!chk.ok) { res.status(400).json({ error: chk.reason ?? 'Ziel-Channel ungültig.' }); return; }
-
-  // Optionale pro-Feed API-Keys (verschluesselt) VOR dem Anlegen validieren,
-  // damit kein halbfertiger Datensatz entsteht.
-  const cred = resolveCredentialUpdate(feedType, body as Record<string, unknown>);
-  if (!cred.ok) { res.status(400).json({ error: cred.error }); return; }
-  const credEnc = cred.change ? cred.value : null;
-
-  // Technische Grundlage ist ausschliesslich die normalisierte URL/Quelle.
-  const feedId = await createFeed(name, feedType, resolved.resolved.url, channelId, interval, actorDiscordId, guildId);
-
-  const mentionRoles = normalizeRoleIds(body.mentionRoles);
-  let webhookSecret: string | null = null;
-  if (feedType === 'WEBHOOK') webhookSecret = generateWebhookSecret();
-  if (mentionRoles.length || webhookSecret || credEnc) {
-    await prisma.feed.update({
-      where: { id: feedId },
-      data: { mentionRoles, webhookSecret: webhookSecret ?? undefined, credentialsEnc: credEnc ?? undefined },
-    });
-  }
-
-  const feed = await findGuildFeed(guildId, feedId);
-  logAuditDb('FEED_CREATED', 'FEED', { actorUserId: req.auth!.userId, guildId, details: { feedId, name, feedType, credentialsSet: credEnc != null } });
-  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId } });
+  const feed = await findGuildFeed(guildId, created.feedId);
+  logAuditDb('FEED_CREATED', 'FEED', {
+    actorUserId: req.auth!.userId,
+    guildId,
+    details: {
+      feedId: created.feedId,
+      name: created.name,
+      feedType: created.feedType,
+      credentialsSet: created.credentialsSet,
+    },
+  });
+  emitGuildEvent(guildId, { type: 'feed.changed', payload: { guildId, feedId: created.feedId } });
   res.status(201).json(feedToApi(feed!));
 });
 
