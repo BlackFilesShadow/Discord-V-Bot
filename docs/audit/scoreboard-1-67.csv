@@ -54,7 +54,7 @@ stage,status,name
 53,VERIFIED,dependency-audit-controlled-53
 54,VERIFIED,passport-discord-migration-54
 55,VERIFIED,inflight-glob-cleanup-55
-56,PARTIAL,dashboard-bundle-codesplit-56
+56,VERIFIED,dashboard-bundle-codesplit-56
 57,VERIFIED,dead-code-legacy-cleanup-57
 58,PARTIAL,full-user-journey
 59,VERIFIED,chaos
