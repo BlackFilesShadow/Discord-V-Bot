@@ -10,6 +10,12 @@ import { entriesAfterMarker, fetchFeedDocument, type FeedEntry } from './feedDoc
 import { getSteamNews, getTwitchStream, getYouTubeEntries } from './platformClients';
 import { feedConfigurationAction } from './feedConfigurationPolicy';
 
+export interface FeedCreateInitialState {
+  mentionRoles?: string[];
+  webhookSecret?: string | null;
+  credentialsEnc?: string | null;
+}
+
 export async function createFeed(
   name: string,
   feedType: string,
@@ -19,9 +25,22 @@ export async function createFeed(
   createdBy: string,
   guildId: string,
   filters?: Record<string, unknown>,
+  initial: FeedCreateInitialState = {},
 ): Promise<string> {
   const feed = await prisma.feed.create({
-    data: { name, feedType: feedType as any, url, channelId, guildId, interval, createdBy, filters: filters as any },
+    data: {
+      name,
+      feedType: feedType as any,
+      url,
+      channelId,
+      guildId,
+      interval,
+      createdBy,
+      filters: filters as any,
+      ...(initial.mentionRoles !== undefined ? { mentionRoles: initial.mentionRoles } : {}),
+      ...(initial.webhookSecret !== undefined ? { webhookSecret: initial.webhookSecret } : {}),
+      ...(initial.credentialsEnc !== undefined ? { credentialsEnc: initial.credentialsEnc } : {}),
+    },
   });
   logAudit('FEED_CREATED', 'FEED', { feedId: feed.id, name, feedType, channelId, createdBy });
   return feed.id;
