@@ -4,6 +4,7 @@ import path from 'node:path';
 describe('DB-4 fresh/upgrade/backup-restore production contract', () => {
   const repoRoot = path.resolve(__dirname, '../..');
   const lifecycle = fs.readFileSync(path.join(repoRoot, 'deploy/db-lifecycle-verify.sh'), 'utf8');
+  const backup = fs.readFileSync(path.join(repoRoot, 'deploy/backup.sh'), 'utf8');
   const backupVerify = fs.readFileSync(path.join(repoRoot, 'deploy/backup-verify.sh'), 'utf8');
   const ci = fs.readFileSync(path.join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')) as {
@@ -30,6 +31,16 @@ describe('DB-4 fresh/upgrade/backup-restore production contract', () => {
     expect(lifecycle).toContain('RESTORE_MIGRATIONS');
     expect(lifecycle).toContain('schema_signature');
     expect(lifecycle).toContain('trap cleanup EXIT');
+  });
+
+  test('production backup dumps the actual Docker Postgres and never requires a host postgres user', () => {
+    expect(backup).toContain('docker compose ps -q postgres');
+    expect(backup).toContain('docker compose exec -T postgres');
+    expect(backup).toContain('PGPASSWORD=');
+    expect(backup).toContain('pg_dump --no-owner --no-privileges --clean --if-exists');
+    expect(backup).toContain('-h 127.0.0.1');
+    expect(backup).toContain('Datenbank-Backup ist leer');
+    expect(backup).not.toContain('sudo -u postgres');
   });
 
   test('production backup verifier rejects checksum or restore errors instead of warning and continuing', () => {
