@@ -40,10 +40,20 @@ const prismaMock = {
       Object.assign(r, data);
       return r;
     }),
+    updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const found = [...feeds.values()].filter(r => match(r, where));
+      for (const r of found) Object.assign(r, data, { updatedAt: new Date() });
+      return { count: found.length };
+    }),
     delete: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const r = feeds.get(where.id as string)!;
       feeds.delete(where.id as string);
       return r;
+    }),
+    deleteMany: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      const found = [...feeds.values()].filter(r => match(r, where));
+      for (const r of found) feeds.delete(r.id);
+      return { count: found.length };
     }),
   },
 };
@@ -202,6 +212,18 @@ describe('Feeds-Router — toggle / test / roles / webhook', () => {
     const res = await request(app).post(`${BASE}/${c.body.id}/toggle`).send({ isActive: false });
     expect(res.status).toBe(200);
     expect(res.body.isActive).toBe(false);
+  });
+
+  it('reaktiviert keine nicht mehr unterstützten Legacy-Typen', async () => {
+    feeds.set('legacy', {
+      id: 'legacy', guildId: GID, name: 'Legacy', feedType: 'CUSTOM', url: 'legacy', channelId: CH,
+      interval: 300, lastChecked: null, lastItemId: null, isActive: false, mentionRoles: [], webhookSecret: null,
+      credentialsEnc: null, createdBy: ACTOR, createdAt: new Date(), updatedAt: new Date(),
+    });
+    const res = await request(makeApp()).post(`${BASE}/legacy/toggle`).send({ isActive: true });
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/Legacy-Feed-Typ CUSTOM/);
+    expect(feeds.get('legacy')?.isActive).toBe(false);
   });
 
   it('prüft einen Feed sofort (test)', async () => {
