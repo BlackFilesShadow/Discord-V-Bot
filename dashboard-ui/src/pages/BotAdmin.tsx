@@ -7,13 +7,14 @@
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BookOpen, Lock, LayoutDashboard, TerminalSquare } from 'lucide-react';
+import { BookOpen, Inbox, Lock, LayoutDashboard, TerminalSquare } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { BotAdminTab } from '@/components/BotAdminTab';
 import { BotAdminCommandCenter } from '@/components/BotAdminCommandCenter';
 import { BotAdminKnowledgeScoped } from '@/components/BotAdminKnowledgeScoped';
+import { BotAdminOwnerTickets } from '@/components/BotAdminOwnerTickets';
 import { useAuth } from '@/lib/auth';
 import { api, ApiError } from '@/lib/api';
 import { useBotAdminSession } from '@/lib/botAdminSession';
@@ -27,9 +28,9 @@ interface DevEligibilityStatus {
 export default function BotAdminPage() {
   const { user } = useAuth();
   const ba = useBotAdminSession();
-  const [view, setView] = useState<'admin' | 'knowledge' | 'commands'>('admin');
-  const feedbackEligibility = useQuery({
-    queryKey: ['bot-admin', 'feedback-developer-eligibility', user?.discordId ?? 'anonymous'],
+  const [view, setView] = useState<'admin' | 'tickets' | 'knowledge' | 'commands'>('admin');
+  const developerEligibility = useQuery({
+    queryKey: ['bot-admin', 'developer-owner-eligibility', user?.discordId ?? 'anonymous'],
     enabled: Boolean(user && ba.active),
     retry: false,
     staleTime: 30_000,
@@ -43,7 +44,7 @@ export default function BotAdminPage() {
       }
     },
   });
-  const showFeedback = feedbackEligibility.data === true;
+  const isDeveloperOwner = developerEligibility.data === true;
 
   if (!user) {
     return <Shell title="Bot-Admin" back="/servers"><Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><Lock className="h-4 w-4 inline mr-1" /> Kein Zugriff</CardTitle><CardDesc>Bitte melde dich an.</CardDesc></CardHeader></Card></Shell>;
@@ -65,12 +66,14 @@ export default function BotAdminPage() {
       <div className="max-w-content mx-auto space-y-4">
         <div className="flex flex-wrap gap-2" role="navigation" aria-label="Bot-Admin Hauptbereiche">
           <Button size="sm" variant={view === 'admin' ? 'primary' : 'ghost'} onClick={() => setView('admin')}><LayoutDashboard className="h-4 w-4" />Verwaltung</Button>
+          {isDeveloperOwner && <Button size="sm" variant={view === 'tickets' ? 'primary' : 'ghost'} onClick={() => setView('tickets')}><Inbox className="h-4 w-4" />Owner-Tickets</Button>}
           <Button size="sm" variant={view === 'knowledge' ? 'primary' : 'ghost'} onClick={() => setView('knowledge')}><BookOpen className="h-4 w-4" />AI-Wissensbank</Button>
           <Button size="sm" variant={view === 'commands' ? 'primary' : 'ghost'} onClick={() => setView('commands')}><TerminalSquare className="h-4 w-4" />Migrierte Bot-Commands</Button>
         </div>
-        {view === 'admin' && <BotAdminTab showFeedback={showFeedback} />}
+        {view === 'admin' && <BotAdminTab showFeedback={isDeveloperOwner} />}
+        {isDeveloperOwner && view === 'tickets' && <BotAdminOwnerTickets />}
         {view === 'knowledge' && <BotAdminKnowledgeScoped />}
-        {view === 'commands' && <BotAdminCommandCenter showFeedback={showFeedback} />}
+        {view === 'commands' && <BotAdminCommandCenter showFeedback={isDeveloperOwner} />}
       </div>
     </Shell>
   );
