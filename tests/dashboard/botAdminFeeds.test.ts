@@ -65,6 +65,7 @@ jest.mock('../../src/utils/logger', () => ({
 import express from 'express';
 import request from 'supertest';
 import { botAdminFeedsRouter } from '../../src/dashboard/routes/v2/botAdminFeeds';
+import { asUserDiscordId } from '../../src/types/scope';
 
 function row(id: string, feedType = 'RSS', isActive = true): FeedRow {
   const now = new Date('2026-09-12T04:00:00.000Z');
@@ -88,7 +89,7 @@ function makeApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as express.Request & { auth: unknown }).auth = { userId: USER_ID, discordId: ACTOR_ID, role: 'ADMIN' };
+    req.auth = { userId: USER_ID, discordId: asUserDiscordId(ACTOR_ID), role: 'ADMIN' };
     next();
   });
   app.use('/api/v2/bot-admin/feeds', botAdminFeedsRouter);
