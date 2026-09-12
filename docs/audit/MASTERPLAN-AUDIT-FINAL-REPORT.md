@@ -7,22 +7,22 @@ Do not edit this report, the scoreboard, or the summary manually.
 
 | Field | Value |
 | --- | --- |
-| Generated | 2026-08-23T01:58:55.698Z |
-| Final audited/evidence SHA | `1cf8822b39615b94d52c28b32d03a481062a3bd2` |
-| Audit freeze SHA | `025a1ebf134a1453b675c315ca641cd0c32918aa` |
+| Generated | 2026-09-12T18:33:45.000Z |
+| Final audited/evidence SHA | `831e6a374394916440ddcb0fb03ba88dd1327147` |
+| Audit freeze SHA | `831e6a374394916440ddcb0fb03ba88dd1327147` |
 | Stages total | 67 |
 
 ## Recalculated scoreboard
 
 | Status | Count |
 | --- | ---: |
-| VERIFIED | 54 |
-| PARTIAL | 12 |
+| VERIFIED | 59 |
+| PARTIAL | 7 |
 | FAILED | 0 |
 | BLOCKED | 1 |
 | **TOTAL** | **67** |
 
-**Current score: 81 / 100**
+**Current score: 88 / 100**
 
 **PRODUCTION READY: NO**
 
@@ -80,38 +80,33 @@ Do not edit this report, the scoreboard, or the summary manually.
 | 48 | VERIFIED | ai-nitrado-perf-48 | `025a1ebf134a1453b675c315ca641cd0c32918aa` | Two independent mandatory exact-SHA CI jobs measured real-TCP loopback latency and concurrency through the production AI and Nitrado clients, bounded 503/429 retries, AI provider fallback, Nitrado circuit fail-fast and low-cardinality metrics. External production-provider RTT is an explicit Stage 67 credential boundary and is not claimed here. |
 | 49 | VERIFIED | memory-leak-audit-49 | `2c16bcbe870f9d4818d7ed4726b95ef2879e30d9` | Bounded-map/timer/cache audits and churn regressions are supplemented by an exact-SHA allocation/recovery series: RSS 0.0338 MiB/sample, heap 0.0071 MiB/sample, active-resource slope 0 and listener slope 0. The longer full-stack soak remains Stage 51. |
 | 50 | VERIFIED | load-test-50 | `1cf8822b39615b94d52c28b32d03a481062a3bd2` | Two independent mandatory exact-SHA CI jobs loaded the production dashboard over real loopback TCP with live PostgreSQL readiness/session-store traffic and fail-closed API auth. CI measured 898.078 RPS at HTTP p50/p95/p99 19.053/35.436/60.780 ms; Verification 2 measured 702.308 RPS at 24.645/47.411/110.711 ms. Both had zero request errors, bounded database/event-loop latency, complete CPU/heap/RSS measurements, deterministic cleanup and empty residuals. Multi-sample long-duration soak remains the distinct Stage 51 scope; credentialed external traffic remains Stage 67. |
-| 51 | PARTIAL | soak-test-51 | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | residual-multi-hour-soak |
-| 52 | PARTIAL | ram-node-heap-tuning-52 | — | residual-stage-46-51-measurements-before-final-tuning-decision |
+| 51 | VERIFIED | soak-test-51 | `b540786f857f16f8ec422288f020b30328034278` | Two complete gate cycles and two dedicated soak runs succeeded on unchanged SHA b540786f. The final two-hour isolated-CI run processed 1,062,972 requests with zero failures, bounded latency/resources and full PostgreSQL runtime traffic. |
+| 52 | VERIFIED | ram-node-heap-tuning-52 | `2bed7f7fed0c86e071a87a3fbca05076d4bc7166` | Measured Stage 46-51 evidence supports retaining Node/V8 defaults; the guard rejects an unreviewed production heap override. |
 | 53 | VERIFIED | dependency-audit-controlled-53 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | Controlled updates; lockfile + Stage45 high blocking; no blind majors |
 | 54 | VERIFIED | passport-discord-migration-54 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | passport/passport-discord removed; custom PKCE OAuth canonical |
 | 55 | VERIFIED | inflight-glob-cleanup-55 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | No prod inflight; Jest29 glob/inflight dev-only residual classified |
-| 56 | VERIFIED | dashboard-bundle-codesplit-56 | `eaf8b42bb5d1fc194416324606f146196d04c8c0` | All JS chunks <500kB on Vite 6.4.3; entry ~64kB; vendor+lazy split |
-| 57 | PARTIAL | dead-code-legacy-cleanup-57 | — | residual-full-coupling-and-reference-analysis-before-cleanup |
-| 58 | PARTIAL | full-user-journey | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | F-S4-10; residual-live-discord-gateway |
-| 59 | PARTIAL | chaos | `8f181c7e8f2344f0c78dcd19a3151547f885aa17` | F-S4-11; residual-docker-process-kill |
-| 60 | PARTIAL | gesamtaudit-60-code | `bdf190b881573a78896152e6ec0dbe6e542e7e1a` | dynamic-import-graph-residual |
-| 61 | PARTIAL | gesamtaudit-61-couplings | `bdf190b881573a78896152e6ec0dbe6e542e7e1a` | full-dynamic-import-orphan-sweep |
-| 62 | PARTIAL | gesamtaudit-62-prod-reality | `bdf190b881573a78896152e6ec0dbe6e542e7e1a` | live-production-deploy-stage-67 |
-| 63 | PARTIAL | release-sha | — | F-S4-13 |
-| 64 | PARTIAL | final-gate-1 | — | F-S4-14 |
-| 65 | PARTIAL | final-gate-2 | — | F-S4-14 |
-| 66 | PARTIAL | main-gate | — | no-merge-this-session |
+| 56 | PARTIAL | dashboard-bundle-codesplit-56 | `831e6a374394916440ddcb0fb03ba88dd1327147` | stage-56-current-maplibre-chunk-over-500kb; stage-56-build-gate-does-not-execute-measurement |
+| 57 | VERIFIED | dead-code-legacy-cleanup-57 | `bacdf2eb43691ed4553da0f5008f54f94338376a` | Dynamic imports, filesystem command loading, Discord dispatch, AI tools and Nitrado worker registries are included in the deletion-safety analysis; no speculative mass deletion remains. |
+| 58 | PARTIAL | full-user-journey | `831e6a374394916440ddcb0fb03ba88dd1327147` | F-S4-10; residual-live-discord-gateway |
+| 59 | VERIFIED | chaos | `b3fcb7db4207a9a37b918ef4ba9104fdf070e7e9` | Real PostgreSQL and Redis process kills plus same-client recovery ran twice on isolated PR runners and twice post-merge; circuit, SSRF, path and idempotency fault contracts remain green. |
+| 60 | VERIFIED | gesamtaudit-60-code | `d999e90e18d916296ec3657210449480c3349b84` | Executable architecture proof is complete; the dynamic-import/orphan graph is explicitly owned and completed by Stage 61. |
+| 61 | VERIFIED | gesamtaudit-61-couplings | `d68a303a5429e8680361a08eccc01dacb2baaf14` | The AST runtime graph covers static, export-from, literal import/require and filesystem-loaded command roots; all production Discord event handlers are reachable and unresolved/dynamic edges fail closed. |
+| 62 | PARTIAL | gesamtaudit-62-prod-reality | `831e6a374394916440ddcb0fb03ba88dd1327147` | live-production-deploy-stage-67; live-backup-restore-requires-authorized-staging |
+| 63 | PARTIAL | release-sha | — | release-freeze-required-after-final-internal-change |
+| 64 | PARTIAL | final-gate-1 | — | final-gate-1-required-on-next-frozen-sha |
+| 65 | PARTIAL | final-gate-2 | — | final-gate-2-required-on-next-frozen-sha |
+| 66 | PARTIAL | main-gate | — | main-gate-required-after-next-release-freeze-merge |
 | 67 | BLOCKED | production-live | — | F-S4-15; stage-42-live-production-network-egress-validation |
 
 ## Remaining residuals (priority order)
 
-- Stage 51 (PARTIAL): residual-multi-hour-soak
-- Stage 52 (PARTIAL): residual-stage-46-51-measurements-before-final-tuning-decision
-- Stage 57 (PARTIAL): residual-full-coupling-and-reference-analysis-before-cleanup
+- Stage 56 (PARTIAL): stage-56-current-maplibre-chunk-over-500kb; stage-56-build-gate-does-not-execute-measurement
 - Stage 58 (PARTIAL): F-S4-10; residual-live-discord-gateway
-- Stage 59 (PARTIAL): F-S4-11; residual-docker-process-kill
-- Stage 60 (PARTIAL): dynamic-import-graph-residual
-- Stage 61 (PARTIAL): full-dynamic-import-orphan-sweep
-- Stage 62 (PARTIAL): live-production-deploy-stage-67
-- Stage 63 (PARTIAL): F-S4-13
-- Stage 64 (PARTIAL): F-S4-14
-- Stage 65 (PARTIAL): F-S4-14
-- Stage 66 (PARTIAL): no-merge-this-session
+- Stage 62 (PARTIAL): live-production-deploy-stage-67; live-backup-restore-requires-authorized-staging
+- Stage 63 (PARTIAL): release-freeze-required-after-final-internal-change
+- Stage 64 (PARTIAL): final-gate-1-required-on-next-frozen-sha
+- Stage 65 (PARTIAL): final-gate-2-required-on-next-frozen-sha
+- Stage 66 (PARTIAL): main-gate-required-after-next-release-freeze-merge
 - Stage 67 (BLOCKED): F-S4-15; stage-42-live-production-network-egress-validation
 
 ## Integrity contract
