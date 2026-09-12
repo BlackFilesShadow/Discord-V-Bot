@@ -3,6 +3,7 @@ const mockTicketUpdate = jest.fn();
 const mockTicketMessageCreate = jest.fn();
 const mockLogAudit = jest.fn();
 const mockLoggerWarn = jest.fn();
+const fetchMock = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -59,6 +60,16 @@ type RelayAttachment = {
   size: number;
 };
 
+function response(bytes: Buffer, status = 200) {
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name: string) => name.toLowerCase() === 'content-length' ? String(bytes.length) : null },
+    arrayBuffer: async () => arrayBuffer,
+  } as any;
+}
+
 function ticket(overrides: Partial<OpenTicket> = {}): OpenTicket {
   return {
     id: 'ticket-101',
@@ -90,7 +101,24 @@ function dmMessage(opts: {
   referenceMessageId?: string;
   referencedMessage?: unknown;
 }) {
-  const targetSend = jest.fn().mockResolvedValue({ id: 'relay-message' });
+  let relayCounter = 0;
+  const relayDeletes: jest.Mock[] = [];
+  const targetSend = jest.fn().mockImplementation(async (payload: { files?: Array<{ attachment: Buffer; name: string }> }) => {
+    relayCounter += 1;
+    const deleteMessage = jest.fn().mockResolvedValue(undefined);
+    relayDeletes.push(deleteMessage);
+    const relayedAttachments = new Map(
+      (payload.files ?? []).map((file, index) => [
+        `relay-${relayCounter}-${index}`,
+        {
+          name: file.name,
+          url: `https://cdn.discordapp.com/attachments/999999999999999999/${relayCounter}${index}/${encodeURIComponent(file.name)}?relay=1`,
+          size: file.attachment.length,
+        },
+      ]),
+    );
+    return { id: `relay-message-${relayCounter}`, attachments: relayedAttachments, delete: deleteMessage };
+  });
   const fetchUser = jest.fn().mockResolvedValue({ send: targetSend });
   const reply = jest.fn().mockResolvedValue({ id: 'reply-message' });
   const react = jest.fn().mockResolvedValue(undefined);
@@ -108,22 +136,35 @@ function dmMessage(opts: {
     react,
   } as any;
 
-  return { msg, targetSend, fetchUser, reply, react, fetchReference };
+  return { msg, targetSend, fetchUser, reply, react, fetchReference, relayDeletes };
 }
+
+beforeAll(() => {
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: fetchMock,
+  });
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
+  fetchMock.mockReset();
   mockTicketUpdate.mockResolvedValue({});
   mockTicketMessageCreate.mockResolvedValue({});
 });
 
 describe('ticket owner-DM attachment relay', () => {
-  it('relays a Discord CDN attachment in the same user-to-owner DM payload', async () => {
+  it('relays and SHA-256-verifies a Discord CDN attachment in the same user-to-owner DM payload', async () => {
     mockTicketFindMany.mockResolvedValue([ticket()]);
     const proof = attachment();
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    fetchMock
+      .mockResolvedValueOnce(response(bytes))
+      .mockResolvedValueOnce(response(bytes));
     const { msg, targetSend, react, reply } = dmMessage({
       authorId: 'user-1',
-      content: 'Hier ist der Beweis',
+      content: 'Hier ist der Beweis 😀 <:party:123456789012345678>',
       attachments: [proof],
     });
 
@@ -134,14 +175,16 @@ describe('ticket owner-DM attachment relay', () => {
         ticketId: 'ticket-101',
         fromDiscordId: 'user-1',
         fromRole: 'USER',
-        content: 'Hier ist der Beweis',
+        content: 'Hier ist der Beweis 😀 <:party:123456789012345678>',
       },
     });
+    expect(targetSend).toHaveBeenCalledTimes(1);
     expect(targetSend).toHaveBeenCalledWith({
-      content: '**👤 User One** · Ticket #101\nHier ist der Beweis',
-      files: [{ attachment: proof.url, name: 'proof.png' }],
+      content: '**👤 User One** · Ticket #101\nHier ist der Beweis 😀 <:party:123456789012345678>',
+      files: [{ attachment: bytes, name: 'proof.png' }],
       allowedMentions: { parse: [] },
     });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(react).toHaveBeenCalledWith('📨');
     expect(reply).toHaveBeenCalledWith({
       content: '↳ weitergeleitet · Ticket #101',
@@ -165,6 +208,10 @@ describe('ticket owner-DM attachment relay', () => {
       url: 'https://media.discordapp.net/ephemeral-attachments/111111111111111111/333333333333333333/clip.mp4?ex=999',
       size: 1024,
     });
+    const bytes = Buffer.alloc(1024, 7);
+    fetchMock
+      .mockResolvedValueOnce(response(bytes))
+      .mockResolvedValueOnce(response(bytes));
     const { msg, fetchUser, targetSend } = dmMessage({
       authorId: 'owner-1',
       content: '',
@@ -191,12 +238,39 @@ describe('ticket owner-DM attachment relay', () => {
     });
     expect(targetSend).toHaveBeenCalledWith({
       content: '**🛡️ Owner** · Ticket #202\n',
-      files: [{ attachment: clip.url, name: 'clip.mp4' }],
+      files: [{ attachment: bytes, name: 'clip.mp4' }],
+      allowedMentions: { parse: [] },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves a long Unicode/custom-emote message exactly instead of truncating it for the ticket header', async () => {
+    mockTicketFindMany.mockResolvedValue([ticket()]);
+    const content = `${'😀'.repeat(1000)} <:party:123456789012345678>`;
+    const { msg, targetSend } = dmMessage({ authorId: 'user-1', content });
+
+    await expect(handleTicketDm(msg)).resolves.toBe(true);
+
+    expect(mockTicketMessageCreate).toHaveBeenCalledWith({
+      data: {
+        ticketId: 'ticket-101',
+        fromDiscordId: 'user-1',
+        fromRole: 'USER',
+        content,
+      },
+    });
+    expect(targetSend).toHaveBeenCalledTimes(2);
+    expect(targetSend.mock.calls[0][0]).toEqual({
+      content: '**👤 User One** · Ticket #101',
+      allowedMentions: { parse: [] },
+    });
+    expect(targetSend.mock.calls[1][0]).toEqual({
+      content,
       allowedMentions: { parse: [] },
     });
   });
 
-  it('fails closed for a non-Discord attachment URL instead of letting discord.js fetch it', async () => {
+  it('fails closed for a non-Discord attachment URL instead of fetching or uploading it', async () => {
     mockTicketFindMany.mockResolvedValue([ticket()]);
     const { msg, targetSend, reply, react } = dmMessage({
       authorId: 'user-1',
@@ -206,6 +280,7 @@ describe('ticket owner-DM attachment relay', () => {
 
     await expect(handleTicketDm(msg)).resolves.toBe(true);
 
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(targetSend).not.toHaveBeenCalled();
     expect(react).not.toHaveBeenCalled();
     expect(reply).toHaveBeenCalledTimes(1);
@@ -224,7 +299,7 @@ describe('ticket owner-DM attachment relay', () => {
     });
   });
 
-  it('rejects attachments above the established 25 MiB Discord relay limit before upload', async () => {
+  it('rejects attachments above the established 25 MiB Discord relay limit before download/upload', async () => {
     mockTicketFindMany.mockResolvedValue([ticket()]);
     const { msg, targetSend, reply } = dmMessage({
       authorId: 'user-1',
@@ -234,11 +309,43 @@ describe('ticket owner-DM attachment relay', () => {
 
     await expect(handleTicketDm(msg)).resolves.toBe(true);
 
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(targetSend).not.toHaveBeenCalled();
     expect(reply).toHaveBeenCalledTimes(1);
     expect(mockLoggerWarn).toHaveBeenCalledWith(
       'Ticket #101: Relay-DM an owner-1 fehlgeschlagen',
       expect.objectContaining({ e: expect.stringContaining('groesser als 25 MiB') }),
     );
+  });
+
+  it('deletes an unverified relay and reports failure when the target SHA-256 differs', async () => {
+    mockTicketFindMany.mockResolvedValue([ticket()]);
+    const proof = attachment();
+    const source = Buffer.from('AAAA', 'utf8');
+    const changed = Buffer.from('BBBB', 'utf8');
+    fetchMock
+      .mockResolvedValueOnce(response(source))
+      .mockResolvedValueOnce(response(changed));
+    const { msg, relayDeletes, react, reply } = dmMessage({
+      authorId: 'user-1',
+      content: 'Hash pruefen',
+      attachments: [proof],
+    });
+
+    await expect(handleTicketDm(msg)).resolves.toBe(true);
+
+    expect(relayDeletes).toHaveLength(1);
+    expect(relayDeletes[0]).toHaveBeenCalledTimes(1);
+    expect(react).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledTimes(1);
+    expect(mockLoggerWarn).toHaveBeenCalledWith(
+      'Ticket #101: Relay-DM an owner-1 fehlgeschlagen',
+      expect.objectContaining({ e: expect.stringContaining('SHA-256') }),
+    );
+    expect(mockLogAudit).toHaveBeenCalledWith('TICKET_RELAY_FAILED', 'TICKET', {
+      ticketNumber: 101,
+      fromRole: 'USER',
+      targetId: 'owner-1',
+    });
   });
 });
