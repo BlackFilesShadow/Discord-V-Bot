@@ -33,15 +33,17 @@ const prismaMock = {
       const row = rows.get(where.id);
       return row && row.guildId === where.guildId ? row : null;
     }),
-    update: jest.fn(async ({ where, data }: { where: { id: string }; data: Partial<FeedRow> }) => {
-      const row = rows.get(where.id)!;
+    updateMany: jest.fn(async ({ where, data }: { where: { id: string; guildId: string }; data: Partial<FeedRow> }) => {
+      const row = rows.get(where.id);
+      if (!row || row.guildId !== where.guildId) return { count: 0 };
       Object.assign(row, data, { updatedAt: new Date() });
-      return row;
+      return { count: 1 };
     }),
-    delete: jest.fn(async ({ where }: { where: { id: string } }) => {
-      const row = rows.get(where.id)!;
+    deleteMany: jest.fn(async ({ where }: { where: { id: string; guildId: string } }) => {
+      const row = rows.get(where.id);
+      if (!row || row.guildId !== where.guildId) return { count: 0 };
       rows.delete(where.id);
-      return row;
+      return { count: 1 };
     }),
   },
 };
@@ -156,7 +158,7 @@ describe('botAdminFeedsRouter', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/Legacy-Feed-Typ CUSTOM/);
-    expect(prismaMock.feed.update).not.toHaveBeenCalled();
+    expect(prismaMock.feed.updateMany).not.toHaveBeenCalled();
     expect(rows.get('legacy')?.isActive).toBe(false);
   });
 
@@ -165,10 +167,12 @@ describe('botAdminFeedsRouter', () => {
     const off = await request(makeApp()).post(`/api/v2/bot-admin/feeds/legacy/toggle?guildId=${GUILD_ID}`).send({});
     expect(off.status).toBe(200);
     expect(off.body.isActive).toBe(false);
+    expect(prismaMock.feed.updateMany).toHaveBeenCalledWith({ where: { id: 'legacy', guildId: GUILD_ID }, data: { isActive: false } });
 
     const del = await request(makeApp()).delete(`/api/v2/bot-admin/feeds/legacy?guildId=${GUILD_ID}`);
     expect(del.status).toBe(200);
     expect(del.body).toEqual({ deleted: true });
+    expect(prismaMock.feed.deleteMany).toHaveBeenCalledWith({ where: { id: 'legacy', guildId: GUILD_ID } });
     expect(rows.has('legacy')).toBe(false);
   });
 
@@ -179,6 +183,15 @@ describe('botAdminFeedsRouter', () => {
     expect(res.status).toBe(200);
     expect(res.body.isActive).toBe(true);
     expect(rows.get('rss')?.isActive).toBe(true);
+  });
+
+  test('returns conflict if a scoped mutation no longer affects exactly one row', async () => {
+    rows.set('rss', row('rss', 'RSS', false));
+    prismaMock.feed.updateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await request(makeApp()).post(`/api/v2/bot-admin/feeds/rss/toggle?guildId=${GUILD_ID}`).send({});
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/zwischenzeitlich geändert/);
   });
 
   test('requires a valid guild scope', async () => {
