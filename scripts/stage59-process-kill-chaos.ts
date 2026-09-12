@@ -180,7 +180,7 @@ async function main(): Promise<void> {
     try {
       if (redis.isOpen) await redis.quit();
     } catch {
-      try { redis.destroy(); } catch { /* no-op */ }
+      try { redis.disconnect(); } catch { /* no-op */ }
     }
     await prisma.$disconnect();
   }
