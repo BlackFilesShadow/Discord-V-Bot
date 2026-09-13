@@ -1,7 +1,11 @@
-import { loadCommands } from '../../src/commands/handler';
+import { loadCommands, splitCommandsByScope } from '../../src/commands/handler';
 import { Collection } from 'discord.js';
 import { Command, ExtendedClient } from '../../src/types';
-import { MOVED_TO_DASHBOARD, PRESERVED_MANUFACTURER_COMMANDS } from '../../src/commands/inventory';
+import {
+  MOVED_TO_DASHBOARD,
+  PRESERVED_MANUFACTURER_COMMANDS,
+  SPEC_KEEP_COMMANDS,
+} from '../../src/commands/inventory';
 
 process.env.DISCORD_TOKEN = 'test-token';
 process.env.DISCORD_CLIENT_ID = 'test-client-id';
@@ -54,6 +58,37 @@ describe('Command Handler (Sektion 5)', () => {
 
     for (const name of PRESERVED_MANUFACTURER_COMMANDS) {
       expect(client.commands.has(name)).toBe(true);
+    }
+  });
+
+  it('haelt das guild-scoped Live-Inventar exakt synchron mit SPEC_KEEP_COMMANDS', async () => {
+    const client = createMockClient();
+    await loadCommands(client);
+
+    const scopes = splitCommandsByScope(client);
+    const actualGuild = scopes.guild.map(command => command.name).sort();
+    const expectedGuild = [...SPEC_KEEP_COMMANDS].sort();
+
+    expect(actualGuild).toEqual(expectedGuild);
+  });
+
+  it('trennt globale Hersteller-Kommandos strikt vom guild-scoped Keep-Inventar', async () => {
+    const client = createMockClient();
+    await loadCommands(client);
+
+    const scopes = splitCommandsByScope(client);
+    const actualGlobal = new Set(scopes.global.map(command => command.name));
+    const manufacturerOnly = [...client.commands.values()]
+      .filter(command => command.manufacturerOnly)
+      .map(command => command.data.name);
+    const expectedGlobal = new Set([
+      ...PRESERVED_MANUFACTURER_COMMANDS,
+      ...manufacturerOnly,
+    ]);
+
+    expect(actualGlobal).toEqual(expectedGlobal);
+    for (const name of expectedGlobal) {
+      expect(SPEC_KEEP_COMMANDS.has(name)).toBe(false);
     }
   });
 
