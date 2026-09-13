@@ -15,7 +15,6 @@ permissions:
 
 env:
   NODE_VERSION: '22'
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   stage59-primary:
@@ -52,7 +51,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -70,7 +69,7 @@ jobs:
           STAGE59_OUTPUT_PATH: stage59-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-primary.json
       - name: Upload Stage 59 primary evidence
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: stage59-process-kill-primary-${{ github.run_id }}-${{ github.run_attempt }}
           path: stage59-artifacts/*-primary.json
@@ -110,7 +109,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -128,7 +127,7 @@ jobs:
           STAGE59_OUTPUT_PATH: stage59-artifacts/${{ github.event.pull_request.head.sha || github.sha }}-verification2.json
       - name: Upload Stage 59 verification evidence
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: stage59-process-kill-verification2-${{ github.run_id }}-${{ github.run_attempt }}
           path: stage59-artifacts/*-verification2.json
