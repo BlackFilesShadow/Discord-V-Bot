@@ -1,6 +1,24 @@
-import type { Client } from 'discord.js';
+import type { Client, Message } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
+import {
+  prepareTicketUploadAttachments,
+  preparedTicketRelayFiles,
+  verifyTicketRelayAttachments,
+} from './ticketAttachmentRelay';
+import {
+  DASHBOARD_TICKET_REPLY_MAX_CHARS,
+  encodeTicketMessageContent,
+  type StoredTicketAttachment,
+} from './ticketMessageEnvelope';
+import { publishTicketRealtimeEvent } from './ticketRealtime';
+
+export interface DashboardTicketUpload {
+  name: string;
+  contentType: string | null;
+  size: number;
+  bytes: Buffer;
+}
 
 export type DashboardTicketReplyResult =
   | {
@@ -20,16 +38,40 @@ export type DashboardTicketReplyResult =
       delivered: false;
     };
 
+function splitRemainder(text: string, firstCapacity: number): string[] {
+  if (text.length <= firstCapacity) return [];
+  const chunks: string[] = [];
+  let offset = firstCapacity;
+  while (offset < text.length) {
+    chunks.push(text.slice(offset, offset + 2000));
+    offset += 2000;
+  }
+  return chunks;
+}
+
 export async function replyToOwnerTicketFromDashboard(input: {
   ticketId: string;
   ownerDiscordId: string;
   content: string;
+  attachments?: readonly DashboardTicketUpload[];
   client: Client;
 }): Promise<DashboardTicketReplyResult> {
   const content = input.content.trim();
-  if (content.length < 1 || content.length > 1800) {
-    throw new Error('Ticket-Antwort muss zwischen 1 und 1800 Zeichen lang sein.');
+  const uploads = input.attachments ?? [];
+  if ((content.length < 1 && uploads.length === 0) || content.length > DASHBOARD_TICKET_REPLY_MAX_CHARS) {
+    throw new Error(`Ticket-Antwort muss mindestens Text oder einen Anhang enthalten und darf maximal ${DASHBOARD_TICKET_REPLY_MAX_CHARS} Zeichen lang sein.`);
   }
+
+  const preparedAttachments = prepareTicketUploadAttachments(uploads.map(file => ({
+    name: file.name,
+    bytes: file.bytes,
+    size: file.size,
+  })));
+  const storedAttachments: StoredTicketAttachment[] = uploads.map(file => ({
+    name: file.name,
+    size: file.size,
+    contentType: file.contentType,
+  }));
 
   // Bot-Owner-Tickets sind bewusst global: `guildId` ist nur optionale
   // Herkunftsmetadaten. Die Autorisierungsgrenze wird direkt danach ueber die
@@ -81,12 +123,12 @@ export async function replyToOwnerTicketFromDashboard(input: {
     };
   }
 
-  await prisma.ticketMessage.create({
+  const history = await prisma.ticketMessage.create({
     data: {
       ticketId: ticket.id,
       fromDiscordId: input.ownerDiscordId,
       fromRole: 'OWNER',
-      content,
+      content: encodeTicketMessageContent(content, storedAttachments),
     },
   });
   // Nach der Owner-Pruefung ist die eindeutige Ticket-ID bereits autorisiert;
@@ -96,21 +138,55 @@ export async function replyToOwnerTicketFromDashboard(input: {
     where: { id: ticket.id },
     data: { updatedAt: new Date() },
   });
+  publishTicketRealtimeEvent(ticket.id, 'message');
 
+  const sentMessages: Message[] = [];
   try {
     const target = await input.client.users.fetch(ticket.userDiscordId);
-    await target.send({
-      content: `**🛡️ Owner** · Ticket #${ticket.ticketNumber}\n${content}`,
+    const header = `**🛡️ Owner** · Ticket #${ticket.ticketNumber}`;
+    const files = preparedTicketRelayFiles(preparedAttachments);
+    const firstCapacity = Math.max(1, 2000 - header.length - 1);
+    const firstText = content.slice(0, firstCapacity);
+    const firstContent = firstText.length > 0 ? `${header}\n${firstText}` : header;
+
+    sentMessages.push(await target.send({
+      content: firstContent,
+      ...(files.length > 0 ? { files } : {}),
       allowedMentions: { parse: [] },
-    });
+    }));
+
+    for (const chunk of splitRemainder(content, firstCapacity)) {
+      sentMessages.push(await target.send({
+        content: chunk,
+        allowedMentions: { parse: [] },
+      }));
+    }
+
+    if (preparedAttachments.length > 0) {
+      const attachmentMessage = sentMessages[0];
+      await verifyTicketRelayAttachments(attachmentMessage.attachments.values(), preparedAttachments);
+      await prisma.ticketMessage.update({
+        where: { id: history.id },
+        data: {
+          content: encodeTicketMessageContent(content, storedAttachments, {
+            channelId: attachmentMessage.channelId,
+            messageId: attachmentMessage.id,
+          }),
+        },
+      });
+      publishTicketRealtimeEvent(ticket.id, 'message');
+    }
   } catch (error) {
+    for (const sent of [...sentMessages].reverse()) {
+      try { await sent.delete(); } catch { /* best effort: keine partielle Dashboard-Antwort liegen lassen */ }
+    }
     logger.warn(`Ticket #${ticket.ticketNumber}: Dashboard-Relay-DM an ${ticket.userDiscordId} fehlgeschlagen`, {
       error: String(error),
     });
     return {
       ok: false,
       code: 'DELIVERY_FAILED',
-      message: 'Antwort wurde im Ticket gespeichert, konnte aber nicht per DM zugestellt werden.',
+      message: 'Antwort wurde im Ticket gespeichert, konnte aber nicht vollstaendig per DM zugestellt werden.',
       ticketNumber: ticket.ticketNumber,
       userDiscordId: ticket.userDiscordId,
       recorded: true,
