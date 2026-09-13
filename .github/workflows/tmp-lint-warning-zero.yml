@@ -51,6 +51,57 @@ jobs:
             "tests/security/runtimeBaselines4648Architecture.test.ts" \
             --fix --fix-type directive
 
+      - name: Remove only ESLint-created directive placeholder lines
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+          const fs = require('node:fs');
+          const targets = [
+            'src/dashboard/routes/v2/devStatus.ts',
+            'src/modules/bans/expiryRuntime.ts',
+            'src/modules/economy/blackMarket.ts',
+            'src/modules/economy/marketDirectBuyContract.ts',
+            'src/modules/economy/playtimeLiveRosterGuard.ts',
+            'src/modules/factions/factionEmbed.ts',
+            'src/modules/gameplayFeeds/runtime.ts',
+            'src/modules/nitrado/jobLease.ts',
+            'src/modules/nitrado/repository.ts',
+            'tests/commands/giveaway.test.ts',
+            'tests/deploy/metricsBootstrap.test.ts',
+            'tests/modules/reminderSchedulerReliability.test.ts',
+            'tests/modules/selfRoleMenu.publish.test.ts',
+            'tests/modules/selfRoleMenu.roles.test.ts',
+            'tests/security/noUnscopedPrismaQuery.test.ts',
+            'tests/security/runtimeBaselines4648Architecture.test.ts',
+          ];
+          let removed = 0;
+          for (const path of targets) {
+            const original = execFileSync('git', ['show', `HEAD:${path}`], { encoding: 'utf8' });
+            const current = fs.readFileSync(path, 'utf8');
+            const originalHadFinalNl = original.endsWith('\n');
+            const currentHadFinalNl = current.endsWith('\n');
+            if (originalHadFinalNl !== currentHadFinalNl) throw new Error(`Unexpected final-newline drift in ${path}`);
+            const originalLines = originalHadFinalNl ? original.slice(0, -1).split('\n') : original.split('\n');
+            const currentLines = currentHadFinalNl ? current.slice(0, -1).split('\n') : current.split('\n');
+            if (originalLines.length !== currentLines.length) throw new Error(`Unexpected line-count drift before normalization in ${path}`);
+            const out = [];
+            for (let i = 0; i < currentLines.length; i += 1) {
+              const wasDirective = originalLines[i].includes('eslint-disable');
+              const becameWhitespaceOnly = currentLines[i].trim() === '';
+              if (wasDirective && becameWhitespaceOnly) {
+                removed += 1;
+                continue;
+              }
+              out.push(currentLines[i]);
+            }
+            fs.writeFileSync(path, out.join('\n') + (currentHadFinalNl ? '\n' : ''));
+          }
+          if (removed !== 41) throw new Error(`Expected exactly 41 directive placeholders, removed ${removed}`);
+          console.log(`Removed exactly ${removed} ESLint-created directive placeholder lines.`);
+          NODE
+
       - name: Remove exactly the one unused logger import
         shell: bash
         run: |
