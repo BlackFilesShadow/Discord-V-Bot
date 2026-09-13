@@ -71,6 +71,7 @@ const Server = lazyPage(() => import('./pages/Server'));
 const ServerSlot = lazyPage(() => import('./pages/ServerSlotV3'));
 const Dev = lazyPage(() => import('./pages/Dev'));
 const BotAdmin = lazyPage(() => import('./pages/BotAdmin'));
+const DevBotAdmin = lazyPage(() => import('./pages/BotAdmin').then(({ DevBotAdminPage }) => ({ default: DevBotAdminPage })));
 const CommandCenter = lazyPage(() => import('./pages/dev/CommandCenter'));
 const SecureDevExport = lazyPage(() => import('./pages/dev/SecureDevExport'));
 
@@ -93,6 +94,7 @@ export default function App() {
         <Route path="/dev" element={<Protected><Dev /></Protected>}>
           <Route index element={<Navigate to="bot-status" replace />} />
           <Route path="command-center" element={<CommandCenter />} />
+          <Route path="bot-admin" element={<DevBotAdmin />} />
           <Route path="secure-export" element={<SecureDevExport />} />
           {DEV_TOOL_SLUGS.map((slug) => {
             const Page = DEV_PAGES[slug];
