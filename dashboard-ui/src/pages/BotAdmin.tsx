@@ -4,6 +4,11 @@
  * Zwei Gates (defense in depth):
  *   1. useBotAdminSession().active — Frontend gegen /api/v2/bot-admin/status
  *   2. requireBotAdmin (Backend)   — alle /api/v2/bot-admin/* Routen blocken sonst
+ *
+ * Die eigentliche Workspace-Oberflaeche ist bewusst wiederverwendbar: Der
+ * kanonische DEV/Owner kann dieselben Funktionen direkt innerhalb von /dev
+ * nutzen. Die Backend-Autorisierung bleibt unveraendert bei requireBotAdmin,
+ * dessen DEV-Fallback eine gueltige DEV-Session akzeptiert.
  */
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -25,10 +30,43 @@ interface DevEligibilityStatus {
   expiresAt?: string | null;
 }
 
+interface BotAdminWorkspaceProps {
+  isDeveloperOwner: boolean;
+}
+
+/**
+ * Gemeinsame Bot-Admin-Oberflaeche fuer die eigenstaendige /bot-admin-Seite
+ * und die DEV-Konsole. Sie besitzt absichtlich keinen eigenen Auth-Gate; der
+ * jeweilige Parent stellt die gueltige Step-up-Session sicher und das Backend
+ * erzwingt requireBotAdmin auf den API-Routen.
+ */
+export function BotAdminWorkspace({ isDeveloperOwner }: BotAdminWorkspaceProps) {
+  const [view, setView] = useState<'admin' | 'tickets' | 'knowledge' | 'commands'>('admin');
+
+  return (
+    <div className="max-w-content mx-auto space-y-4">
+      <div className="flex flex-wrap gap-2" role="navigation" aria-label="Bot-Admin Hauptbereiche">
+        <Button size="sm" variant={view === 'admin' ? 'primary' : 'ghost'} onClick={() => setView('admin')}><LayoutDashboard className="h-4 w-4" />Verwaltung</Button>
+        {isDeveloperOwner && <Button size="sm" variant={view === 'tickets' ? 'primary' : 'ghost'} onClick={() => setView('tickets')}><Inbox className="h-4 w-4" />Owner-Tickets</Button>}
+        <Button size="sm" variant={view === 'knowledge' ? 'primary' : 'ghost'} onClick={() => setView('knowledge')}><BookOpen className="h-4 w-4" />AI-Wissensbank</Button>
+        <Button size="sm" variant={view === 'commands' ? 'primary' : 'ghost'} onClick={() => setView('commands')}><TerminalSquare className="h-4 w-4" />Migrierte Bot-Commands</Button>
+      </div>
+      {view === 'admin' && <BotAdminTab showFeedback={isDeveloperOwner} />}
+      {isDeveloperOwner && view === 'tickets' && <BotAdminOwnerTickets />}
+      {view === 'knowledge' && <BotAdminKnowledgeScoped />}
+      {view === 'commands' && <BotAdminCommandCenter showFeedback={isDeveloperOwner} />}
+    </div>
+  );
+}
+
+/** DEV-Unterseite: der Parent /dev hat DEV-Identitaet + aktive DEV-Session bereits geprueft. */
+export function DevBotAdminPage() {
+  return <BotAdminWorkspace isDeveloperOwner />;
+}
+
 export default function BotAdminPage() {
   const { user } = useAuth();
   const ba = useBotAdminSession();
-  const [view, setView] = useState<'admin' | 'tickets' | 'knowledge' | 'commands'>('admin');
   const developerEligibility = useQuery({
     queryKey: ['bot-admin', 'developer-owner-eligibility', user?.discordId ?? 'anonymous'],
     enabled: Boolean(user && ba.active),
@@ -63,18 +101,7 @@ export default function BotAdminPage() {
 
   return (
     <Shell title="Bot-Admin" back="/servers">
-      <div className="max-w-content mx-auto space-y-4">
-        <div className="flex flex-wrap gap-2" role="navigation" aria-label="Bot-Admin Hauptbereiche">
-          <Button size="sm" variant={view === 'admin' ? 'primary' : 'ghost'} onClick={() => setView('admin')}><LayoutDashboard className="h-4 w-4" />Verwaltung</Button>
-          {isDeveloperOwner && <Button size="sm" variant={view === 'tickets' ? 'primary' : 'ghost'} onClick={() => setView('tickets')}><Inbox className="h-4 w-4" />Owner-Tickets</Button>}
-          <Button size="sm" variant={view === 'knowledge' ? 'primary' : 'ghost'} onClick={() => setView('knowledge')}><BookOpen className="h-4 w-4" />AI-Wissensbank</Button>
-          <Button size="sm" variant={view === 'commands' ? 'primary' : 'ghost'} onClick={() => setView('commands')}><TerminalSquare className="h-4 w-4" />Migrierte Bot-Commands</Button>
-        </div>
-        {view === 'admin' && <BotAdminTab showFeedback={isDeveloperOwner} />}
-        {isDeveloperOwner && view === 'tickets' && <BotAdminOwnerTickets />}
-        {view === 'knowledge' && <BotAdminKnowledgeScoped />}
-        {view === 'commands' && <BotAdminCommandCenter showFeedback={isDeveloperOwner} />}
-      </div>
+      <BotAdminWorkspace isDeveloperOwner={isDeveloperOwner} />
     </Shell>
   );
 }
