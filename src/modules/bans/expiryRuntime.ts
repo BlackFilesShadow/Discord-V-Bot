@@ -302,7 +302,6 @@ export async function runBanExpiryRuntimeOnce(now = new Date()): Promise<void> {
     await reconcileExpiredServerBansOnce(now);
 
     // Crash-Recovery fuer Notice-Leases.
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Recovery-Sweep ueber eigene Notice-Outbox.
     await prisma.serverBanExpiryNotice.updateMany({
       where: { status: 'SENDING', leaseUntil: { lt: now } },
       data: {
@@ -314,7 +313,6 @@ export async function runBanExpiryRuntimeOnce(now = new Date()): Promise<void> {
       },
     });
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Scheduler iteriert eigene READY-Outbox; deliverNotice validiert Guild+Connection+Channel erneut.
     const due = await prisma.serverBanExpiryNotice.findMany({
       where: { status: 'READY', nextAttemptAt: { lte: now } },
       orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],

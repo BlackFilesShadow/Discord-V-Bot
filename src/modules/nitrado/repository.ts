@@ -93,7 +93,6 @@ function gen5(): string {
 async function uniqueAlias5(): Promise<string> {
   for (let i = 0; i < 10; i++) {
     const c = gen5();
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- alias5 ist global eindeutig
     const exists = await prisma.nitradoConnection.findUnique({ where: { alias5: c } });
     if (!exists) return c;
   }
