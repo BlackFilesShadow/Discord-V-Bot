@@ -125,10 +125,11 @@ run_step() {
   fi
 }
 
-# Environment/tool prerequisites. Failure here blocks only dependent checks.
-run_step 'root-npm-ci' 'TEST-/UMGEBUNGSFEHLER' 600 '' 'npm ci'
-run_step 'dashboard-npm-ci' 'TEST-/UMGEBUNGSFEHLER' 600 '' 'cd dashboard-ui && npm ci'
-run_step 'prisma-generate' 'TEST-/UMGEBUNGSFEHLER' 180 'root-npm-ci' 'npx prisma generate'
+# Environment/tool prerequisites. Deterministic install/schema commands are repo checks by
+# default; genuine registry/network failures can be reclassified after reading their logs.
+run_step 'root-npm-ci' 'ECHTER FEHLER' 600 '' 'npm ci'
+run_step 'dashboard-npm-ci' 'ECHTER FEHLER' 600 '' 'cd dashboard-ui && npm ci'
+run_step 'prisma-generate' 'ECHTER FEHLER' 180 'root-npm-ci' 'npx prisma generate'
 run_step 'prisma-validate' 'ECHTER FEHLER' 120 'root-npm-ci' 'npx prisma validate'
 run_step 'postgres-client' 'TEST-/UMGEBUNGSFEHLER' 60 '' 'command -v psql && command -v pg_dump && command -v pg_restore && psql --version && pg_dump --version'
 run_step 'redis-live' 'TEST-/UMGEBUNGSFEHLER' 60 '' "node -e \"const {createClient}=require('redis');(async()=>{const c=createClient({url:process.env.REDIS_URL});await c.connect();const p=await c.ping();await c.quit();if(p!=='PONG')process.exit(2)})().catch(e=>{console.error(e);process.exit(1)})\""
@@ -198,6 +199,7 @@ done < "$SUMMARY"
   printf 'SKIPPED_FOLGEBLOCKS=%s\n' "$skipped"
   printf 'INTERNAL_HARNESS_FAILURE=%s\n' "$collector_internal_failure"
   printf 'NOTE=Warning-like lines are raw candidates and require context; they do not fail a green block.\n'
+  printf 'NOTE=Any skipped block makes the audit incomplete and therefore non-green.\n'
   printf 'NOTE=Real Stage59 PostgreSQL/Redis process-kill, Gitleaks and Trivy remain canonical GitHub-CI evidence and are not executed through this no-Docker-socket runner.\n'
 } | tee -a "$OUT/identity.txt"
 
@@ -205,7 +207,7 @@ printf '\n===== FINAL BLOCK SUMMARY =====\n'
 column -t -s $'\t' "$SUMMARY" 2>/dev/null || cat "$SUMMARY"
 printf '\nArtifacts: %s\n' "$OUT"
 
-if [[ "$failed" -gt 0 || "$collector_internal_failure" -ne 0 ]]; then
+if [[ "$failed" -gt 0 || "$skipped" -gt 0 || "$collector_internal_failure" -ne 0 ]]; then
   exit 1
 fi
 exit 0
