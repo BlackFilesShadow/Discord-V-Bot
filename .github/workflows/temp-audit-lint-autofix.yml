@@ -1,0 +1,102 @@
+name: Temporary Audit Lint Autofix
+
+on:
+  push:
+    branches:
+      - fix/full-audit-warning-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  targeted-lint-autofix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v5
+        with:
+          ref: fix/full-audit-warning-cleanup
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard-ui/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix dashboard-ui
+
+      - name: Remove the one confirmed unused import
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/modules/registration/register.ts')
+          text = path.read_text()
+          old = "import { logAudit, logger } from '../../utils/logger';"
+          new = "import { logAudit } from '../../utils/logger';"
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected exactly one confirmed logger import, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Apply ESLint-owned safe fixes
+        run: npx eslint "src/**/*.ts" "tests/**/*.ts" --fix
+
+      - name: Verify only audited files changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/allowed-files <<'EOF'
+          src/dashboard/routes/v2/devStatus.ts
+          src/modules/bans/expiryRuntime.ts
+          src/modules/economy/blackMarket.ts
+          src/modules/economy/marketDirectBuyContract.ts
+          src/modules/economy/playtimeLiveRosterGuard.ts
+          src/modules/factions/factionEmbed.ts
+          src/modules/gameplayFeeds/runtime.ts
+          src/modules/nitrado/jobLease.ts
+          src/modules/nitrado/repository.ts
+          src/modules/registration/register.ts
+          tests/commands/giveaway.test.ts
+          tests/deploy/metricsBootstrap.test.ts
+          tests/modules/reminderSchedulerReliability.test.ts
+          tests/modules/selfRoleMenu.publish.test.ts
+          tests/modules/selfRoleMenu.roles.test.ts
+          tests/security/noUnscopedPrismaQuery.test.ts
+          tests/security/runtimeBaselines4648Architecture.test.ts
+          EOF
+          git diff --name-only | sort > /tmp/changed-files
+          sort -o /tmp/allowed-files /tmp/allowed-files
+          echo 'Changed files:'
+          cat /tmp/changed-files
+          test -s /tmp/changed-files
+          unexpected="$(comm -23 /tmp/changed-files /tmp/allowed-files || true)"
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected autofix files:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
+          git diff --check
+
+      - name: Verify lint is warning-free
+        run: npm run lint:all
+
+      - name: Commit exact warning cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src tests
+          git diff --cached --check
+          git commit -m 'chore(lint): remove confirmed stale directives'
+          git push origin HEAD:fix/full-audit-warning-cleanup
