@@ -19,6 +19,7 @@ printf 'step\tstatus\tclassification\texitCode\twarningLines\tdurationSec\tlog\n
 
 declare -A STATUS=()
 declare -A EXIT_CODE=()
+collector_internal_failure=0
 
 sanitize_field() {
   printf '%s' "$1" | tr '\t\r\n' '   '
@@ -36,7 +37,7 @@ fatal_environment() {
 [[ -n "${DATABASE_URL:-}" ]] || fatal_environment 'DATABASE_URL fehlt.'
 [[ -n "${REDIS_URL:-}" ]] || fatal_environment 'REDIS_URL fehlt.'
 
-node <<'NODE' || exit 97
+if ! node <<'NODE'
 const db = new URL(process.env.DATABASE_URL);
 const redis = new URL(process.env.REDIS_URL);
 const dbName = db.pathname.replace(/^\//, '');
@@ -49,7 +50,9 @@ if (redis.hostname !== 'audit-redis' || (redis.port && redis.port !== '6379')) {
   process.exit(1);
 }
 NODE
-[[ $? -eq 0 ]] || fatal_environment 'Safety-Check fuer isolierte Datenservices fehlgeschlagen.'
+then
+  fatal_environment 'Safety-Check fuer isolierte Datenservices fehlgeschlagen.'
+fi
 
 cd "$ROOT" || fatal_environment 'Repository-Root nicht erreichbar.'
 SHA="$(git rev-parse HEAD 2>/dev/null || true)"
@@ -67,6 +70,7 @@ run_step() {
   local command="$5"
   local log="$OUT/logs/${name}.log"
   local dep dep_status
+  local -a dep_list=()
 
   if [[ -n "$deps" ]]; then
     IFS=',' read -r -a dep_list <<< "$deps"
@@ -133,7 +137,7 @@ run_step 'redis-live' 'TEST-/UMGEBUNGSFEHLER' 60 '' "node -e \"const {createClie
 run_step 'lint-all' 'ECHTER FEHLER' 420 'root-npm-ci,dashboard-npm-ci' 'npm run lint:all'
 run_step 'build' 'ECHTER FEHLER' 720 'root-npm-ci,dashboard-npm-ci,prisma-generate' 'npm run build'
 run_step 'audit-artifacts' 'ECHTER FEHLER' 120 'root-npm-ci' 'npm run audit:check'
-run_step 'radar-assets' 'TEST-/UMGEBUNGSFEHLER' 300 'root-npm-ci' 'npm run radar:assets:verify'
+run_step 'radar-assets' 'ECHTER FEHLER' 300 'root-npm-ci' 'npm run radar:assets:verify'
 
 # Isolated database lifecycle. These URLs are already hard-pinned by the safety barrier.
 run_step 'db-migrate-deploy' 'ECHTER FEHLER' 240 'prisma-generate' 'npx prisma migrate deploy'
@@ -171,11 +175,13 @@ run_step 'dashboard-audit-prod-high' 'ECHTER FEHLER' 180 'dashboard-npm-ci' 'cd 
 run_step 'dashboard-audit-critical' 'ECHTER FEHLER' 180 'dashboard-npm-ci' 'cd dashboard-ui && npm audit --audit-level=critical'
 run_step 'dashboard-audit-high' 'ECHTER FEHLER' 180 'dashboard-npm-ci' 'cd dashboard-ui && npm audit --audit-level=high'
 
-# Convert the machine-readable TSV to JSON without requiring jq.
+# Convert the machine-readable TSV to JSON without requiring jq. A broken summary is itself
+# a harness failure and must never result in an overall green exit code.
 node "$ROOT/scripts/audit-summary-from-tsv.mjs" "$SUMMARY" "$JSON" "$SHA"
 json_rc=$?
 if [[ "$json_rc" -ne 0 ]]; then
-  printf 'TEST-/UMGEBUNGSFEHLER: summary.json konnte nicht erzeugt werden (exit=%s).\n' "$json_rc" >> "$FAILURES"
+  collector_internal_failure=1
+  printf 'TEST-/UMGEBUNGSFEHLER: summary.json konnte nicht erzeugt werden (exit=%s).\n' "$json_rc" | tee -a "$FAILURES" >&2
 fi
 
 failed=0
@@ -190,6 +196,7 @@ done < "$SUMMARY"
   printf 'FINISHED_AT=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   printf 'FAILED_BLOCKS=%s\n' "$failed"
   printf 'SKIPPED_FOLGEBLOCKS=%s\n' "$skipped"
+  printf 'INTERNAL_HARNESS_FAILURE=%s\n' "$collector_internal_failure"
   printf 'NOTE=Warning-like lines are raw candidates and require context; they do not fail a green block.\n'
   printf 'NOTE=Real Stage59 PostgreSQL/Redis process-kill, Gitleaks and Trivy remain canonical GitHub-CI evidence and are not executed through this no-Docker-socket runner.\n'
 } | tee -a "$OUT/identity.txt"
@@ -198,7 +205,7 @@ printf '\n===== FINAL BLOCK SUMMARY =====\n'
 column -t -s $'\t' "$SUMMARY" 2>/dev/null || cat "$SUMMARY"
 printf '\nArtifacts: %s\n' "$OUT"
 
-if [[ "$failed" -gt 0 ]]; then
+if [[ "$failed" -gt 0 || "$collector_internal_failure" -ne 0 ]]; then
   exit 1
 fi
 exit 0
