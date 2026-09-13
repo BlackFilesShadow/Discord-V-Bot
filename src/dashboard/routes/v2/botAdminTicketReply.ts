@@ -164,6 +164,9 @@ botAdminTicketReplyRouter.get(
   '/:id',
   requireBotAdmin,
   async (req, res) => {
+    // Owner-Tickets sind absichtlich global und besitzen historisch teils kein guildId.
+    // Die Route liegt hinter requireBotAdmin; die eindeutige Ticket-ID ist hier der Scope.
+    // eslint-disable-next-line local/no-unscoped-prisma-query -- Globaler Owner-Ticket-Detailzugriff hinter BotAdmin/DEV-Gate; guildId ist optional.
     const ticket = await prisma.ticket.findUnique({
       where: { id: String(req.params.id) },
       include: { messages: { orderBy: { createdAt: 'asc' } } },
