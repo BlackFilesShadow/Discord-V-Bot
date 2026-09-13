@@ -85,6 +85,9 @@ jobs:
             echo "$unexpected" >&2
             exit 1
           fi
+          while IFS= read -r file; do
+            sed -i 's/[[:blank:]]\+$//' "$file"
+          done < /tmp/changed-files
           git diff --check
 
       - name: Verify lint is warning-free
