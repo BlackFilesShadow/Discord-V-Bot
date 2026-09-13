@@ -79,6 +79,8 @@ const classificationCounts = Object.fromEntries(
     steps.filter((step) => step.classification === classification).length,
   ]),
 );
+const failed = countStatus('FAIL');
+const skipped = countStatus('SKIPPED');
 
 const document = {
   schemaVersion: 1,
@@ -88,12 +90,12 @@ const document = {
   totals: {
     steps: steps.length,
     passed: countStatus('PASS'),
-    failed: countStatus('FAIL'),
-    skippedFollowups: countStatus('SKIPPED'),
+    failed,
+    skippedFollowups: skipped,
     warningCandidates,
   },
   classificationCounts,
-  allGreen: countStatus('FAIL') === 0,
+  allGreen: failed === 0 && skipped === 0,
   steps,
 };
 
