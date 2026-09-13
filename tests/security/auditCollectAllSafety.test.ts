@@ -217,7 +217,7 @@ describe('collect-all Linux audit safety', () => {
       'lint-all\tPASS\tOK\t1\t0\t1\t/audit-output/logs/lint-all.log',
     ]],
     ['FAIL with zero exit', [
-      'lint-all\tFAIL\tECHTER FEHLER\t0\t0\t1\t/audit-output/logs/db-consistency.log',
+      'lint-all\tFAIL\tECHTER FEHLER\t0\t0\t1\t/audit-output/logs/lint-all.log',
     ]],
     ['SKIPPED with wrong classification', [
       'lint-all\tSKIPPED\tOK\t-\t0\t0\t-',
