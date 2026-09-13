@@ -54,6 +54,12 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
     expect(server).toContain("process.env.E2E_REAL_DB !== '1'");
     expect(server).toContain("requireRuntime('../src/dashboard/server')");
     expect(server).toContain("requireRuntime('../src/database/prisma')");
+    expect(server).toContain("const e2eDashboardPort = process.env.E2E_PORT ?? '4173';");
+    expect(server).toContain('process.env.DASHBOARD_PORT = e2eDashboardPort;');
+    expect(server).toContain('process.env.DASHBOARD_URL = `http://127.0.0.1:${e2eDashboardPort}`;');
+    expect(server).toContain('process.env.OAUTH2_REDIRECT_URI = `${process.env.DASHBOARD_URL}/auth/callback`;');
+    expect(server).not.toContain('process.env.DASHBOARD_URL = process.env.DASHBOARD_URL ??');
+    expect(server).not.toContain('process.env.OAUTH2_REDIRECT_URI = process.env.OAUTH2_REDIRECT_URI');
 
     const bootstrap = read(harnessBootstrap);
     expect(bootstrap).toContain("'tsconfig.test.json'");
