@@ -15,6 +15,11 @@ import {
   preparedTicketRelayFiles,
   verifyTicketRelayAttachments,
 } from './ticketAttachmentRelay';
+import {
+  encodeTicketMessageContent,
+  type StoredTicketAttachment,
+} from './ticketMessageEnvelope';
+import { publishTicketRealtimeEvent } from './ticketRealtime';
 
 /**
  * Legacy Owner-DM-Bridge fuer /ticket.
@@ -128,6 +133,7 @@ export async function createTicket(opts: {
     userId: opts.userDiscordId,
     guildId: opts.guildId,
   });
+  publishTicketRealtimeEvent(ticket.id, 'status');
   return {
     success: true,
     ticketNumber: ticket.ticketNumber,
@@ -173,6 +179,7 @@ export async function acceptTicket(
   }
 
   logAudit('TICKET_ACCEPTED', 'TICKET', { ticketNumber: ticket.ticketNumber, ownerId: ownerDiscordId });
+  publishTicketRealtimeEvent(ticket.id, 'status');
   return { success: true, message: `Ticket #${ticket.ticketNumber} ist jetzt offen.` };
 }
 
@@ -207,6 +214,7 @@ export async function denyTicket(
   } catch { /* DM optional */ }
 
   logAudit('TICKET_DENIED', 'TICKET', { ticketNumber: ticket.ticketNumber, ownerId: ownerDiscordId });
+  publishTicketRealtimeEvent(ticket.id, 'status');
   return { success: true, message: `Ticket #${ticket.ticketNumber} abgelehnt.` };
 }
 
@@ -245,6 +253,7 @@ export async function closeTicket(
   }
 
   logAudit('TICKET_CLOSED', 'TICKET', { ticketNumber: ticket.ticketNumber, byUserId: byDiscordId });
+  publishTicketRealtimeEvent(ticket.id, 'status');
   return { success: true, message: `Ticket #${ticket.ticketNumber} geschlossen.` };
 }
 
@@ -316,23 +325,34 @@ export async function handleTicketDm(msg: Message): Promise<boolean> {
 
   const fromRole: 'USER' | 'OWNER' = ticket.userDiscordId === userId ? 'USER' : 'OWNER';
   const targetId = fromRole === 'USER' ? ticket.ownerDiscordId : ticket.userDiscordId;
+  const sourceAttachments = [...msg.attachments.values()];
+  const storedAttachments: StoredTicketAttachment[] = sourceAttachments.map(attachment => ({
+    name: attachment.name ?? `attachment-${attachment.id}`,
+    size: attachment.size,
+    contentType: attachment.contentType,
+  }));
 
   await prisma.ticketMessage.create({
     data: {
       ticketId: ticket.id,
       fromDiscordId: userId,
       fromRole,
-      content: msg.content,
+      content: encodeTicketMessageContent(
+        msg.content,
+        storedAttachments,
+        storedAttachments.length > 0 ? { channelId: msg.channelId, messageId: msg.id } : null,
+      ),
     },
   });
   await prisma.ticket.update({ where: { id: ticket.id }, data: { updatedAt: new Date() } });
+  publishTicketRealtimeEvent(ticket.id, 'message');
 
   const sentRelayMessages: Message[] = [];
   try {
     const target = await msg.client.users.fetch(targetId);
     const senderLabel = fromRole === 'OWNER' ? '🛡️ Owner' : `👤 ${ticket.username}`;
     const header = `**${senderLabel}** · Ticket #${ticket.ticketNumber}`;
-    const preparedAttachments = await prepareTicketRelayAttachments(msg.attachments.values());
+    const preparedAttachments = await prepareTicketRelayAttachments(sourceAttachments);
     const files = preparedTicketRelayFiles(preparedAttachments);
     const combinedContent = `${header}\n${msg.content}`;
 
