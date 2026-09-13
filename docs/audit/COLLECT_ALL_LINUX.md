@@ -31,8 +31,8 @@ Die Ausgabe landet standardmaessig unter `/root/vbot-audit-output/<UTC-Zeit>-<SH
 
 Der Lauf erzeugt insbesondere:
 
-- `VBot-FULL-REPO-AUDIT.md` – upload-/lesefreundlicher Gesamtbericht inklusive Konsolenausgabe.
-- `full-console.log` – rohe vollstaendige Konsolenausgabe.
+- `VBot-FULL-REPO-AUDIT.md` – upload-/lesefreundlicher Gesamtbericht mit exaktem Aufruf, Wrapper-/Runner-/Summary-Quelltext, Blockzusammenfassung, Fehlern, Warnungskandidaten und der vollstaendigen Konsolenausgabe bis zum finalen Runner-Exit-Code.
+- `full-console.log` – rohe vollstaendige Konsolenausgabe des gestarteten Audit-Laufs.
 - `summary.tsv` – Blockergebnisse als einfaches Tabellenformat.
 - `summary.json` – maschinenlesbare Zusammenfassung.
 - `failures.txt` – fehlgeschlagene und abhaengig uebersprungene Bloecke mit Kontext.
@@ -44,12 +44,14 @@ Der Lauf erzeugt insbesondere:
 Der Runner unterscheidet strukturell zwischen:
 
 - `ECHTER FEHLER` – ein ausgefuehrter Repo-/Funktionscheck ist rot.
-- `TEST-/UMGEBUNGSFEHLER` – Voraussetzung oder Testumgebung ist nicht verwendbar.
-- `FOLGEFEHLER` – ein Block wird nicht ausgefuehrt, weil eine benoetigte Voraussetzung vorher rot war.
+- `TEST-/UMGEBUNGSFEHLER` – eine klar technische Voraussetzung oder die isolierte Testumgebung ist nicht verwendbar.
+- `FOLGEFEHLER` – ein Block wird nicht ausgefuehrt, weil eine benoetigte Voraussetzung vorher rot oder nicht vorhanden war.
 - Warnungsartige Zeilen werden separat gesammelt und machen einen ansonsten gruenen Block nicht rot.
 
-Die automatische Klassifikation ersetzt keine Kontextpruefung. Beispielsweise kann ein externer Registry-/Netzwerkausfall einen Security-Befehl mit non-zero beenden; fuer die abschliessende Bewertung muss dann der zugehoerige Block-Log gelesen werden.
+Ein Lauf gilt nur dann als gruen, wenn **kein Block fehlgeschlagen und kein Block uebersprungen** wurde und die maschinenlesbare Zusammenfassung selbst erfolgreich erzeugt werden konnte. Dadurch kann ein fehlender Dependency-Name oder ein anderer Harnessfehler keinen scheinbar gruenen Voll-Audit erzeugen.
+
+Die automatische Erstklassifikation ersetzt keine Kontextpruefung. Ein deterministischer Repo-Befehl wie `npm ci` wird bei non-zero zunaechst als echter Fehler behandelt; zeigt sein Log stattdessen einen externen Registry-/Netzwerkausfall, kann er bei der abschliessenden Analyse als Test-/Umgebungsfehler reklassifiziert werden. Warnungen werden niemals allein aufgrund ihres Textes zu Produktfehlern hochgestuft.
 
 ## Nicht lokal reproduzierte GitHub-Gates
 
-Der no-Docker-socket Runner fuehrt bewusst keinen echten PostgreSQL-/Redis-Prozess-Kill aus. Gitleaks und Trivy bleiben ebenfalls kanonische GitHub-CI-Evidenz. Ihr Status darf deshalb nicht aus dem lokalen Collect-All-Lauf abgeleitet werden.
+Der no-Docker-socket Runner fuehrt bewusst keinen echten PostgreSQL-/Redis-Prozess-Kill aus. Gitleaks und Trivy bleiben ebenfalls kanonische GitHub-CI-Evidenz. Ihr Status darf deshalb nicht aus dem lokalen Collect-All-Lauf abgeleitet werden; fuer eine vollstaendige Freigabe muessen diese GitHub-Gates separat gruen sein.
