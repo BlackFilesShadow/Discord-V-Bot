@@ -31,6 +31,9 @@ const header = lines[0].split('\t');
 if (header.length !== expectedHeader.length || header.some((value, index) => value !== expectedHeader[index])) {
   throw new Error(`unexpected summary header: ${lines[0]}`);
 }
+if (lines.length === 1) {
+  throw new Error('summary.tsv contains no audit steps');
+}
 
 const allowedStatus = new Set(['PASS', 'FAIL', 'SKIPPED']);
 const allowedClassification = new Set([
@@ -40,14 +43,17 @@ const allowedClassification = new Set([
   'FOLGEFEHLER',
   'TEST-/UMGEBUNGSFEHLER',
 ]);
+const seenSteps = new Set();
 
 const steps = lines.slice(1).map((line, rowIndex) => {
   const parts = line.split('\t');
   if (parts.length !== expectedHeader.length) {
     throw new Error(`malformed summary row ${rowIndex + 2}: expected 7 columns, got ${parts.length}`);
   }
-  const [step, status, classification, exitCodeRaw, warningLinesRaw, durationSecRaw, log] = parts;
+  const [step, status, classification, exitCodeRaw, warningLinesRaw, durationSecRaw, logRaw] = parts;
   if (!step) throw new Error(`empty step name at row ${rowIndex + 2}`);
+  if (seenSteps.has(step)) throw new Error(`duplicate audit step: ${step}`);
+  seenSteps.add(step);
   if (!allowedStatus.has(status)) throw new Error(`invalid status ${status} for ${step}`);
   if (!allowedClassification.has(classification)) {
     throw new Error(`invalid classification ${classification} for ${step}`);
@@ -56,9 +62,30 @@ const steps = lines.slice(1).map((line, rowIndex) => {
   const exitCode = exitCodeRaw === '-' ? null : Number(exitCodeRaw);
   const warningLines = Number(warningLinesRaw);
   const durationSec = Number(durationSecRaw);
+  const log = logRaw === '-' ? null : logRaw;
   if (exitCode !== null && !Number.isInteger(exitCode)) throw new Error(`invalid exitCode for ${step}`);
   if (!Number.isInteger(warningLines) || warningLines < 0) throw new Error(`invalid warningLines for ${step}`);
   if (!Number.isInteger(durationSec) || durationSec < 0) throw new Error(`invalid durationSec for ${step}`);
+
+  if (status === 'PASS') {
+    if (classification !== 'OK' && classification !== 'WARNUNG') {
+      throw new Error(`PASS step ${step} has incompatible classification ${classification}`);
+    }
+    if (exitCode !== 0) throw new Error(`PASS step ${step} must have exitCode 0`);
+    if (!log) throw new Error(`PASS step ${step} must reference a log`);
+  } else if (status === 'FAIL') {
+    if (classification !== 'ECHTER FEHLER' && classification !== 'TEST-/UMGEBUNGSFEHLER') {
+      throw new Error(`FAIL step ${step} has incompatible classification ${classification}`);
+    }
+    if (exitCode === null || exitCode === 0) throw new Error(`FAIL step ${step} must have a non-zero exitCode`);
+    if (!log) throw new Error(`FAIL step ${step} must reference a log`);
+  } else {
+    if (classification !== 'FOLGEFEHLER') {
+      throw new Error(`SKIPPED step ${step} must be classified as FOLGEFEHLER`);
+    }
+    if (exitCode !== null) throw new Error(`SKIPPED step ${step} must not have an exitCode`);
+    if (log !== null) throw new Error(`SKIPPED step ${step} must not claim an executed log`);
+  }
 
   return {
     step,
@@ -67,7 +94,7 @@ const steps = lines.slice(1).map((line, rowIndex) => {
     exitCode,
     warningLines,
     durationSec,
-    log: log === '-' ? null : log,
+    log,
   };
 });
 
