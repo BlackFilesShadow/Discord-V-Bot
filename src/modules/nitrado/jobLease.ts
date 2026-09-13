@@ -123,7 +123,6 @@ export async function recoverStaleNitradoJobClaims(
   const staleBefore = new Date(now.getTime() - staleMs);
   let recovered = 0;
 
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Worker-Recovery-Sweep ueber die eigene Outbox-Lease-Tabelle.
   const leases = await prisma.nitradoJobLease.findMany({
     where: { heartbeatAt: { lt: staleBefore } },
     select: { jobId: true, guildId: true, claimToken: true },

@@ -60,7 +60,6 @@ describe('Reminder scheduler reliability', () => {
     safeSendMock.mockResolvedValue(null);
     safeDmMock.mockResolvedValue({ id: 'dm-message' });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await fireReminderById(client as any, 'rem-1');
 
     expect(safeSendMock).toHaveBeenCalledTimes(1);
@@ -80,7 +79,6 @@ describe('Reminder scheduler reliability', () => {
     safeSendMock.mockResolvedValue(null);
     safeDmMock.mockResolvedValue(null);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await fireReminderById(client as any, 'rem-1');
 
     const update = txMock.reminder.update.mock.calls[0][0];
@@ -98,7 +96,6 @@ describe('Reminder scheduler reliability', () => {
       dueAt: new Date(Date.now() + 120_000),
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await fireReminderById(client as any, 'rem-1');
 
     expect(txMock.$queryRawUnsafe).toHaveBeenCalledWith(
@@ -120,7 +117,6 @@ describe('Reminder scheduler reliability', () => {
         return cb(txMock);
       });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await expect(runReminderTickOnce(client as any)).resolves.toBeUndefined();
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(2);
   });
