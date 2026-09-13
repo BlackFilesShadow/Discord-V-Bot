@@ -7,7 +7,7 @@
  */
 import { RuleTester } from 'eslint';
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
+
 const rule = require('../../eslint-rules/no-unscoped-prisma-query.js');
 
 const tester = new RuleTester({ languageOptions: { ecmaVersion: 2022, sourceType: 'module' } });

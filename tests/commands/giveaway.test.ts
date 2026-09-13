@@ -58,7 +58,7 @@ describe('/giveaway end — Mentions-Haertung', () => {
     drawWinnersMock.mockResolvedValue({ success: true, winners: [{ discordId: '444444444444444444' }] });
 
     const { interaction, editReply, channelSend } = makeInteraction();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleEnd(interaction as any);
 
     const reply = editReply.mock.calls[0][0] as Captured;
@@ -79,7 +79,7 @@ describe('/giveaway end — Mentions-Haertung', () => {
     drawWinnersMock.mockResolvedValue({ success: true, winners: [], message: 'Keine Teilnehmer.' });
 
     const { interaction, editReply, channelSend } = makeInteraction();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleEnd(interaction as any);
 
     const reply = editReply.mock.calls[0][0] as Captured;
@@ -97,7 +97,7 @@ describe('/giveaway end — Mentions-Haertung', () => {
     drawWinnersMock.mockResolvedValue({ success: true, winners: [{ discordId: '444444444444444444' }] });
 
     const { interaction, channelSend } = makeInteraction();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleEnd(interaction as any);
 
     expect(channelSend).not.toHaveBeenCalled();

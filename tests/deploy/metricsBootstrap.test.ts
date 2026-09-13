@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 // CommonJS helper (scripts/resolve-bash.js) — avoid WSL stub bash on Windows.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+
 const { resolveBash } = require('../../scripts/resolve-bash') as {
   resolveBash: () => string | null;
 };

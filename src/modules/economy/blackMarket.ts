@@ -1,4 +1,4 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Black-market operations are explicitly guild+gameserver scoped and use raw SQL for transactional fulfillment tables. */
+
 import { randomUUID } from 'node:crypto';
 import prisma from '../../database/prisma';
 import type { GuildId, NitradoConnId, UserDiscordId } from '../../types/scope';

@@ -132,7 +132,7 @@ devStatusRouter.get('/nitrado', async (req, res) => {
   const baseWhere = restrict ? { guildId: restrict } : undefined;
 
   const counts = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
+
     const rows = await prisma.nitradoJob.groupBy({
       by: ['status'],
       _count: { _all: true },
@@ -144,7 +144,7 @@ devStatusRouter.get('/nitrado', async (req, res) => {
   });
 
   const recentFailures = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
+
     return prisma.nitradoJob.findMany({
       where: { status: { in: ['FAILED', 'DEAD'] }, ...(restrict ? { guildId: restrict } : {}) },
       orderBy: { updatedAt: 'desc' },
@@ -154,7 +154,7 @@ devStatusRouter.get('/nitrado', async (req, res) => {
   });
 
   const oldestPending = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
+
     return prisma.nitradoJob.findFirst({
       where: { status: 'PENDING', ...(restrict ? { guildId: restrict } : {}) },
       orderBy: { createdAt: 'asc' },
@@ -179,7 +179,7 @@ devStatusRouter.get('/adm', async (req, res) => {
   const restrict = req.devSession?.scope.guildIdRestrict ?? null;
 
   const data = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Status-View; optional guild-restricted.
+
     const conns = await prisma.nitradoConnection.findMany({
       where: { status: 'ACTIVE', ...(restrict ? { guildId: restrict } : {}) },
       select: { id: true, guildId: true, slot: true, alias: true, alias5: true, nitradoServerId: true },
@@ -273,7 +273,7 @@ devStatusRouter.get('/nitrado-protection', async (req, res) => {
   const status = nitradoWriteProtectionStatus();
 
   const data = await timed(async () => {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-globaler Worker-View; optional guild-restricted.
+
     const conns = await prisma.nitradoConnection.findMany({
       where: { ...(restrict ? { guildId: restrict } : {}) },
       select: { id: true, guildId: true, slot: true, status: true, nitradoServerId: true, lastValidatedAt: true },

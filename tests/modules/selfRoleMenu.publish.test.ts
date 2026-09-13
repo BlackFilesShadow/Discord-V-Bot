@@ -76,7 +76,7 @@ beforeEach(() => {
 describe('publishMenu — verknuepfte Einbettung (entkoppelt)', () => {
   it('editiert NUR components und sendet KEINE neue Nachricht', async () => {
     const { channel, edit, send } = makeChannelWithMessage();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     const id = await publishMenu(baseMenu() as any, channel as any);
 
     expect(id).toBe(EMB_MSG);
@@ -92,7 +92,7 @@ describe('publishMenu — verknuepfte Einbettung (entkoppelt)', () => {
   it('lehnt ab, wenn die verknuepfte Einbettung noch nicht gesendet wurde', async () => {
     dashboardEmbedFindUnique.mockResolvedValue({ channelId: null, messageId: null });
     const { channel, send } = makeChannelWithMessage();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await expect(publishMenu(baseMenu() as any, channel as any)).rejects.toThrow(/noch nicht/i);
     expect(send).not.toHaveBeenCalled();
   });
@@ -106,7 +106,7 @@ describe('publishMenu — verknuepfte Einbettung (entkoppelt)', () => {
         description: null, confirmMessage: null, position: 0, buttonStyle: 'SECONDARY', isActive: true,
       }],
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await publishMenu(menu as any, channel as any);
     expect(react).toHaveBeenCalledWith('🎮');
     expect(send).not.toHaveBeenCalled();

@@ -1,6 +1,6 @@
 import prisma from '../../database/prisma';
 import { generateOneTimePassword, hashPassword } from '../../utils/password';
-import { logger, logAudit, logSecurity } from '../../utils/logger';
+import { logAudit, logSecurity } from '../../utils/logger';
 import fs from 'fs/promises';
 
 /**

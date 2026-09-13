@@ -812,7 +812,7 @@ export async function runGameplayFeedsOnce(): Promise<void> {
   if (running) return;
   running = true;
   try {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- globaler Lease-Recovery-Sweep
+
     await prisma.gameplayFeedDelivery.updateMany({
       where: {
         status: GameplayDeliveryStatus.SENDING,
@@ -827,7 +827,7 @@ export async function runGameplayFeedsOnce(): Promise<void> {
       },
     });
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- Scheduler iteriert aktive Configs; processConfig scoped jede Folgequery
+
     const configs = await prisma.gameplayFeedConfig.findMany({
       where: { isActive: true },
       orderBy: { createdAt: 'asc' },

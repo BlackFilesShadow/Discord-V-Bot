@@ -120,11 +120,11 @@ describe('Wave E Stages 46–48 runtime baselines', () => {
   });
 
   it('parseRetryAfterMs and circuit status surfaces remain callable', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     const { parseRetryAfterMs } = require('../../src/modules/nitrado/nitradoClient') as {
       parseRetryAfterMs: (h: unknown, cap?: number) => number;
     };
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     const { getNitradoBreakerStatus } = require('../../src/modules/nitrado/circuitBreaker') as {
       getNitradoBreakerStatus: () => Record<string, { state: string }>;
     };

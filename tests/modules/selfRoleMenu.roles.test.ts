@@ -73,7 +73,7 @@ describe('handleSelfRoleButton — GIVE', () => {
   it('vergibt die Rolle und bestaetigt, wenn sie fehlt', async () => {
     findUnique.mockResolvedValue(menuRow('GIVE'));
     const { btn, add, reply } = makeInteraction(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleSelfRoleButton(btn as any);
     expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(replyDescription(reply)).toContain(`Du hast die Rolle „${ROLE_NAME}“ erhalten.`);
@@ -82,7 +82,7 @@ describe('handleSelfRoleButton — GIVE', () => {
   it('informiert ohne Aktion, wenn die Rolle bereits vorhanden ist', async () => {
     findUnique.mockResolvedValue(menuRow('GIVE'));
     const { btn, add, remove, reply } = makeInteraction(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleSelfRoleButton(btn as any);
     expect(add).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
@@ -94,7 +94,7 @@ describe('handleSelfRoleButton — REMOVE', () => {
   it('entfernt die Rolle und bestaetigt, wenn sie vorhanden ist', async () => {
     findUnique.mockResolvedValue(menuRow('REMOVE'));
     const { btn, remove, reply } = makeInteraction(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleSelfRoleButton(btn as any);
     expect(remove).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(replyDescription(reply)).toContain(`Die Rolle „${ROLE_NAME}“ wurde dir entfernt.`);
@@ -103,7 +103,7 @@ describe('handleSelfRoleButton — REMOVE', () => {
   it('informiert ohne Aktion, wenn die Rolle nicht vorhanden ist', async () => {
     findUnique.mockResolvedValue(menuRow('REMOVE'));
     const { btn, add, remove, reply } = makeInteraction(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleSelfRoleButton(btn as any);
     expect(add).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
@@ -115,7 +115,7 @@ describe('handleSelfRoleButton — TOGGLE (Rolle Geben/Nehmen)', () => {
   it('gibt die Rolle, wenn sie fehlt', async () => {
     findUnique.mockResolvedValue(menuRow('TOGGLE'));
     const { btn, add, reply } = makeInteraction(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleSelfRoleButton(btn as any);
     expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(replyDescription(reply)).toContain(`Du hast die Rolle „${ROLE_NAME}“ erhalten.`);
@@ -124,7 +124,7 @@ describe('handleSelfRoleButton — TOGGLE (Rolle Geben/Nehmen)', () => {
   it('entfernt die Rolle, wenn sie vorhanden ist', async () => {
     findUnique.mockResolvedValue(menuRow('TOGGLE'));
     const { btn, remove, reply } = makeInteraction(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     await handleSelfRoleButton(btn as any);
     expect(remove).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(replyDescription(reply)).toContain(`Die Rolle „${ROLE_NAME}“ wurde dir entfernt.`);

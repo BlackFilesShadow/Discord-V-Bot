@@ -169,7 +169,7 @@ async function buildAttachments(f: FactionEmbedData): Promise<{
 }
 
 async function loadFaction(factionId: string): Promise<FactionEmbedData | null> {
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- Modul wird nur intern aus geprueften Routen aufgerufen.
+
   const f = await prisma.faction.findUnique({
     where: { id: factionId },
     include: {
@@ -282,7 +282,7 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
       messageId = sent.id;
     }
 
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id stammt aus loadFaction (interne ID).
+
     await prisma.faction.update({
       where: { id: f.id },
       data: { embedMessageId: messageId },
@@ -301,14 +301,14 @@ export async function postFactionEmbed(client: Client, factionId: string): Promi
  * Nullt `embedMessageId` in jedem Fall.
  */
 export async function unpostFactionEmbed(client: Client, factionId: string): Promise<void> {
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- Modul wird nur intern aus geprueften Routen aufgerufen.
+
   const f = await prisma.faction.findUnique({
     where: { id: factionId },
     select: { id: true, guildId: true, nitradoConnId: true, embedChannelId: true, embedMessageId: true },
   });
   if (!f || !f.embedMessageId) {
     if (f && f.embedMessageId) {
-      // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id intern verifiziert.
+
       await prisma.faction.update({ where: { id: f.id }, data: { embedMessageId: null } }).catch(() => {});
     }
     return;
@@ -333,7 +333,7 @@ export async function unpostFactionEmbed(client: Client, factionId: string): Pro
   } catch (e) {
     logger.warn(`unpostFactionEmbed ${f.id}: ${(e as Error).message}`);
   } finally {
-    // eslint-disable-next-line local/no-unscoped-prisma-query -- f.id intern verifiziert.
+
     await prisma.faction.update({ where: { id: f.id }, data: { embedMessageId: null } }).catch(() => {});
     logAudit('FACTION_EMBED_UNPOSTED', 'FACTION', {
       guildId: f.guildId, factionId: f.id, channelId: targetChannelId,
@@ -512,7 +512,7 @@ export async function removeFactionRole(client: Client, guildId: string, userId:
  * Best-effort, Logging, kein Throw.
  */
 export async function syncFactionRoleAll(client: Client, factionId: string): Promise<void> {
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- factionId aus geprueftem Aufrufer-Scope.
+
   const f = await prisma.faction.findUnique({
     where: { id: factionId },
     select: { id: true, guildId: true, roleId: true, leaderDiscordId: true, deputyDiscordId: true, treasurerDiscordId: true, members: { select: { userDiscordId: true } } },

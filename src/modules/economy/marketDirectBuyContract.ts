@@ -1,4 +1,4 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Direct-buy resolution is explicitly guild, game-server, channel and message scoped. */
+
 import { createHash } from 'node:crypto';
 import prisma from '../../database/prisma';
 import { asGuildId, asNitradoConnId, type GuildId, type NitradoConnId } from '../../types/scope';
