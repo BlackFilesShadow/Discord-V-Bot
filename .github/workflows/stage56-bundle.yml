@@ -12,7 +12,6 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   bundle-budget:
@@ -27,7 +26,7 @@ jobs:
         with:
           lfs: true
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -44,7 +43,7 @@ jobs:
         run: npm run build
       - name: Upload Stage 56 exact-SHA evidence
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: stage56-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: stage56-artifacts/*.json
