@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Download, File, Inbox, Loader2, Lock, Paperclip, RefreshCw, Send, X } from 'lucide-react';
+import { Check, Download, File as FileIcon, Inbox, Loader2, Lock, Paperclip, RefreshCw, Send, X } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Card, CardDesc, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -420,7 +420,7 @@ export function BotAdminOwnerTickets() {
                                 </video>
                               )}
                               <div className="mt-2 flex min-w-0 items-center gap-2">
-                                <File className="h-4 w-4 shrink-0 text-muted" />
+                                <FileIcon className="h-4 w-4 shrink-0 text-muted" />
                                 <div className="min-w-0 flex-1">
                                   <p className="truncate text-xs font-medium text-white" title={attachment.name}>{attachment.name}</p>
                                   <p className="text-[11px] text-muted">{formatBytes(attachment.size)}</p>
