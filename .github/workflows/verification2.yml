@@ -252,7 +252,7 @@ jobs:
             fi
           done
           if [ -f /etc/apt/apt-mirrors.txt ]; then
-            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt-mirrors.txt >/dev/null
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
           fi
           sudo tee /etc/apt/apt.conf.d/99-vbot-network >/dev/null <<'EOF'
           Acquire::Retries "5";
