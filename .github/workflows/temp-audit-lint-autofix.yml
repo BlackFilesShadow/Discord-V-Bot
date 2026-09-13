@@ -41,8 +41,8 @@ jobs:
           from pathlib import Path
           path = Path('src/modules/registration/register.ts')
           text = path.read_text()
-          old = "import { logAudit, logger } from '../../utils/logger';"
-          new = "import { logAudit } from '../../utils/logger';"
+          old = "import { logger, logAudit, logSecurity } from '../../utils/logger';"
+          new = "import { logAudit, logSecurity } from '../../utils/logger';"
           if text.count(old) != 1:
               raise SystemExit(f'Expected exactly one confirmed logger import, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1))
