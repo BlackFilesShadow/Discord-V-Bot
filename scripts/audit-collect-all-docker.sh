@@ -57,7 +57,9 @@ cleanup() {
   rm -rf "$WORK" >/dev/null 2>&1 || true
   return "$rc"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 for name in "$POSTGRES_CONTAINER" "$REDIS_CONTAINER" "$RUNNER_CONTAINER"; do
   if docker inspect "$name" >/dev/null 2>&1; then
@@ -78,11 +80,11 @@ ACTUAL_SHA="$(git -C "$REPO_COPY" rev-parse HEAD)"
   exit 97
 }
 
-# If Git LFS is available on the host, hydrate the isolated clone. A failure remains visible
-# and radar-assets will classify the missing assets as a test/environment problem later.
+# If Git LFS is available on the host, hydrate the isolated clone. Failure remains visible
+# because it can explain a later asset-verification failure without silently changing its result.
 if git lfs version >/dev/null 2>&1; then
   if ! git -C "$REPO_COPY" lfs pull; then
-    echo 'WARNUNG: git lfs pull ist fehlgeschlagen; Asset-Pruefung kann dadurch als TEST-/UMGEBUNGSFEHLER scheitern.' | tee -a "$FULL_LOG"
+    echo 'WARNUNG: git lfs pull ist fehlgeschlagen; ein spaeterer Asset-Fehler muss im LFS-Kontext bewertet werden.' | tee -a "$FULL_LOG"
   fi
 else
   echo 'WARNUNG: git-lfs ist auf dem Host nicht installiert; vorhandene lokale LFS-Objekte werden verwendet.' | tee -a "$FULL_LOG"
@@ -189,6 +191,15 @@ docker run --name "$RUNNER_CONTAINER" \
 RUNNER_RC=${PIPESTATUS[0]}
 set -e
 
+# These final lines belong to the raw audit evidence too. They are written before the Markdown
+# snapshot so the report really contains the complete wrapper output through the final exit value.
+printf '\n===== AUDIT OUTPUT =====\n' | tee -a "$FULL_LOG"
+printf 'Report: %s\n' "$REPORT" | tee -a "$FULL_LOG"
+printf 'JSON:   %s\n' "$OUT/summary.json" | tee -a "$FULL_LOG"
+printf 'TSV:    %s\n' "$OUT/summary.tsv" | tee -a "$FULL_LOG"
+printf 'Log:    %s\n' "$FULL_LOG" | tee -a "$FULL_LOG"
+printf 'Exit:   %s\n' "$RUNNER_RC" | tee -a "$FULL_LOG"
+
 make_report() {
   {
     echo '# V-Bot – vollständiger Collect-All Repo-Audit'
@@ -197,6 +208,34 @@ make_report() {
     echo "- **UTC-Lauf:** \`$STAMP\`"
     echo "- **Runner Exit-Code:** \`$RUNNER_RC\`"
     echo '- **Safety:** isolierte Repo-Kopie, privates Docker-Netz, keine PostgreSQL-/Redis-Hostports, kein Docker-Socket im Test-Runner'
+    echo
+
+    echo '## Verwendeter Prüfcommand'
+    echo
+    echo '```bash'
+    echo "AUDIT_SHA=$SHA bash scripts/audit-collect-all-docker.sh"
+    echo '```'
+    echo
+
+    echo '## Host-Wrapper'
+    echo
+    echo '```bash'
+    cat "$ROOT/scripts/audit-collect-all-docker.sh"
+    echo '```'
+    echo
+
+    echo '## Innerer Collect-All-Runner des geprüften SHA'
+    echo
+    echo '```bash'
+    cat "$REPO_COPY/scripts/audit-collect-all.sh"
+    echo '```'
+    echo
+
+    echo '## Summary-Konverter des geprüften SHA'
+    echo
+    echo '```javascript'
+    cat "$REPO_COPY/scripts/audit-summary-from-tsv.mjs"
+    echo '```'
     echo
 
     if [[ -f "$OUT/summary.tsv" ]]; then
@@ -245,12 +284,4 @@ make_report() {
 }
 
 make_report
-
-printf '\n===== AUDIT OUTPUT =====\n' | tee -a "$FULL_LOG"
-printf 'Report: %s\n' "$REPORT" | tee -a "$FULL_LOG"
-printf 'JSON:   %s\n' "$OUT/summary.json" | tee -a "$FULL_LOG"
-printf 'TSV:    %s\n' "$OUT/summary.tsv" | tee -a "$FULL_LOG"
-printf 'Log:    %s\n' "$FULL_LOG" | tee -a "$FULL_LOG"
-printf 'Exit:   %s\n' "$RUNNER_RC" | tee -a "$FULL_LOG"
-
 exit "$RUNNER_RC"
