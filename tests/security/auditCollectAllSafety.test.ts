@@ -61,6 +61,14 @@ describe('collect-all Linux audit safety', () => {
     expect(collector).toContain('E2E_REAL_DB=1');
   });
 
+  it('fails the overall audit when machine-readable summary generation breaks', () => {
+    const collector = read(collectorPath);
+    expect(collector).toContain('collector_internal_failure=0');
+    expect(collector).toContain('collector_internal_failure=1');
+    expect(collector).toContain('INTERNAL_HARNESS_FAILURE=%s');
+    expect(collector).toContain('"$failed" -gt 0 || "$collector_internal_failure" -ne 0');
+  });
+
   it('converts the TSV block result into deterministic machine-readable JSON', () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vbot-audit-summary-'));
     const tsv = path.join(temp, 'summary.tsv');
@@ -116,6 +124,17 @@ describe('collect-all Linux audit safety', () => {
     expect(wrapper).toContain('summary.tsv');
     expect(wrapper).toContain('failures.txt');
     expect(wrapper).toContain('warnings.txt');
+    expect(wrapper).toContain('## Host-Wrapper');
+    expect(wrapper).toContain('## Innerer Collect-All-Runner des geprüften SHA');
+    expect(wrapper).toContain('## Summary-Konverter des geprüften SHA');
+  });
+
+  it('writes final artifact and exit lines before snapshotting the complete console log', () => {
+    const wrapper = read(wrapperPath);
+    const finalOutputIndex = wrapper.indexOf("printf '\\n===== AUDIT OUTPUT =====\\n'");
+    const reportFunctionIndex = wrapper.indexOf('make_report() {');
+    expect(finalOutputIndex).toBeGreaterThan(-1);
+    expect(reportFunctionIndex).toBeGreaterThan(finalOutputIndex);
   });
 
   it('keeps both Linux shell entrypoints syntactically valid on Unix CI', () => {
