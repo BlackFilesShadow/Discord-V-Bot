@@ -8,6 +8,58 @@ const root = process.cwd();
 const read = (relative: string): string =>
   normalizeSourceNewlines(fs.readFileSync(path.join(root, relative), 'utf8'));
 
+const expectedCollectAllSteps = [
+  'root-npm-ci',
+  'dashboard-npm-ci',
+  'prisma-generate',
+  'prisma-validate',
+  'postgres-client',
+  'redis-live',
+  'lint-all',
+  'build',
+  'audit-artifacts',
+  'radar-assets',
+  'db-migrate-deploy',
+  'db-migrate-status',
+  'db-consistency',
+  'db-lifecycle',
+  'perf-baselines-46-48',
+  'perf-series-46-49',
+  'stage47-data-plane',
+  'stage48-ai-nitrado',
+  'stage50-full-stack-load',
+  'synthetic-load',
+  'jest-ci',
+  'jest-open-handles',
+  'playwright-browser',
+  'playwright-real-db',
+  'soak-smoke',
+  'structural-chaos',
+  'players-4000',
+  'root-audit-critical',
+  'root-audit-high',
+  'root-audit-prod-high',
+  'dashboard-audit-prod-high',
+  'dashboard-audit-critical',
+  'dashboard-audit-high',
+] as const;
+
+function runSummaryConverter(rows: string[], sha = '0123456789abcdef0123456789abcdef01234567') {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vbot-audit-summary-'));
+  const tsv = path.join(temp, 'summary.tsv');
+  const json = path.join(temp, 'summary.json');
+  fs.writeFileSync(
+    tsv,
+    [
+      'step\tstatus\tclassification\texitCode\twarningLines\tdurationSec\tlog',
+      ...rows,
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  return { temp, tsv, json, sha };
+}
+
 describe('collect-all Linux audit safety', () => {
   const collectorPath = 'scripts/audit-collect-all.sh';
   const wrapperPath = 'scripts/audit-collect-all-docker.sh';
@@ -28,10 +80,14 @@ describe('collect-all Linux audit safety', () => {
     const collector = read(collectorPath);
     expect(collector).toContain('run_step()');
     expect(collector).toContain("SKIPPED\\tFOLGEFEHLER");
-    expect(collector).toContain("run_step 'jest-ci'");
-    expect(collector).toContain("run_step 'playwright-real-db'");
-    expect(collector).toContain("run_step 'players-4000'");
     expect(collector).not.toContain('set -euo pipefail');
+  });
+
+  it('pins the complete 33-block collect-all inventory exactly once', () => {
+    const collector = read(collectorPath);
+    const actual = [...collector.matchAll(/^run_step '([^']+)'/gm)].map(match => match[1]);
+    expect(actual).toEqual([...expectedCollectAllSteps]);
+    expect(new Set(actual).size).toBe(expectedCollectAllSteps.length);
   });
 
   it('does not expose audit PostgreSQL/Redis or the Docker socket to the test runner', () => {
@@ -69,29 +125,19 @@ describe('collect-all Linux audit safety', () => {
     expect(collector).toContain('"$failed" -gt 0 || "$skipped" -gt 0 || "$collector_internal_failure" -ne 0');
   });
 
-  it('converts the TSV block result into deterministic machine-readable JSON', () => {
-    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vbot-audit-summary-'));
-    const tsv = path.join(temp, 'summary.tsv');
-    const json = path.join(temp, 'summary.json');
-    const sha = '0123456789abcdef0123456789abcdef01234567';
-    fs.writeFileSync(
-      tsv,
-      [
-        'step\tstatus\tclassification\texitCode\twarningLines\tdurationSec\tlog',
-        'lint-all\tPASS\tOK\t0\t2\t10\t/audit-output/logs/lint-all.log',
-        'db-consistency\tFAIL\tECHTER FEHLER\t1\t0\t3\t/audit-output/logs/db-consistency.log',
-        'players-4000\tSKIPPED\tFOLGEFEHLER\t-\t0\t0\t-',
-        '',
-      ].join('\n'),
-      'utf8',
-    );
+  it('converts valid TSV block results into machine-readable JSON', () => {
+    const fixture = runSummaryConverter([
+      'lint-all\tPASS\tOK\t0\t2\t10\t/audit-output/logs/lint-all.log',
+      'db-consistency\tFAIL\tECHTER FEHLER\t1\t0\t3\t/audit-output/logs/db-consistency.log',
+      'players-4000\tSKIPPED\tFOLGEFEHLER\t-\t0\t0\t-',
+    ]);
 
     try {
-      execFileSync(process.execPath, [path.join(root, summaryPath), tsv, json, sha], {
+      execFileSync(process.execPath, [path.join(root, summaryPath), fixture.tsv, fixture.json, fixture.sha], {
         cwd: root,
         stdio: 'pipe',
       });
-      const parsed = JSON.parse(fs.readFileSync(json, 'utf8')) as {
+      const parsed = JSON.parse(fs.readFileSync(fixture.json, 'utf8')) as {
         sha: string;
         allGreen: boolean;
         totals: {
@@ -102,7 +148,7 @@ describe('collect-all Linux audit safety', () => {
           warningCandidates: number;
         };
       };
-      expect(parsed.sha).toBe(sha);
+      expect(parsed.sha).toBe(fixture.sha);
       expect(parsed.allGreen).toBe(false);
       expect(parsed.totals).toEqual({
         steps: 3,
@@ -112,32 +158,22 @@ describe('collect-all Linux audit safety', () => {
         warningCandidates: 2,
       });
     } finally {
-      fs.rmSync(temp, { recursive: true, force: true });
+      fs.rmSync(fixture.temp, { recursive: true, force: true });
     }
   });
 
   it('never marks a skipped-only audit summary as green', () => {
-    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vbot-audit-summary-skipped-'));
-    const tsv = path.join(temp, 'summary.tsv');
-    const json = path.join(temp, 'summary.json');
-    const sha = 'fedcba9876543210fedcba9876543210fedcba98';
-    fs.writeFileSync(
-      tsv,
-      [
-        'step\tstatus\tclassification\texitCode\twarningLines\tdurationSec\tlog',
-        'lint-all\tPASS\tOK\t0\t0\t1\t/audit-output/logs/lint-all.log',
-        'players-4000\tSKIPPED\tFOLGEFEHLER\t-\t0\t0\t-',
-        '',
-      ].join('\n'),
-      'utf8',
-    );
+    const fixture = runSummaryConverter([
+      'lint-all\tPASS\tOK\t0\t0\t1\t/audit-output/logs/lint-all.log',
+      'players-4000\tSKIPPED\tFOLGEFEHLER\t-\t0\t0\t-',
+    ], 'fedcba9876543210fedcba9876543210fedcba98');
 
     try {
-      execFileSync(process.execPath, [path.join(root, summaryPath), tsv, json, sha], {
+      execFileSync(process.execPath, [path.join(root, summaryPath), fixture.tsv, fixture.json, fixture.sha], {
         cwd: root,
         stdio: 'pipe',
       });
-      const parsed = JSON.parse(fs.readFileSync(json, 'utf8')) as {
+      const parsed = JSON.parse(fs.readFileSync(fixture.json, 'utf8')) as {
         allGreen: boolean;
         totals: { failed: number; skippedFollowups: number };
       };
@@ -145,7 +181,35 @@ describe('collect-all Linux audit safety', () => {
       expect(parsed.totals.skippedFollowups).toBe(1);
       expect(parsed.allGreen).toBe(false);
     } finally {
-      fs.rmSync(temp, { recursive: true, force: true });
+      fs.rmSync(fixture.temp, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['no executed rows', []],
+    ['duplicate step', [
+      'lint-all\tPASS\tOK\t0\t0\t1\t/audit-output/logs/lint-all.log',
+      'lint-all\tPASS\tOK\t0\t0\t1\t/audit-output/logs/lint-all.log',
+    ]],
+    ['PASS with non-zero exit', [
+      'lint-all\tPASS\tOK\t1\t0\t1\t/audit-output/logs/lint-all.log',
+    ]],
+    ['FAIL with zero exit', [
+      'lint-all\tFAIL\tECHTER FEHLER\t0\t0\t1\t/audit-output/logs/lint-all.log',
+    ]],
+    ['SKIPPED with wrong classification', [
+      'lint-all\tSKIPPED\tOK\t-\t0\t0\t-',
+    ]],
+  ])('rejects malformed summary integrity: %s', (_name, rows) => {
+    const fixture = runSummaryConverter(rows as string[]);
+    try {
+      expect(() => execFileSync(
+        process.execPath,
+        [path.join(root, summaryPath), fixture.tsv, fixture.json, fixture.sha],
+        { cwd: root, stdio: 'pipe' },
+      )).toThrow();
+    } finally {
+      fs.rmSync(fixture.temp, { recursive: true, force: true });
     }
   });
 
