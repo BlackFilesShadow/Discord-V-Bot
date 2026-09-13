@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import {
-  AlertTriangle, Lock, Unlock, LogOut, Search, Star, X as XIcon, TerminalSquare,
+  AlertTriangle, Lock, Unlock, LogOut, Search, Star, X as XIcon, TerminalSquare, LayoutDashboard,
 } from 'lucide-react';
 import { Shell } from '@/components/Shell';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
@@ -85,6 +85,7 @@ function DevSidebar() {
   }, [query]);
 
   const commandCenterActive = loc.pathname === '/dev/command-center';
+  const botAdminActive = loc.pathname === '/dev/bot-admin';
   const secureExportActive = loc.pathname === '/dev/secure-export';
   return (
     <nav aria-label="DEV Tools" className="space-y-4">
@@ -96,6 +97,12 @@ function DevSidebar() {
           commandCenterActive ? 'bg-accent/15 text-white border-accent/30' : 'text-accent border-accent/20 hover:bg-accent/10',
         ].join(' ')}>
           <TerminalSquare className="h-4 w-4" /><span>DEV Command Center</span>
+        </NavLink>
+        <NavLink to="/dev/bot-admin" className={[
+          'flex min-h-11 md:min-h-9 items-center gap-2.5 px-2.5 py-2 rounded-md text-xs font-semibold transition-colors focus-ring border',
+          botAdminActive ? 'bg-accent/15 text-white border-accent/30' : 'text-accent border-accent/20 hover:bg-accent/10',
+        ].join(' ')}>
+          <LayoutDashboard className="h-4 w-4" /><span>Bot-Admin</span>
         </NavLink>
         <NavLink to="/dev/secure-export" className={[
           'flex min-h-11 md:min-h-9 items-center gap-2.5 px-2.5 py-2 rounded-md text-xs font-semibold transition-colors focus-ring border',
