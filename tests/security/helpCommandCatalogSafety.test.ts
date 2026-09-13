@@ -7,6 +7,7 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 describe('Help-/Command-Katalog — Drift-Sicherheitsinvarianten', () => {
   const help = read('src/commands/user/help.ts');
   const inventory = read('src/commands/inventory.ts');
+  const upload = read('src/commands/user/upload.ts');
 
   it('ordnet neue Moderations- und Economy-Funktionen explizit dem richtigen Bereich zu', () => {
     expect(help).toContain("names: new Set(['kick', 'ban', 'mute', 'warn', 'appeal', 'case'])");
@@ -25,9 +26,18 @@ describe('Help-/Command-Katalog — Drift-Sicherheitsinvarianten', () => {
     expect(help).toContain("{ name: 'Weitere Funktionen', value: 'other' }");
   });
 
-  it('haelt das kanonische Discord-Inventar fuer case und black-market synchron', () => {
-    expect(inventory).toContain("'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download', 'upload'");
-    expect(inventory).toContain("'virtual-account', 'lottery', 'black-market'");
+  it('haelt das kanonische guild-scoped Discord-Inventar fuer aktive Commands synchron', () => {
+    const start = inventory.indexOf('export const SPEC_KEEP_COMMANDS');
+    const end = inventory.indexOf('export interface ClassifyInput', start);
+    const block = inventory.slice(start, end);
+
+    expect(block).toContain("'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download'");
+    expect(block).toContain("'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll', 'feedback', 'erinnerung'");
+    expect(block).toContain("'deposit', 'faction', 'factions', 'fraktionen', 'join', 'leave'");
+    expect(block).toContain("'pay', 'admin-pay', 'add-money', 'remove-money'");
+    expect(block).toContain("'virtual-account', 'lottery', 'black-market'");
+    expect(block).not.toContain("'upload'");
+    expect(upload).toContain('manufacturerOnly: true');
   });
 
   it('markiert black-market als vorhandenen Dashboard-Ersatz statt als Discord-only Funktion', () => {
