@@ -61,12 +61,12 @@ describe('collect-all Linux audit safety', () => {
     expect(collector).toContain('E2E_REAL_DB=1');
   });
 
-  it('fails the overall audit when machine-readable summary generation breaks', () => {
+  it('fails the overall audit on collector-internal or incomplete results', () => {
     const collector = read(collectorPath);
     expect(collector).toContain('collector_internal_failure=0');
     expect(collector).toContain('collector_internal_failure=1');
     expect(collector).toContain('INTERNAL_HARNESS_FAILURE=%s');
-    expect(collector).toContain('"$failed" -gt 0 || "$collector_internal_failure" -ne 0');
+    expect(collector).toContain('"$failed" -gt 0 || "$skipped" -gt 0 || "$collector_internal_failure" -ne 0');
   });
 
   it('converts the TSV block result into deterministic machine-readable JSON', () => {
@@ -111,6 +111,39 @@ describe('collect-all Linux audit safety', () => {
         skippedFollowups: 1,
         warningCandidates: 2,
       });
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  it('never marks a skipped-only audit summary as green', () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'vbot-audit-summary-skipped-'));
+    const tsv = path.join(temp, 'summary.tsv');
+    const json = path.join(temp, 'summary.json');
+    const sha = 'fedcba9876543210fedcba9876543210fedcba98';
+    fs.writeFileSync(
+      tsv,
+      [
+        'step\tstatus\tclassification\texitCode\twarningLines\tdurationSec\tlog',
+        'lint-all\tPASS\tOK\t0\t0\t1\t/audit-output/logs/lint-all.log',
+        'players-4000\tSKIPPED\tFOLGEFEHLER\t-\t0\t0\t-',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    try {
+      execFileSync(process.execPath, [path.join(root, summaryPath), tsv, json, sha], {
+        cwd: root,
+        stdio: 'pipe',
+      });
+      const parsed = JSON.parse(fs.readFileSync(json, 'utf8')) as {
+        allGreen: boolean;
+        totals: { failed: number; skippedFollowups: number };
+      };
+      expect(parsed.totals.failed).toBe(0);
+      expect(parsed.totals.skippedFollowups).toBe(1);
+      expect(parsed.allGreen).toBe(false);
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }
