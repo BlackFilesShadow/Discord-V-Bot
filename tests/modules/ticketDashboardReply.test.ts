@@ -25,6 +25,12 @@ jest.mock('../../src/utils/logger', () => ({
 
 import { replyToOwnerTicketFromDashboard } from '../../src/modules/ticket/ticketDashboardReply';
 
+interface MockSendPayload {
+  content?: string;
+  files?: unknown[];
+  allowedMentions?: { parse: string[] };
+}
+
 function openTicket(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ticket-101',
@@ -36,7 +42,7 @@ function openTicket(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function client(sendImpl: () => Promise<unknown> = async () => ({ id: 'dm-1' })) {
+function client(sendImpl: (payload: MockSendPayload) => Promise<unknown> = async () => ({ id: 'dm-1' })) {
   const send = jest.fn(sendImpl);
   const fetch = jest.fn().mockResolvedValue({ send });
   return {
@@ -108,11 +114,11 @@ describe('dashboard owner-ticket reply', () => {
       data: expect.objectContaining({ content }),
     }));
     expect(c.send).toHaveBeenCalledTimes(2);
-    const first = c.send.mock.calls[0][0] as { content: string };
-    const second = c.send.mock.calls[1][0] as { content: string };
-    expect(first.content.length).toBeLessThanOrEqual(2000);
-    expect(second.content.length).toBeLessThanOrEqual(2000);
-    expect(first.content.replace('**🛡️ Owner** · Ticket #101\n', '') + second.content).toBe(content);
+    const first = c.send.mock.calls[0][0];
+    const second = c.send.mock.calls[1][0];
+    expect(first.content?.length).toBeLessThanOrEqual(2000);
+    expect(second.content?.length).toBeLessThanOrEqual(2000);
+    expect((first.content ?? '').replace('**🛡️ Owner** · Ticket #101\n', '') + (second.content ?? '')).toBe(content);
   });
 
   it('refuses a reply when the authenticated owner does not own the ticket', async () => {
