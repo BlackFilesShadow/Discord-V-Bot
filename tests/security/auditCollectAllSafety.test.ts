@@ -83,6 +83,28 @@ describe('collect-all Linux audit safety', () => {
     expect(collector).not.toContain('set -euo pipefail');
   });
 
+  it('captures Node warning class names such as MaxListenersExceededWarning', () => {
+    const collector = read(collectorPath);
+    expect(collector).toContain('WARNING_PATTERN=');
+    expect(collector).toContain('[[:alnum:]_]+Warning');
+    expect(collector).toContain('MaxListenersExceededWarning');
+  });
+
+  it('mirrors the canonical Jest leaked-worker/handle failure markers', () => {
+    const collector = read(collectorPath);
+    const ci = read('.github/workflows/ci.yml');
+    const markers = [
+      'A worker process has failed to exit gracefully',
+      'Jest did not exit one second after the test run has completed',
+    ];
+    for (const marker of markers) {
+      expect(ci).toContain(marker);
+      expect(collector).toContain(marker);
+    }
+    expect(collector).toContain("if [[ \"$name\" == 'jest-ci' ]]");
+    expect(collector).toContain('rc=98');
+  });
+
   it('pins the complete 33-block collect-all inventory exactly once', () => {
     const collector = read(collectorPath);
     const actual = [...collector.matchAll(/^run_step '([^']+)'/gm)].map(match => match[1]);

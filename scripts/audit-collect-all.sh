@@ -20,6 +20,8 @@ printf 'step\tstatus\tclassification\texitCode\twarningLines\tdurationSec\tlog\n
 declare -A STATUS=()
 declare -A EXIT_CODE=()
 collector_internal_failure=0
+WARNING_PATTERN='(^|[^[:alpha:]])(warn(ing)?|deprecated|deprecation|advisory)([^[:alpha:]]|$)|([[:alnum:]_]+Warning)([^[:alpha:]]|$)'
+JEST_LEAK_PATTERN='A worker process has failed to exit gracefully|Jest did not exit one second after the test run has completed'
 
 sanitize_field() {
   printf '%s' "$1" | tr '\t\r\n' '   '
@@ -98,12 +100,23 @@ run_step() {
   ended="$(date +%s)"
   duration=$((ended - started))
 
-  warning_count="$(grep -Eic '(^|[^[:alpha:]])(warn(ing)?|deprecated|deprecation|advisory)([^[:alpha:]]|$)' "$log" 2>/dev/null || true)"
+  # Match both normal warning words and Node warning class names such as
+  # MaxListenersExceededWarning / DeprecationWarning / ExperimentalWarning.
+  warning_count="$(grep -Eic "$WARNING_PATTERN" "$log" 2>/dev/null || true)"
   if [[ "$warning_count" -gt 0 ]]; then
     {
       printf '\n===== %s (%s warning-like lines; Kontextpruefung erforderlich) =====\n' "$name" "$warning_count"
-      grep -Ein '(^|[^[:alpha:]])(warn(ing)?|deprecated|deprecation|advisory)([^[:alpha:]]|$)' "$log" || true
+      grep -Ein "$WARNING_PATTERN" "$log" || true
     } >> "$WARNINGS"
+  fi
+
+  # Keep parity with the canonical CI leak guard. Jest can return zero even when
+  # its output reports workers/handles that did not shut down cleanly.
+  if [[ "$name" == 'jest-ci' ]] && grep -Eqi "$JEST_LEAK_PATTERN" "$log" 2>/dev/null; then
+    if [[ "$rc" -eq 0 ]]; then
+      rc=98
+    fi
+    printf 'ECHTER FEHLER: Jest meldet nicht sauber geschlossene Worker/Handles.\n' | tee -a "$log"
   fi
 
   if [[ "$rc" -eq 0 ]]; then
