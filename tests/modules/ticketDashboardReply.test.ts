@@ -12,6 +12,7 @@ jest.mock('../../src/database/prisma', () => ({
     },
     ticketMessage: {
       create: mockTicketMessageCreate,
+      update: jest.fn(),
     },
   },
 }));
@@ -48,7 +49,7 @@ function client(sendImpl: () => Promise<unknown> = async () => ({ id: 'dm-1' }))
 beforeEach(() => {
   jest.clearAllMocks();
   mockTicketUpdate.mockResolvedValue({});
-  mockTicketMessageCreate.mockResolvedValue({});
+  mockTicketMessageCreate.mockResolvedValue({ id: 'history-1' });
 });
 
 describe('dashboard owner-ticket reply', () => {
@@ -88,6 +89,30 @@ describe('dashboard owner-ticket reply', () => {
       content: '**🛡️ Owner** · Ticket #101\nAntwort aus dem Dashboard',
       allowedMentions: { parse: [] },
     });
+  });
+
+  it('splits replies above the Discord message limit without truncating the stored content', async () => {
+    mockTicketFindUnique.mockResolvedValue(openTicket());
+    const c = client();
+    const content = 'x'.repeat(3500);
+
+    const result = await replyToOwnerTicketFromDashboard({
+      ticketId: 'ticket-101',
+      ownerDiscordId: 'owner-1',
+      content,
+      client: c.value,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mockTicketMessageCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ content }),
+    }));
+    expect(c.send).toHaveBeenCalledTimes(2);
+    const first = c.send.mock.calls[0][0] as { content: string };
+    const second = c.send.mock.calls[1][0] as { content: string };
+    expect(first.content.length).toBeLessThanOrEqual(2000);
+    expect(second.content.length).toBeLessThanOrEqual(2000);
+    expect(first.content.replace('**🛡️ Owner** · Ticket #101\n', '') + second.content).toBe(content);
   });
 
   it('refuses a reply when the authenticated owner does not own the ticket', async () => {
@@ -165,14 +190,14 @@ describe('dashboard owner-ticket reply', () => {
       ownerDiscordId: 'owner-1',
       content: '   ',
       client: c.value,
-    })).rejects.toThrow('zwischen 1 und 1800 Zeichen');
+    })).rejects.toThrow('mindestens Text oder einen Anhang');
 
     await expect(replyToOwnerTicketFromDashboard({
       ticketId: 'ticket-101',
       ownerDiscordId: 'owner-1',
-      content: 'x'.repeat(1801),
+      content: 'x'.repeat(8001),
       client: c.value,
-    })).rejects.toThrow('zwischen 1 und 1800 Zeichen');
+    })).rejects.toThrow('maximal 8000 Zeichen');
 
     expect(mockTicketFindUnique).not.toHaveBeenCalled();
     expect(mockTicketMessageCreate).not.toHaveBeenCalled();
