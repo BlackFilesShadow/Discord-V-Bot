@@ -5,6 +5,10 @@ import path from 'node:path';
 
 const MAPLIBRE_WORKER_FILES = ['maplibre-gl-worker.mjs', 'maplibre-gl-shared.mjs'] as const;
 const MAPLIBRE_DIST_DIR = path.resolve(__dirname, 'node_modules/maplibre-gl/dist');
+// Vite reports raw chunk sizes in decimal kB. Stage 56 permits exactly one lazy
+// radar vendor up to 1 MiB; the dedicated gate still caps every non-radar chunk
+// at 500 KiB and the radar gzip payload at 300 KiB.
+const STAGE56_RADAR_VENDOR_RAW_WARNING_LIMIT_KB = (1024 * 1024) / 1000;
 
 function maplibreWorkerAssets(): Plugin {
   return {
@@ -58,7 +62,7 @@ export default defineConfig({
         },
       },
     },
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: STAGE56_RADAR_VENDOR_RAW_WARNING_LIMIT_KB,
   },
   server: {
     port: 5173,

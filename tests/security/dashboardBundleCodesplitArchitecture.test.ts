@@ -101,6 +101,11 @@ describe('Stage 56 dashboard bundle codesplit', () => {
     expect(stage56Workflow).toContain('Upload Stage 56 exact-SHA evidence');
   });
 
+  it('aligns the generic Vite warning with the isolated Stage 56 radar raw budget', () => {
+    expect(vite).toContain('const STAGE56_RADAR_VENDOR_RAW_WARNING_LIMIT_KB = (1024 * 1024) / 1000;');
+    expect(vite).toContain('chunkSizeWarningLimit: STAGE56_RADAR_VENDOR_RAW_WARNING_LIMIT_KB');
+  });
+
   it('measure script enforces normal + lazy MapLibre raw/gzip budgets', () => {
     const script = r('scripts/measure-dashboard-bundle.mjs');
     expect(script).toContain('NORMAL_CHUNK_LIMIT_BYTES = 500 * 1024');
