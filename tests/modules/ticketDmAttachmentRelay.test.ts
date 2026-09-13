@@ -41,6 +41,7 @@ jest.mock('../../src/utils/embedDesign', () => ({
 }));
 
 import { handleTicketDm } from '../../src/modules/ticket/ticketManager';
+import { encodeTicketMessageContent } from '../../src/modules/ticket/ticketMessageEnvelope';
 
 type OpenTicket = {
   id: string;
@@ -58,6 +59,7 @@ type RelayAttachment = {
   name: string | null;
   url: string;
   size: number;
+  contentType: string | null;
 };
 
 function response(bytes: Buffer, status = 200) {
@@ -90,6 +92,7 @@ function attachment(overrides: Partial<RelayAttachment> = {}): RelayAttachment {
     name: 'proof.png',
     url: 'https://cdn.discordapp.com/attachments/111111111111111111/222222222222222222/proof.png?ex=123&is=456&hm=abc',
     size: 4,
+    contentType: 'image/png',
     ...overrides,
   };
 }
@@ -126,6 +129,8 @@ function dmMessage(opts: {
   const attachments = new Map((opts.attachments ?? []).map(item => [item.id, item]));
 
   const msg = {
+    id: '555555555555555555',
+    channelId: '444444444444444444',
     author: { id: opts.authorId },
     content: opts.content ?? 'Hallo Ticket',
     attachments,
@@ -155,16 +160,17 @@ beforeEach(() => {
 });
 
 describe('ticket owner-DM attachment relay', () => {
-  it('relays and SHA-256-verifies a Discord CDN attachment in the same user-to-owner DM payload', async () => {
+  it('relays, persists and SHA-256-verifies a Discord CDN attachment in the same user-to-owner DM payload', async () => {
     mockTicketFindMany.mockResolvedValue([ticket()]);
     const proof = attachment();
     const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
     fetchMock
       .mockResolvedValueOnce(response(bytes))
       .mockResolvedValueOnce(response(bytes));
+    const content = 'Hier ist der Beweis 😀 <:party:123456789012345678>';
     const { msg, targetSend, react, reply } = dmMessage({
       authorId: 'user-1',
-      content: 'Hier ist der Beweis 😀 <:party:123456789012345678>',
+      content,
       attachments: [proof],
     });
 
@@ -175,12 +181,16 @@ describe('ticket owner-DM attachment relay', () => {
         ticketId: 'ticket-101',
         fromDiscordId: 'user-1',
         fromRole: 'USER',
-        content: 'Hier ist der Beweis 😀 <:party:123456789012345678>',
+        content: encodeTicketMessageContent(
+          content,
+          [{ name: 'proof.png', size: 4, contentType: 'image/png' }],
+          { channelId: '444444444444444444', messageId: '555555555555555555' },
+        ),
       },
     });
     expect(targetSend).toHaveBeenCalledTimes(1);
     expect(targetSend).toHaveBeenCalledWith({
-      content: '**👤 User One** · Ticket #101\nHier ist der Beweis 😀 <:party:123456789012345678>',
+      content: `**👤 User One** · Ticket #101\n${content}`,
       files: [{ attachment: bytes, name: 'proof.png' }],
       allowedMentions: { parse: [] },
     });
@@ -207,6 +217,7 @@ describe('ticket owner-DM attachment relay', () => {
       name: 'clip.mp4',
       url: 'https://media.discordapp.net/ephemeral-attachments/111111111111111111/333333333333333333/clip.mp4?ex=999',
       size: 1024,
+      contentType: 'video/mp4',
     });
     const bytes = Buffer.alloc(1024, 7);
     fetchMock
@@ -233,7 +244,11 @@ describe('ticket owner-DM attachment relay', () => {
         ticketId: 'ticket-202',
         fromDiscordId: 'owner-1',
         fromRole: 'OWNER',
-        content: '',
+        content: encodeTicketMessageContent(
+          '',
+          [{ name: 'clip.mp4', size: 1024, contentType: 'video/mp4' }],
+          { channelId: '444444444444444444', messageId: '555555555555555555' },
+        ),
       },
     });
     expect(targetSend).toHaveBeenCalledWith({

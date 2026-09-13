@@ -10,6 +10,12 @@ export interface TicketRelayAttachmentInput {
   size: number;
 }
 
+export interface TicketUploadAttachmentInput {
+  name: string;
+  bytes: Buffer;
+  size: number;
+}
+
 export interface PreparedTicketRelayAttachment {
   name: string;
   bytes: Buffer;
@@ -63,7 +69,7 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-async function downloadDiscordAttachment(rawUrl: string, expectedSize: number, label: string): Promise<Buffer> {
+export async function downloadTicketRelayAttachmentBytes(rawUrl: string, expectedSize: number, label: string): Promise<Buffer> {
   validateAttachmentSize(expectedSize, label);
   const url = validatedDiscordAttachmentUrl(rawUrl, label);
   const response = await fetch(url, { redirect: 'error' });
@@ -93,12 +99,32 @@ export async function prepareTicketRelayAttachments(
   for (const attachment of attachments) {
     const label = attachmentLabel(attachment);
     validateAttachmentSize(attachment.size, label);
-    const bytes = await downloadDiscordAttachment(attachment.url, attachment.size, label);
+    const bytes = await downloadTicketRelayAttachmentBytes(attachment.url, attachment.size, label);
     prepared.push({
       name: attachment.name ?? `attachment-${attachment.id}`,
       bytes,
       size: bytes.length,
       sha256: sha256Hex(bytes),
+    });
+  }
+  return prepared;
+}
+
+export function prepareTicketUploadAttachments(
+  attachments: Iterable<TicketUploadAttachmentInput>,
+): PreparedTicketRelayAttachment[] {
+  const prepared: PreparedTicketRelayAttachment[] = [];
+  for (const attachment of attachments) {
+    const name = attachment.name.trim() || 'attachment';
+    validateAttachmentSize(attachment.size, name);
+    if (attachment.bytes.length !== attachment.size) {
+      throw new Error(`Ticket-Anhang ${name} hat eine unerwartete Puffergroesse.`);
+    }
+    prepared.push({
+      name,
+      bytes: attachment.bytes,
+      size: attachment.bytes.length,
+      sha256: sha256Hex(attachment.bytes),
     });
   }
   return prepared;
@@ -133,7 +159,7 @@ export async function verifyTicketRelayAttachments(
     if (receipt.size !== source.size) {
       throw new Error(`Ticket-Anhang ${label} wurde mit abweichender Groesse weitergeleitet.`);
     }
-    const targetBytes = await downloadDiscordAttachment(receipt.url, receipt.size, label);
+    const targetBytes = await downloadTicketRelayAttachmentBytes(receipt.url, receipt.size, label);
     const targetHash = sha256Hex(targetBytes);
     if (targetHash !== source.sha256) {
       throw new Error(`Ticket-Anhang ${label} stimmt nach dem Relay nicht mit SHA-256 der Quelle ueberein.`);
