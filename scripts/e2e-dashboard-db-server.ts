@@ -10,10 +10,13 @@ if (!process.env.DATABASE_URL) {
 }
 
 process.env.NODE_ENV = 'test';
-process.env.DASHBOARD_PORT = process.env.DASHBOARD_PORT ?? '4173';
-process.env.DASHBOARD_URL = process.env.DASHBOARD_URL ?? 'http://127.0.0.1:4173';
-process.env.OAUTH2_REDIRECT_URI = process.env.OAUTH2_REDIRECT_URI
-  ?? `${process.env.DASHBOARD_URL}/auth/callback`;
+const e2eDashboardPort = process.env.E2E_PORT ?? '4173';
+// Der Real-DB-Harness ist absichtlich hermetisch: Produktions-/Host-Werte fuer
+// DASHBOARD_URL, DASHBOARD_PORT oder OAUTH2_REDIRECT_URI duerfen den isolierten
+// Playwright-Origin nicht ueberschreiben.
+process.env.DASHBOARD_PORT = e2eDashboardPort;
+process.env.DASHBOARD_URL = `http://127.0.0.1:${e2eDashboardPort}`;
+process.env.OAUTH2_REDIRECT_URI = `${process.env.DASHBOARD_URL}/auth/callback`;
 process.env.SESSION_SECRET = process.env.SESSION_SECRET ?? ['stage', '2735', 'session'].join('-');
 process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?? 'a'.repeat(64);
 process.env.DISCORD_TOKEN = process.env.DISCORD_TOKEN ?? ['stage', '2735', 'bot'].join('-');
