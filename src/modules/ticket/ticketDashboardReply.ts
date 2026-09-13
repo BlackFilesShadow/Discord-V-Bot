@@ -38,13 +38,34 @@ export type DashboardTicketReplyResult =
       delivered: false;
     };
 
-function splitRemainder(text: string, firstCapacity: number): string[] {
-  if (text.length <= firstCapacity) return [];
+function safeChunkEnd(text: string, start: number, capacity: number): number {
+  let end = Math.min(text.length, start + capacity);
+  if (end >= text.length) return end;
+
+  const lastUnit = text.charCodeAt(end - 1);
+  const nextUnit = text.charCodeAt(end);
+  if (lastUnit >= 0xd800 && lastUnit <= 0xdbff && nextUnit >= 0xdc00 && nextUnit <= 0xdfff) {
+    end -= 1;
+  }
+
+  const minimumNaturalBreak = start + Math.floor(capacity * 0.6);
+  const newline = text.lastIndexOf('\n', end - 1);
+  const space = text.lastIndexOf(' ', end - 1);
+  const naturalBreak = Math.max(newline, space);
+  if (naturalBreak >= minimumNaturalBreak) return naturalBreak + 1;
+  return end;
+}
+
+function splitDiscordText(text: string, firstCapacity: number): string[] {
+  if (text.length === 0) return [];
   const chunks: string[] = [];
-  let offset = firstCapacity;
+  let offset = 0;
+  let capacity = firstCapacity;
   while (offset < text.length) {
-    chunks.push(text.slice(offset, offset + 2000));
-    offset += 2000;
+    const end = safeChunkEnd(text, offset, capacity);
+    chunks.push(text.slice(offset, end));
+    offset = end;
+    capacity = 2000;
   }
   return chunks;
 }
@@ -146,7 +167,8 @@ export async function replyToOwnerTicketFromDashboard(input: {
     const header = `**🛡️ Owner** · Ticket #${ticket.ticketNumber}`;
     const files = preparedTicketRelayFiles(preparedAttachments);
     const firstCapacity = Math.max(1, 2000 - header.length - 1);
-    const firstText = content.slice(0, firstCapacity);
+    const chunks = splitDiscordText(content, firstCapacity);
+    const firstText = chunks.shift() ?? '';
     const firstContent = firstText.length > 0 ? `${header}\n${firstText}` : header;
 
     sentMessages.push(await target.send({
@@ -155,7 +177,7 @@ export async function replyToOwnerTicketFromDashboard(input: {
       allowedMentions: { parse: [] },
     }));
 
-    for (const chunk of splitRemainder(content, firstCapacity)) {
+    for (const chunk of chunks) {
       sentMessages.push(await target.send({
         content: chunk,
         allowedMentions: { parse: [] },
