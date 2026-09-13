@@ -43,19 +43,22 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
 ]);
 
 /**
- * Zielinventar der weiterhin in Discord vorhandenen Commands. Die koordinierten
- * Whitelist-Namen sind hier bereits kanonisch; Legacy-Namen duerfen nach dem
- * Loader-Normalisieren nicht mehr im Live-Inventar auftauchen.
+ * Kanonisches Zielinventar der normalen guild-scoped Discord-Commands.
+ * Hersteller-Kommandos mit `manufacturerOnly` werden bewusst separat als
+ * globale Discord-Commands behandelt und gehoeren deshalb NICHT in diese Liste.
+ * Die koordinierten Whitelist-Namen sind bereits kanonisch; Legacy-Namen duerfen
+ * nach dem Loader-Normalisieren nicht mehr im Live-Inventar auftauchen.
  */
 export const SPEC_KEEP_COMMANDS = new Set<string>([
-  'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download', 'upload',
-  'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll',
+  'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download',
+  'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll', 'feedback', 'erinnerung',
   'search', 'ticket', 'balance', 'bank',
   'blackjack', 'coinflip', 'dice', 'slot', 'roulette', 'highlow', 'baccarat', 'wheel',
-  'deposit', 'factions', 'join', 'leave',
+  'deposit', 'faction', 'factions', 'fraktionen', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info', 'link-panel',
   'force-link', 'force-unlink', 'confirm-action',
-  'pay', 'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
+  'pay', 'admin-pay', 'add-money', 'remove-money',
+  'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
   'whitelist-antrag', 'whitelist-add', 'whitelist-remove',
   'perm-add', 'perm-remove', 'perms',
   'server-ban', 'server-unban',
