@@ -113,6 +113,10 @@ jobs:
         env:
           CI: 'true'
           E2E_REAL_DB: '1'
+          # Absichtlich falsche Host-/Produktionswerte: der Real-DB-Harness muss
+          # seinen isolierten 127.0.0.1:E2E_PORT-Origin selbst erzwingen.
+          DASHBOARD_URL: http://localhost:3000
+          OAUTH2_REDIRECT_URI: http://localhost:3000/auth/callback
 
       - name: Upload Playwright report on failure
         if: failure()
