@@ -788,7 +788,7 @@ function LinkPanelChannelCard({ guildId, slot }: { guildId: string; slot: string
   return (
     <Card>
       <CardHeader><CardTitle>Verknuepfungs-Kanal (Discord ↔ DayZ)</CardTitle></CardHeader>
-      {channelsForbidden && <p className="text-xs text-warn mb-3">Channel-Liste nicht verfuegbar (nur Owner kann Kanaele waehlen).</p>}
+      {channelsForbidden && <p className="text-xs text-warn mb-3">Kanal-Liste fuer die Verknuepfung nicht verfuegbar (nur Owner kann Kanaele waehlen).</p>}
       {cfg.isLoading && <p className="text-xs text-muted mb-3">Verknuepfungs-Kanal-Konfiguration wird geladen…</p>}
       {cfg.isError && <p className="text-xs text-danger mb-3">Verknuepfungs-Kanal-Konfiguration konnte nicht geladen werden.</p>}
       <div className="space-y-4">
@@ -802,7 +802,7 @@ function LinkPanelChannelCard({ guildId, slot }: { guildId: string; slot: string
         />
         <div className="flex flex-wrap gap-2">
           <Button disabled={!value || save.isPending || controlsDisabled} onClick={() => { setMsg(null); save.mutate(value!); }}>
-            {save.isPending ? 'Speichere…' : 'Speichern'}
+            {save.isPending ? 'Wird uebernommen…' : 'Übernehmen'}
           </Button>
           <Button variant="ghost" disabled={repost.isPending || controlsDisabled || !cfg.data?.channelId} onClick={() => { setMsg(null); repost.mutate(); }}>
             Anleitung neu posten
