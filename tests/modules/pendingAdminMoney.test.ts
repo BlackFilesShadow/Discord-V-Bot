@@ -91,16 +91,27 @@ describe('pending admin money exact-once booking', () => {
     expect(ledgerKeys).toEqual(new Set([`pending-action:${base.actionId}:admin-pay`]));
   });
 
-  it('rolls back the idempotency ledger claim when the deduction cannot be applied', async () => {
+  it('rolls back the idempotency ledger claim and reports a typed failure (not a thrown error) when the deduction cannot be applied', async () => {
     walletBalance = 100n;
 
-    await expect(applyPendingAdminMoneyAction({ ...base, delta: -250n }))
-      .rejects.toThrow('zu wenig Guthaben');
+    const result = await applyPendingAdminMoneyAction({ ...base, delta: -250n });
 
+    expect(result).toEqual({ applied: false, failureReason: 'INSUFFICIENT_WALLET_BALANCE' });
     expect(walletBalance).toBe(100n);
     expect(lifetimeSpent).toBe(0n);
     expect(transactionCount).toBe(0);
     expect(ledgerKeys.size).toBe(0);
+  });
+
+  it('lets a retry after an insufficient-balance rejection succeed once funds are available (same action id)', async () => {
+    walletBalance = 100n;
+    const rejected = await applyPendingAdminMoneyAction({ ...base, delta: -250n });
+    expect(rejected).toEqual({ applied: false, failureReason: 'INSUFFICIENT_WALLET_BALANCE' });
+
+    walletBalance = 1000n;
+    const retried = await applyPendingAdminMoneyAction({ ...base, delta: -250n });
+    expect(retried).toEqual({ applied: true });
+    expect(walletBalance).toBe(750n);
   });
 
   it('rejects zero deltas and malformed action ids before opening a transaction', async () => {

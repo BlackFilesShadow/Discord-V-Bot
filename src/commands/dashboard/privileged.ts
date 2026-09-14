@@ -256,8 +256,13 @@ export const confirmActionCommand: Command = {
           target: targetUserId,
           amount: amount.toString(),
           actionId: id,
-          idempotentReplay: !booking.applied,
+          idempotentReplay: booking.applied === false && !booking.failureReason,
+          failureReason: booking.failureReason ?? null,
         });
+        if (booking.failureReason === 'INSUFFICIENT_WALLET_BALANCE') {
+          await finish(`Abgelehnt: <@${targetUserId}> hat nicht genug Wallet-Guthaben (Cash) fuer diesen Betrag. \`/remove-money\` zieht ausschliesslich vom Wallet-/Cash-Anteil ab, nicht vom Bankguthaben.`);
+          return;
+        }
         await finish(action.actionType === ACTIONS.ADD_MONEY ? 'Legacy-Gutschrift wurde ausgefuehrt.' : 'Guthaben wurde abgezogen.');
         return;
       }
