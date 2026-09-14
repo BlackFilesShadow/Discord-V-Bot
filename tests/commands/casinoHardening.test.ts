@@ -106,6 +106,27 @@ describe('casino V3 hardening contracts', () => {
     expect(casino).toContain('verified, hashMatches, payoutMatches, embeddedPayoutMatches, outcomeMatches, detailsMatch, betBoundsMatch');
   });
 
+  it('reports legacy SLOT rounds without a captured win chance as unverifiable instead of falsely failed', () => {
+    // resolveLegacyV2Game's SLOT branch is the only legacy game type whose outcome depends on
+    // winChancePct (COINFLIP/DICE/BLACKJACK are seed-deterministic); a legacy SLOT round with no
+    // captured winChancePct can never replay-verify a real historical win, so it must be routed
+    // to the same honest "cannot verify" response as a missing snapshot instead of a false
+    // "NICHT verifiziert" (tampering-looking) failure.
+    const casino = read('src/commands/dashboard/casino.ts');
+    const legacyCheckIndex = casino.indexOf(
+      "snapshot.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && snapshot.type === 'SLOT' && snapshot.winChancePct === null",
+    );
+    const replayIndex = casino.indexOf('let replay: PlayResult;');
+    expect(legacyCheckIndex).toBeGreaterThan(-1);
+    expect(replayIndex).toBeGreaterThan(legacyCheckIndex);
+    expect(casino).toContain('stammt aus der Zeit vor der Gewinnchance-Erfassung');
+  });
+
+  it('rounds the displayed win-rate to the nearest hundredth instead of truncating', () => {
+    const casino = read('src/commands/dashboard/casino.ts');
+    expect(casino).toContain('Number((wins * 10_000n + decided / 2n) / decided) / 100');
+  });
+
   it('aggregates logical V3 game types without a silent history cap', () => {
     const casinoRoute = read('src/dashboard/routes/v2/casino.ts');
     const economyRoute = read('src/dashboard/routes/v2/economy.ts');
