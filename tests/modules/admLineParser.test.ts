@@ -26,6 +26,29 @@ describe('admLineParser — Golden', () => {
     expect(event?.occurredAt?.toISOString()).toBe('2026-07-01T16:00:12.000Z');
   });
 
+  it('bumpt bei der DST-Rueckstellung (Sommer->Winterzeit) NICHT faelschlich den Kalendertag', () => {
+    // Europe/Berlin: 2026-10-25 01:00 UTC ist der reale Umstellungszeitpunkt
+    // (Wanduhr springt von 02:59:59 CEST auf 02:00:00 CET zurueck). Der
+    // Rueckwaertssprung auf der Wanduhr darf nicht als Mitternachts-Rollover
+    // fehlinterpretiert werden.
+    const ctx = newDateContext(new Date(Date.UTC(2026, 9, 25)), 'Europe/Berlin');
+    const before = parseAdmLine('02:59:59 | Player "Alpha"(id=1) is connected', ctx);
+    const afterDst = parseAdmLine('02:00:01 | Player "Bravo"(id=2) is connected', ctx);
+    const later = parseAdmLine('03:15:00 | Player "Charlie"(id=3) is connected', ctx);
+    expect(before?.occurredAt?.toISOString()).toBe('2026-10-25T01:59:59.000Z');
+    expect(afterDst?.occurredAt?.toISOString()).toBe('2026-10-25T01:00:01.000Z');
+    // Ohne den Fix wuerde dayOffsetMs hier faelschlich um einen Tag springen.
+    expect(later?.occurredAt?.toISOString()).toBe('2026-10-25T02:15:00.000Z');
+  });
+
+  it('erkennt einen echten Mitternachts-Rollover weiterhin korrekt', () => {
+    const ctx = newDateContext(new Date(Date.UTC(2026, 6, 1)));
+    const before = parseAdmLine('23:59:30 | Player "Alpha"(id=1) is connected', ctx);
+    const after = parseAdmLine('00:00:05 | Player "Bravo"(id=2) is connected', ctx);
+    expect(before?.occurredAt?.toISOString()).toBe('2026-07-01T23:59:30.000Z');
+    expect(after?.occurredAt?.toISOString()).toBe('2026-07-02T00:00:05.000Z');
+  });
+
   it('connect: beide Formulierungen', () => {
     const a = parseAdmLine('18:00:12 | Player "Alpha"(id=76561190000000001) is connected', ctxWithDate());
     expect(a?.eventType).toBe('PLAYER_CONNECTED');

@@ -48,8 +48,17 @@ export interface AdmDateContext {
   baseDate: Date | null;
   dayOffsetMs: number;
   prevTimeMs: number;
+  /** UTC-Millisekunden des zuletzt aufgeloesten Ereignisses, fuer DST-sichere Rollover-Erkennung. */
+  prevOccurredAtMs: number | null;
   timeZone: string | null;
 }
+
+/**
+ * Groesster in der Praxis vorkommende DST-Versatz (Sommer<->Winterzeit).
+ * Ein Wanduhr-Ruecksprung, der sich dadurch erklaeren laesst, ist keine
+ * echte Mitternachts-Grenze.
+ */
+const MAX_PLAUSIBLE_DST_SHIFT_MS = 2 * 60 * 60 * 1000;
 
 export interface PvpHitDetails {
   bodyPart: string;
@@ -87,7 +96,7 @@ export function resolveBaseDate(text: string, fileName?: string): Date | null {
 }
 
 export function newDateContext(baseDate: Date | null, timeZone: string | null = null): AdmDateContext {
-  return { baseDate, dayOffsetMs: 0, prevTimeMs: -1, timeZone };
+  return { baseDate, dayOffsetMs: 0, prevTimeMs: -1, prevOccurredAtMs: null, timeZone };
 }
 
 function wallClockToUtc(
@@ -339,6 +348,7 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
     ctx.baseDate = new Date(Date.UTC(+header[1], +header[2] - 1, +header[3]));
     ctx.dayOffsetMs = 0;
     ctx.prevTimeMs = -1;
+    ctx.prevOccurredAtMs = null;
     return null;
   }
 
@@ -348,11 +358,25 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
   const minute = +time[2];
   const second = +time[3];
   const timeMs = (hour * 3600 + minute * 60 + second) * 1000;
-  if (ctx.prevTimeMs >= 0 && timeMs < ctx.prevTimeMs - 60_000) ctx.dayOffsetMs += 86_400_000;
+  if (ctx.prevTimeMs >= 0 && timeMs < ctx.prevTimeMs - 60_000) {
+    // Wanduhr ist zurueckgesprungen: kann eine echte Mitternachts-Grenze sein,
+    // oder eine DST-Umstellung (Sommer->Winterzeit) innerhalb desselben Tages.
+    // Nur bumpen, wenn sich der Ruecksprung NICHT durch einen plausiblen
+    // DST-Versatz erklaeren laesst (sonst wuerde jede Zeit nach der
+    // Umstellung faelschlich einen Tag zu spaet datiert).
+    const sameDayCandidate = ctx.baseDate
+      ? wallClockToUtc(ctx.baseDate, ctx.dayOffsetMs, hour, minute, second, ctx.timeZone)
+      : null;
+    const explainedByDst = sameDayCandidate !== null
+      && ctx.prevOccurredAtMs !== null
+      && sameDayCandidate.getTime() >= ctx.prevOccurredAtMs - MAX_PLAUSIBLE_DST_SHIFT_MS;
+    if (!explainedByDst) ctx.dayOffsetMs += 86_400_000;
+  }
   ctx.prevTimeMs = timeMs;
   const occurredAt = ctx.baseDate
     ? wallClockToUtc(ctx.baseDate, ctx.dayOffsetMs, hour, minute, second, ctx.timeZone)
     : null;
+  if (occurredAt) ctx.prevOccurredAtMs = occurredAt.getTime();
   const timestampStatus: AdmParseStatus = ctx.baseDate ? 'OK' : 'UNRESOLVED_TIMESTAMP';
 
   const content = line.replace(/^\d{2}:\d{2}:\d{2}\s*\|?\s*/, '');

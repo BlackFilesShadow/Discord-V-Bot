@@ -39,6 +39,8 @@ import {
   type WhitelistOutboxClient,
 } from './whitelistOutbox';
 import { clearNitradoDriftNotice, notifyNitradoWhitelistDrift } from '../nitrado/driftDiscord';
+import { isWhitelistBlockedByActiveServerBan } from '../bans/whitelistBanGuard';
+import type { BanClient } from '../bans/banRegistry';
 import type { Client } from 'discord.js';
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -190,10 +192,19 @@ async function reconcileLockedConnection(conn: WhitelistSyncConnection, client?:
   for (const gameId of intentionalAdds) {
     const key = jobKey('WHITELIST_ADD', gameId);
     if (queued.has(key)) continue;
+    queued.add(key);
+    // Defense-in-depth: derselbe Ban-Guard wie bei jedem anderen Whitelist-Write.
+    // Der Job-Worker leitet die Absicht ohnehin unmittelbar vor dem Remote-Write
+    // erneut ab (siehe whitelistIntent.ts), daher ist dies kein alleiniger Schutz,
+    // sondern verhindert nur unnoetige Job-Erzeugung fuer bereits gebannte Namen.
+    if (await isWhitelistBlockedByActiveServerBan(
+      prisma as unknown as BanClient,
+      { guildId: conn.guildId, nitradoConnId: conn.id },
+      gameId,
+    )) continue;
     if (await enqueueWhitelistAdd(outbox, { guildId: conn.guildId, nitradoConnId: conn.id }, gameId)) {
       enqueued++;
     }
-    queued.add(key);
   }
 
   // Nur ein expliziter lokaler PENDING_REMOVE-Sollzustand darf vom Cron einen

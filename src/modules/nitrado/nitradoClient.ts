@@ -347,10 +347,33 @@ export class NitradoClient {
     return parseLines(await this.getGeneralListSetting(serviceId, 'whitelist', true)).map(identifier => ({ identifier }));
   }
 
+  private async verifyWhitelistMembership(
+    serviceId: string,
+    identifier: string,
+    expectedPresent: boolean,
+  ): Promise<void> {
+    const path = `/services/${serviceId}/gameservers`;
+    const normalized = identifier.toLocaleLowerCase('en-US');
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const remote = await this.getWhitelist(serviceId);
+      const present = remote.some(entry => entry.identifier.toLocaleLowerCase('en-US') === normalized);
+      if (present === expectedPresent) return;
+      if (attempt < 3) await sleep(250 * attempt);
+    }
+    throw new NitradoApiError(
+      expectedPresent
+        ? 'Whitelist-Add konnte remote nicht bestaetigt werden'
+        : 'Whitelist-Remove konnte remote nicht bestaetigt werden',
+      null,
+      path,
+    );
+  }
+
   async addToWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
     await this.mutateGeneralList(serviceId, 'whitelist', true, list => list.includes(id) ? list : [...list, id]);
+    await this.verifyWhitelistMembership(serviceId, id, true);
   }
 
   async removeFromWhitelist(serviceId: string, identifier: string): Promise<void> {
@@ -360,14 +383,7 @@ export class NitradoClient {
     await this.mutateGeneralList(serviceId, 'whitelist', true, list =>
       list.filter(entry => entry.toLocaleLowerCase('en-US') !== normalized),
     );
-    const path = `/services/${serviceId}/gameservers`;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const remote = await this.getWhitelist(serviceId);
-      const present = remote.some(entry => entry.identifier.toLocaleLowerCase('en-US') === normalized);
-      if (!present) return;
-      if (attempt < 3) await sleep(250 * attempt);
-    }
-    throw new NitradoApiError('Whitelist-Remove konnte remote nicht bestaetigt werden', null, path);
+    await this.verifyWhitelistMembership(serviceId, id, false);
   }
 
   /** DayZ-Console-Bannliste aus dem live bestaetigten `settings.general.bans`. */
