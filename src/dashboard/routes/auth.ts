@@ -3,7 +3,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import prisma from '../../database/prisma';
 import { config } from '../../config';
-import { encrypt, decrypt, generateCsrfToken, generateNonce, generatePKCE, generate2FASecret, generateBackupCodes } from '../../utils/security';
+import { encrypt, decrypt, generateCsrfToken, generatePKCE, generate2FASecret, generateBackupCodes } from '../../utils/security';
 import { verify2FAToken } from '../../utils/security';
 import { logger, logAudit } from '../../utils/logger';
 
@@ -107,12 +107,10 @@ const DISCORD_API_URL = 'https://discord.com/api/v10';
  */
 authRouter.get('/login', (req: Request, res: Response) => {
   const state = generateCsrfToken();
-  const nonce = generateNonce();
   const pkce = generatePKCE();
 
   // State und PKCE in Session speichern
   (req.session as any).oauthState = state;
-  (req.session as any).oauthNonce = nonce;
   (req.session as any).pkceVerifier = pkce.codeVerifier;
 
   const params = new URLSearchParams({
@@ -169,7 +167,6 @@ authRouter.get('/callback', async (req: Request, res: Response) => {
   if (!state || state !== savedState) {
     logAudit('OAUTH2_STATE_MISMATCH', 'SECURITY', { ip: req.ip });
     delete (req.session as any).oauthState;
-    delete (req.session as any).oauthNonce;
     delete (req.session as any).pkceVerifier;
     req.session.save(() => res.redirect('/auth/login'));
     return;

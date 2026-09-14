@@ -102,6 +102,19 @@ async function immediateMarketSync(req: Req): Promise<string | null> {
   }
 }
 
+// Auszahlungen duerfen nur an echte, aktive menschliche Guild-Mitglieder gehen — nie an eine
+// beliebige, ungeprueft aus dem Request-Body uebernommene Discord-ID (siehe validateManagers()
+// im Virtual-Account-Control-Router fuer das gleiche Muster).
+async function requireActiveGuildMember(guildId: string, userId: string): Promise<void> {
+  if (!/^\d{17,20}$/.test(userId)) throw new Error('Ungueltige Ziel-Discord-ID.');
+  const client = tryGetDashboardClient();
+  if (!client) throw new Error('Bot nicht bereit; Zielnutzer konnte nicht verifiziert werden.');
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) throw new Error('Bot nicht in Guild.');
+  const member = guild.members.cache.get(userId) ?? await guild.members.fetch(userId).catch(() => null);
+  if (!member || member.user.bot) throw new Error('Zielnutzer ist kein aktives menschliches Guild-Mitglied.');
+}
+
 async function immediateVirtualSync(req: Req, accountId: string): Promise<string | null> {
   const { scope, connId } = scoped(req);
   const client = tryGetDashboardClient();
@@ -135,11 +148,13 @@ economyBlackMarketRouter.post('/vendors', requireGuildPermission('economy.manage
 economyBlackMarketRouter.post('/vendors/:vendorId/payout', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   try {
+    const targetUserIdRaw = String(req.body?.targetUserId ?? '');
+    await requireActiveGuildMember(scope.guildId, targetUserIdRaw);
     const result = await payoutMarketVendor({
       guildId: scope.guildId,
       nitradoConnId: connId,
       vendorAccountId: String(req.params.vendorId),
-      targetUserId: asUserDiscordId(String(req.body?.targetUserId ?? '')),
+      targetUserId: asUserDiscordId(targetUserIdRaw),
       targetPocket: req.body?.targetPocket === 'BANK' ? 'BANK' : req.body?.targetPocket === undefined || req.body?.targetPocket === 'WALLET' ? 'WALLET' : (() => { throw new Error('targetPocket muss WALLET oder BANK sein.'); })(),
       amount: parseBig(req.body?.amount, 'amount'),
       actorDiscordId: asUserDiscordId(scope.actorDiscordId),

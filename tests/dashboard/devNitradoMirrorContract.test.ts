@@ -22,6 +22,7 @@ const mockGetSettings = jest.fn();
 const mockListFiles = jest.fn();
 const mockFindFiles = jest.fn();
 const mockGetFile = jest.fn();
+const mockBotConfigStore = new Map<string, { key: string; value: unknown }>();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
@@ -40,6 +41,21 @@ jest.mock('../../src/database/prisma', () => ({
     },
     nitradoSnapshot: {
       findFirst: (...args: unknown[]) => mockSnapshotFindFirst(...args),
+    },
+    botConfig: {
+      findUnique: async ({ where: { key } }: { where: { key: string } }) =>
+        mockBotConfigStore.get(key) ?? null,
+      upsert: async ({ where: { key }, create, update }: {
+        where: { key: string };
+        create: { value: unknown };
+        update: { value: unknown };
+      }) => {
+        const value = mockBotConfigStore.has(key) ? update.value : create.value;
+        mockBotConfigStore.set(key, { key, value });
+      },
+      deleteMany: async ({ where }: { where?: { key?: string } }) => {
+        if (where?.key) mockBotConfigStore.delete(where.key);
+      },
     },
   },
 }));
@@ -122,6 +138,7 @@ function validTrigger(guildId = RESTRICTED_GUILD, connId: unknown = CONN_ID) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockBotConfigStore.clear();
   mockDevSessionUpdateMany.mockResolvedValue({ count: 0 });
   mockTwoFactorFindUnique.mockResolvedValue({ isEnabled: false, secretEnc: null });
   mockConnectionFindMany.mockResolvedValue([]);

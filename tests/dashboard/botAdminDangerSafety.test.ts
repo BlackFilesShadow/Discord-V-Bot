@@ -4,15 +4,37 @@ process.env.DISCORD_CLIENT_SECRET ||= 'test-secret';
 process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
 process.env.ENCRYPTION_KEY ||= '0'.repeat(64);
 process.env.SESSION_SECRET ||= 'test-session-secret';
+process.env.DEV_PASSWORD = 'purge-step-up-secret';
 
 jest.mock('../../src/dashboard/middleware/auth', () => ({
-  requireBotAdmin: (_req: unknown, _res: unknown, next: () => void) => next(),
+  requireBotAdmin: (req: { auth?: unknown }, _res: unknown, next: () => void) => {
+    req.auth = { userId: 'admin-user-1', discordId: '123456789012345678', role: 'ADMIN' }; // gitleaks:allow (synthetic test fixture, not a real Discord ID)
+    next();
+  },
 }));
+
+const mockBotConfigStore = new Map<string, { key: string; value: unknown }>();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     package: { findMany: jest.fn() },
+    twoFactorAuth: { findUnique: jest.fn().mockResolvedValue(null) },
+    botConfig: {
+      findUnique: async ({ where: { key } }: { where: { key: string } }) =>
+        mockBotConfigStore.get(key) ?? null,
+      upsert: async ({ where: { key }, create, update }: {
+        where: { key: string };
+        create: { value: unknown };
+        update: { value: unknown };
+      }) => {
+        const value = mockBotConfigStore.has(key) ? update.value : create.value;
+        mockBotConfigStore.set(key, { key, value });
+      },
+      deleteMany: async ({ where }: { where?: { key?: string } }) => {
+        if (where?.key) mockBotConfigStore.delete(where.key);
+      },
+    },
   },
 }));
 
@@ -44,15 +66,26 @@ function app() {
   return instance;
 }
 
+const STEP_UP = { reason: 'Geplante Bereinigung geloeschter Pakete', reAuth: 'purge-step-up-secret' };
+
 describe('BotAdmin danger purge safety', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockBotConfigStore.clear();
+    (prisma.twoFactorAuth.findUnique as jest.Mock).mockResolvedValue(null);
     findManyMock.mockResolvedValue([{ id: 'pkg-a' }, { id: 'pkg-b' }]);
     mockHardDelete.mockResolvedValue({ filesRemoved: 1, filesAlreadyMissing: 0 });
   });
 
+  it('verweigert Requests ohne gueltigen Step-Up (Reason/Re-Auth)', async () => {
+    const res = await request(app()).post('/bot-admin/danger/purge-deleted-packages').send({ confirm: 'DELETE' });
+    expect(res.status).toBe(400);
+    expect(findManyMock).not.toHaveBeenCalled();
+    expect(mockHardDelete).not.toHaveBeenCalled();
+  });
+
   it('verlangt weiterhin die explizite DELETE-Bestaetigung', async () => {
-    const res = await request(app()).post('/bot-admin/danger/purge-deleted-packages').send({});
+    const res = await request(app()).post('/bot-admin/danger/purge-deleted-packages').send({ ...STEP_UP });
     expect(res.status).toBe(400);
     expect(findManyMock).not.toHaveBeenCalled();
     expect(mockHardDelete).not.toHaveBeenCalled();
@@ -61,7 +94,7 @@ describe('BotAdmin danger purge safety', () => {
   it('purgt jedes Soft-Delete-Paket ausschliesslich ueber den kanonischen Filesystem-Service', async () => {
     const res = await request(app())
       .post('/bot-admin/danger/purge-deleted-packages')
-      .send({ confirm: 'DELETE' });
+      .send({ confirm: 'DELETE', ...STEP_UP });
 
     expect(res.status).toBe(200);
     expect(findManyMock).toHaveBeenCalledWith({
@@ -83,7 +116,7 @@ describe('BotAdmin danger purge safety', () => {
 
     const res = await request(app())
       .post('/bot-admin/danger/purge-deleted-packages')
-      .send({ confirm: 'DELETE' });
+      .send({ confirm: 'DELETE', ...STEP_UP });
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ purged: 1, totalCandidates: 2, filesRemoved: 2, filesAlreadyMissing: 1 });
@@ -96,7 +129,7 @@ describe('BotAdmin danger purge safety', () => {
 
     const res = await request(app())
       .post('/bot-admin/danger/purge-deleted-packages')
-      .send({ confirm: 'DELETE' });
+      .send({ confirm: 'DELETE', ...STEP_UP });
 
     expect(res.status).toBe(500);
     expect(res.body).toMatchObject({

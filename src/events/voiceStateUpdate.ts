@@ -193,12 +193,26 @@ const voiceStateUpdateEvent: BotEvent = {
             logger.warn('Voice-LevelUp Nachricht konnte nicht gesendet werden', sendErr as Error);
           }
 
-          // Level-Reward-Rolle (Fallback ohne Guild-Scope wie zuvor)
-          const reward = await prisma.levelReward.findFirst({ where: { level: newLevel } });
-          if (reward?.roleId && member) {
+          // Level-Belohnung: guild-spezifische LevelRole aus dem DEV-Dashboard,
+          // mit globaler LevelReward-Tabelle als Fallback (analog Message-XP).
+          let rewardRoleId: string | null = null;
+          if (guildId) {
+            const guildLevelRole = await prisma.levelRole.findUnique({
+              where: { guildId_level: { guildId, level: newLevel } },
+            });
+            if (guildLevelRole?.roleId) rewardRoleId = guildLevelRole.roleId;
+          }
+          if (!rewardRoleId) {
+            const globalReward = await prisma.levelReward.findUnique({ where: { level: newLevel } });
+            if (globalReward?.roleId) rewardRoleId = globalReward.roleId;
+          }
+
+          if (rewardRoleId && member) {
             try {
-              await member.roles.add(reward.roleId);
-              logger.info(`Voice Level-Up: ${userId} → Level ${newLevel}, Rolle ${reward.roleId}`);
+              if (!member.roles.cache.has(rewardRoleId)) {
+                await member.roles.add(rewardRoleId);
+                logger.info(`Voice Level-Up: ${userId} → Level ${newLevel}, Rolle ${rewardRoleId}`);
+              }
             } catch (err) {
               logger.error(`Fehler beim Vergeben der Level-Reward-Rolle:`, err);
             }

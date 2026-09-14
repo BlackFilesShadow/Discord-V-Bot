@@ -11,6 +11,11 @@ import type { EconomyPocket, VirtualAccountRawDb } from './virtualAccounts';
 // EconomyMarketPurchase.quantity is PostgreSQL INTEGER. This is a storage/type
 // boundary, not a configurable business limit and is never shown as "Max pro Kauf".
 const POSTGRES_INT_MAX = 2_147_483_647;
+// EconomyMarketPurchase.amount is PostgreSQL BIGINT. price*quantity is otherwise
+// unbounded (both factors are independently permitted up to their own limits), so this
+// guards against a silent driver-level overflow error on a legitimately-configurable
+// price/quantity combination.
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 
 interface LockedListing {
   id: string;
@@ -142,6 +147,7 @@ export async function buyInventorylessMarketListing(args: {
   if (!initial || !initial.active || initial.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
   assertExpectedSnapshot(initial, args);
   const amount = initial.price * BigInt(args.quantity);
+  if (amount > POSTGRES_BIGINT_MAX) throw new Error('Kaufbetrag (Preis x Menge) uebersteigt die technische Obergrenze.');
 
   const transfer = await systemUserToVirtualAccount({
     idempotencyKey: key,

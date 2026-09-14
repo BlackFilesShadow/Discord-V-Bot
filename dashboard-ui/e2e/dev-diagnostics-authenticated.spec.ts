@@ -28,15 +28,17 @@ const GOOD_SNAPSHOT = {
 
 test('Snapshot-Fehler invalidiert den vorherigen Live-Stand statt stale online/offline weiterzuzeigen', async ({ page }) => {
   await stubActiveDev(page);
-  let reads = 0;
-  await page.route('**/api/v2/dev/snapshot', route => {
-    reads += 1;
-    if (reads === 1) return json(route, GOOD_SNAPSHOT);
-    return json(route, { error: 'Snapshot vorübergehend nicht verfügbar.' }, 503);
-  });
+  await page.route('**/api/v2/dev/snapshot', route => json(route, GOOD_SNAPSHOT));
 
   await page.goto('/dev/bot-status');
   await expect(page.getByText('online', { exact: true })).toBeVisible();
+
+  // Swap the route only after the good state is confirmed visible, so any number of the
+  // component's own background polls before this point still see the good snapshot — the
+  // test's timing no longer races the 5s auto-poll interval.
+  await page.unroute('**/api/v2/dev/snapshot');
+  await page.route('**/api/v2/dev/snapshot', route =>
+    json(route, { error: 'Snapshot vorübergehend nicht verfügbar.' }, 503));
 
   await page.getByRole('button', { name: 'Aktualisieren' }).click();
   await expect(page.getByRole('alert')).toContainText('Snapshot vorübergehend nicht verfügbar.');

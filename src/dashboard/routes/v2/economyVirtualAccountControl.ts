@@ -291,7 +291,7 @@ economyVirtualAccountControlRouter.delete('/control/accounts/:accountId', requir
     // failed delete must never remove a still-live account projection/thread.
     if (client) await retireVirtualAccountProjection(client, scope.guildId, connId, accountId);
     if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
-    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, deletionMode: deleted.mode, nitradoConnId: connId } });
+    logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, deletionMode: deleted.mode, nitradoConnId: connId, walletRemoved: deleted.walletRemoved, bankRemoved: deleted.bankRemoved } });
     res.json({ ok: true, deleted });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });

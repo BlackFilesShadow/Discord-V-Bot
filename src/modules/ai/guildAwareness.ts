@@ -1,5 +1,5 @@
 import type { Client, Guild, GuildBasedChannel } from 'discord.js';
-import { ChannelType } from 'discord.js';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 
@@ -367,15 +367,29 @@ function snapshotTopRoles(guild: Guild): RoleSnapshot[] {
   }));
 }
 
+// Nur Kanaele, die @everyone tatsaechlich sehen kann, duerfen in den AI-Kontext einfliessen.
+// Sonst wuerden admin-/mod-only "Regel"-Kanaele (z.B. "mod-regeln", "staff-rules") ihren
+// Topic/Pins ungefiltert an den externen AI-Provider weitergeben.
+function isViewableByEveryone(guild: Guild, ch: GuildBasedChannel): boolean {
+  try {
+    const perms = (ch as any).permissionsFor?.(guild.roles.everyone);
+    if (!perms) return true; // kein Overwrite-faehiger Channel-Typ -> keine Restriktion moeglich
+    return perms.has(PermissionFlagsBits.ViewChannel);
+  } catch {
+    return false; // fail-closed
+  }
+}
+
 async function snapshotRules(guild: Guild): Promise<string | null> {
   const parts: string[] = [];
   const rulesChannel: GuildBasedChannel | null = guild.rulesChannel ?? null;
   const candidates: GuildBasedChannel[] = [];
-  if (rulesChannel) candidates.push(rulesChannel);
+  if (rulesChannel && isViewableByEveryone(guild, rulesChannel)) candidates.push(rulesChannel);
   // Fallback-Suche: Channels mit "regel" oder "rules" im Namen
   for (const ch of guild.channels.cache.values()) {
     if (!('name' in ch) || !ch.name) continue;
     if (ch === rulesChannel) continue;
+    if (!isViewableByEveryone(guild, ch)) continue;
     if (/regel|rules|verhalten|kodex/i.test(ch.name)) candidates.push(ch);
     if (candidates.length >= 3) break;
   }

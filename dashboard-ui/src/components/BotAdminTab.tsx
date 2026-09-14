@@ -29,6 +29,7 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useToast } from '@/components/ui/Toast';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
+import { StepUpModal } from '@/components/ui/StepUpModal';
 import { FeedsTab } from '@/components/FeedsTab';
 import { functionHelpFor } from '@/lib/functionHelp';
 
@@ -570,8 +571,9 @@ function PackagesSection({ base, canManage, canDanger }: { base: string; canMana
     onSuccess: () => { toast.success('Wiederhergestellt.'); qc.invalidateQueries({ queryKey: [base, 'packages'] }); }, onError: e => toast.error(errMsg(e)),
   });
   const remove = useMutation({
-    mutationFn: (vars: { id: string; hard: boolean }) => api.del(`${base}/packages/${vars.id}${vars.hard ? '?hard=true' : ''}`),
-    onSuccess: () => { toast.success('Gelöscht.'); qc.invalidateQueries({ queryKey: [base, 'packages'] }); setDel(null); }, onError: e => { toast.error(errMsg(e)); setDel(null); },
+    mutationFn: (vars: { id: string; hard: boolean; reason?: string; reAuth?: string }) =>
+      api.del(`${base}/packages/${vars.id}${vars.hard ? '?hard=true' : ''}`, vars.hard ? { reason: vars.reason, reAuth: vars.reAuth } : undefined),
+    onSuccess: () => { toast.success('Gelöscht.'); qc.invalidateQueries({ queryKey: [base, 'packages'] }); setDel(null); }, onError: e => { toast.error(errMsg(e)); },
   });
   return (
     <Card glow>
@@ -603,8 +605,25 @@ function PackagesSection({ base, canManage, canDanger }: { base: string; canMana
           </Card>
         ))}
       </div>
-      {del && <ConfirmDialog open title={`Paket „${del.name}" löschen`} desc={del.isDeleted ? 'Endgültig (hart) löschen? Nicht umkehrbar.' : 'Paket in den Papierkorb (Soft-Delete) verschieben.'} confirmLabel="Löschen" danger requireType={del.isDeleted ? 'DELETE' : undefined}
-        onConfirm={() => remove.mutate({ id: del.id, hard: del.isDeleted })} onClose={() => setDel(null)} loading={remove.isPending} />}
+      {del && !del.isDeleted && (
+        <ConfirmDialog open title={`Paket „${del.name}" löschen`} desc="Paket in den Papierkorb (Soft-Delete) verschieben." confirmLabel="Löschen" danger
+          onConfirm={() => remove.mutate({ id: del.id, hard: false })} onClose={() => setDel(null)} loading={remove.isPending} />
+      )}
+      {del && del.isDeleted && (
+        <StepUpModal
+          open
+          onClose={() => !remove.isPending && setDel(null)}
+          request={{
+            action: 'botadmin.package.hardDelete',
+            title: `Paket „${del.name}" endgültig löschen`,
+            description: 'Endgültig (hart) löschen inkl. physischer Dateien? Nicht umkehrbar.',
+            severity: 'danger',
+            diff: { packageId: del.id, packageName: del.name },
+          }}
+          onConfirm={({ reason, reAuth }) => remove.mutate({ id: del.id, hard: true, reason, reAuth })}
+          loading={remove.isPending}
+        />
+      )}
     </Card>
   );
 }
@@ -1092,8 +1111,9 @@ function DangerSection({ base, canDanger }: { base: string; canDanger: boolean }
   const [confirm, setConfirm] = useState(false);
   const q = useQuery({ queryKey: [base, 'danger'], queryFn: () => api.get<{ softDeletedPackages: number; suspendedUsers: number; recentDangerActions: Array<{ id: string; action: string; createdAt: string }> }>(`${base}/danger`) });
   const purge = useMutation({
-    mutationFn: () => api.post(`${base}/danger/purge-deleted-packages`, { confirm: 'DELETE' }),
-    onSuccess: () => { toast.success('Gelöschte Pakete endgültig entfernt.'); setConfirm(false); qc.invalidateQueries({ queryKey: [base, 'danger'] }); }, onError: e => { toast.error(errMsg(e)); setConfirm(false); },
+    mutationFn: (vars: { reason: string; reAuth: string }) =>
+      api.post(`${base}/danger/purge-deleted-packages`, { confirm: 'DELETE', reason: vars.reason, reAuth: vars.reAuth }),
+    onSuccess: () => { toast.success('Gelöschte Pakete endgültig entfernt.'); setConfirm(false); qc.invalidateQueries({ queryKey: [base, 'danger'] }); }, onError: e => { toast.error(errMsg(e)); },
   });
   return (
     <Card glow className="border-danger/30">
@@ -1124,8 +1144,18 @@ function DangerSection({ base, canDanger }: { base: string; canDanger: boolean }
           </ul>
         </div>
       )}
-      <ConfirmDialog open={confirm} title="Pakete endgültig löschen" desc="Diese Aktion ist nicht umkehrbar." confirmLabel="Endgültig löschen" danger requireType="DELETE"
-        onConfirm={() => purge.mutate()} onClose={() => setConfirm(false)} loading={purge.isPending} />
+      <StepUpModal
+        open={confirm}
+        onClose={() => !purge.isPending && setConfirm(false)}
+        request={confirm ? {
+          action: 'botadmin.danger.purgeDeletedPackages',
+          title: 'Pakete endgültig löschen',
+          description: `Entfernt ${q.data?.softDeletedPackages ?? 0} soft-gelöschte Pakete inkl. physischer Dateien unwiderruflich aus der Datenbank. Diese Aktion ist nicht umkehrbar.`,
+          severity: 'danger',
+        } : null}
+        onConfirm={({ reason, reAuth }) => purge.mutate({ reason, reAuth })}
+        loading={purge.isPending}
+      />
     </Card>
   );
 }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireBotAdmin } from '../../middleware/auth';
+import { verifyDevStepUp, statusFor } from '../../middleware/devStepUp';
 import prisma from '../../../database/prisma';
 import { logAudit, logAuditDb, logger } from '../../../utils/logger';
 import { hardDeletePackage, HardDeletePackageError } from '../../../modules/packages/hardDeletePackage';
@@ -37,6 +38,18 @@ botAdminSafePackageDeleteRouter.delete('/packages/:id', async (req, res, next) =
   // diese zweistufige Schutzlogik nicht umgehen.
   if (!pkg.isDeleted) {
     res.status(409).json({ error: 'Paket muss vor dem endgültigen Löschen zuerst als Soft-Delete markiert sein.' });
+    return;
+  }
+
+  // Irreversibler physischer Hard-Delete: dieselbe kryptografische Step-Up-Pruefung
+  // (2FA/TOTP oder DEV_PASSWORD, mit DB-persistiertem Brute-Force-Lockout) wie fuer
+  // DEV-Mutationen vergleichbarer Tragweite, nicht nur ein Bestaetigungsstring.
+  const stepUp = await verifyDevStepUp(req, {
+    reason: String(req.body?.reason ?? ''),
+    reAuth: String(req.body?.reAuth ?? ''),
+  });
+  if (!stepUp.ok) {
+    res.status(statusFor(stepUp.error)).json({ error: stepUp.error });
     return;
   }
 

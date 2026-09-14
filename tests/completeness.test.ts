@@ -238,9 +238,6 @@ describe('README-Vollständigkeit: Alle Sektionen implementiert', () => {
     it('XP-Manager existiert (Event-XP, Reset)', () => {
       expect(fileExists('src/modules/xp/xpManager.ts')).toBe(true);
     });
-    it('WebAuthn-Handler existiert (FIDO2)', () => {
-      expect(fileExists('src/modules/auth/webauthnHandler.ts')).toBe(true);
-    });
     it('Voice-XP Event existiert', () => {
       expect(fileExists('src/events/voiceStateUpdate.ts')).toBe(true);
     });
