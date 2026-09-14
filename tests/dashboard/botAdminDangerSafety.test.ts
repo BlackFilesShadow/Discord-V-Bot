@@ -8,7 +8,7 @@ process.env.DEV_PASSWORD = 'purge-step-up-secret';
 
 jest.mock('../../src/dashboard/middleware/auth', () => ({
   requireBotAdmin: (req: { auth?: unknown }, _res: unknown, next: () => void) => {
-    req.auth = { userId: 'admin-user-1', discordId: '123456789012345678', role: 'ADMIN' };
+    req.auth = { userId: 'admin-user-1', discordId: '123456789012345678', role: 'ADMIN' }; // gitleaks:allow (synthetic test fixture, not a real Discord ID)
     next();
   },
 }));
