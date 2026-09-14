@@ -306,7 +306,7 @@ test.describe('Stage 30 desktop completion 1280', () => {
     await page.setViewportSize({ width: 1280, height: 800 });
     for (const route of [
       { path: '/servers', marker: 'Deine Server' },
-      { path: `/servers/${GUILD_ID}`, marker: 'Nitrado-Slots (1/5)' },
+      { path: `/servers/${GUILD_ID}`, marker: 'Nitrado-Slots (1/4)' },
       { path: `/servers/${GUILD_ID}/server/${SLOT}?tab=settings`, marker: 'Server-Toggles' },
     ] as const) {
       await gotoAuthed(page, route.path);
