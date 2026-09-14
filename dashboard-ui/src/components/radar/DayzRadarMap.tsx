@@ -26,6 +26,16 @@ export interface MapZone {
   geometry: ZoneGeometry;
 }
 
+export interface RadarLiveEvent {
+  id: string;
+  x: number;
+  y: number;
+  functionKey: string;
+  punitive: boolean;
+  actorName: string | null;
+  receivedAt: number;
+}
+
 interface DayzRadarMapProps {
   activeMap: RadarMap;
   zones: MapZone[];
@@ -39,6 +49,7 @@ interface DayzRadarMapProps {
   onPolygonVertexChange?: (index: number, point: Point) => void;
   onPolygonInsert?: (index: number, point: Point) => void;
   onPolygonMove?: (points: Point[]) => void;
+  liveEvents?: RadarLiveEvent[];
 }
 
 function circlePoints(map: RadarMap, x: number, y: number, radiusMeters: number): number[][] {
@@ -173,6 +184,27 @@ function setZoneSourceData(
   source?.setData(featureCollection(radarMap, zones, interactionMode, previewPoint, transientGeometry));
 }
 
+function liveEventFeatureCollection(map: RadarMap, events: RadarLiveEvent[]): FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: events.map(event => ({
+      type: 'Feature',
+      properties: {
+        id: event.id,
+        functionKey: event.functionKey,
+        punitive: event.punitive,
+        actorName: event.actorName ?? '',
+      },
+      geometry: { type: 'Point', coordinates: [...dayzToMapLibre(map, event)] },
+    })),
+  };
+}
+
+function setLiveEventSourceData(map: MapLibreMap, radarMap: RadarMap, events: RadarLiveEvent[]): void {
+  const source = map.getSource('radar-events') as GeoJSONSource | undefined;
+  source?.setData(liveEventFeatureCollection(radarMap, events));
+}
+
 function midpoint(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
 }
@@ -231,11 +263,13 @@ export function DayzRadarMap({
   onPolygonVertexChange,
   onPolygonInsert,
   onPolygonMove,
+  liveEvents = [],
 }: DayzRadarMapProps) {
   const container = useRef<HTMLDivElement>(null);
   const coordinateReadout = useRef<HTMLParagraphElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const zonesRef = useRef(zones);
+  const liveEventsRef = useRef(liveEvents);
   const interactionModeRef = useRef(interactionMode);
   const previewPointRef = useRef<Point>();
   const transientGeometryRef = useRef<ZoneGeometry>();
@@ -253,6 +287,7 @@ export function DayzRadarMap({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { zonesRef.current = zones; }, [zones]);
+  useEffect(() => { liveEventsRef.current = liveEvents; }, [liveEvents]);
   useEffect(() => { interactionModeRef.current = interactionMode; }, [interactionMode]);
   useEffect(() => { onMapClickRef.current = onMapClick; }, [onMapClick]);
   useEffect(() => { onCircleCreateRef.current = onCircleCreate; }, [onCircleCreate]);
@@ -353,6 +388,33 @@ export function DayzRadarMap({
         paint: {
           'circle-radius': 7,
           'circle-color': '#dc2626',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      });
+
+      map.addSource('radar-events', {
+        type: 'geojson',
+        data: liveEventFeatureCollection(activeMap, liveEventsRef.current),
+      });
+      map.addLayer({
+        id: 'radar-event-glow',
+        type: 'circle',
+        source: 'radar-events',
+        paint: {
+          'circle-radius': 16,
+          'circle-color': ['case', ['get', 'punitive'], '#f97316', '#38bdf8'],
+          'circle-opacity': 0.25,
+          'circle-blur': 0.6,
+        },
+      });
+      map.addLayer({
+        id: 'radar-event-point',
+        type: 'circle',
+        source: 'radar-events',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': ['case', ['get', 'punitive'], '#f97316', '#38bdf8'],
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 2,
         },
@@ -521,6 +583,12 @@ export function DayzRadarMap({
       ? 'crosshair'
       : '';
   }, [activeMap, interactionMode, mapReady, zones]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    setLiveEventSourceData(map, activeMap, liveEvents);
+  }, [activeMap, liveEvents, mapReady]);
 
   useEffect(() => {
     const map = mapRef.current;
