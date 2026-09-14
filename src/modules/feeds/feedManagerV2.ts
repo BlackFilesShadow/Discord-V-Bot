@@ -141,6 +141,9 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
     if (feed.lastItemId && !state.markerFound && toPost.length) {
       logger.warn(`Feed ${feed.id}: alter Marker lag nicht mehr im aktuellen Feed-Fenster; Backlog wurde begrenzt.`);
     }
+    if (state.toPost.length > toPost.length) {
+      logger.warn(`Feed ${feed.id}: ${state.toPost.length - toPost.length} aeltere Eintraege im Backlog wurden uebersprungen (nur die neuesten ${toPost.length} werden gepostet).`);
+    }
     return;
   }
 
@@ -172,7 +175,11 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
     if (!appId) throw new Error('Gespeicherte Steam-Quelle ist ungültig.');
     const entries = await getSteamNews(appId);
     const state = entriesAfterMarker(entries, feed.lastItemId, 'latest');
-    for (const item of state.toPost.slice(-5)) {
+    const toPost = state.toPost.slice(-5);
+    if (state.toPost.length > toPost.length) {
+      logger.warn(`Feed ${feed.id}: ${state.toPost.length - toPost.length} aeltere Eintraege im Backlog wurden uebersprungen (nur die neuesten ${toPost.length} werden gepostet).`);
+    }
+    for (const item of toPost) {
       const embed = vEmbed(0x1b2838)
         .setTitle(`🎮 ${item.title}`.slice(0, 256))
         .setDescription((item.description || 'Keine Beschreibung').slice(0, 4096))
@@ -189,7 +196,11 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
   if (feed.feedType === 'YOUTUBE') {
     const result = await getYouTubeEntries(feed.url, getYouTubeKey(feed.credentialsEnc) ?? undefined);
     const state = entriesAfterMarker(result.entries, feed.lastItemId, 'mark-only');
-    for (const item of state.toPost.slice(-5)) {
+    const toPost = state.toPost.slice(-5);
+    if (state.toPost.length > toPost.length) {
+      logger.warn(`Feed ${feed.id}: ${state.toPost.length - toPost.length} aeltere Eintraege im Backlog wurden uebersprungen (nur die neuesten ${toPost.length} werden gepostet).`);
+    }
+    for (const item of toPost) {
       const embed = vEmbed(0xff0000)
         .setTitle(`▶️ Neues Video: ${item.title}`.slice(0, 256))
         .setAuthor({ name: result.channelTitle })

@@ -195,6 +195,20 @@ describe('/api/v2/dev/status — Endpunkte', () => {
     expect(dump).not.toMatch(/SESSION_SECRET/i);
   });
 
+  it('GET /database blockiert eine guild-beschraenkte DevSession (403 DEV_SCOPE_RESTRICTED)', async () => {
+    mockDevSessionFindFirst.mockResolvedValue({ id: 'd1', scope: { guildIdRestrict: '123' } });
+    const r = await request(devApp()).get('/api/v2/dev/status/database');
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe('DEV_SCOPE_RESTRICTED');
+  });
+
+  it('GET /discord blockiert eine guild-beschraenkte DevSession (403 DEV_SCOPE_RESTRICTED)', async () => {
+    mockDevSessionFindFirst.mockResolvedValue({ id: 'd1', scope: { guildIdRestrict: '123' } });
+    const r = await request(devApp()).get('/api/v2/dev/status/discord');
+    expect(r.status).toBe(403);
+    expect(r.body.code).toBe('DEV_SCOPE_RESTRICTED');
+  });
+
   it('GET /ai-providers erkennt Anomalien (high_failure_rate + no_calls)', async () => {
     const r = await request(devApp()).get('/api/v2/dev/status/ai-providers');
     expect(r.status).toBe(200);

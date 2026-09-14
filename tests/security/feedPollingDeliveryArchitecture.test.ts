@@ -17,6 +17,13 @@ describe('polling feed delivery idempotency architecture', () => {
     expect(manager).not.toContain('await send(embed);');
   });
 
+  test('warns instead of silently dropping backlog entries beyond the 5-item post cap', () => {
+    const manager = read('src/modules/feeds/feedManagerV2.ts');
+    const warningLine = 'aeltere Eintraege im Backlog wurden uebersprungen';
+    expect((manager.match(new RegExp(warningLine, 'g')) ?? [])).toHaveLength(3);
+    expect(manager).toContain('if (state.toPost.length > toPost.length) {');
+  });
+
   test('keeps webhook delivery separate and cleans only the feed-delivery namespace', () => {
     const helper = read('src/modules/feeds/feedDeliveryClaim.ts');
     const webhook = read('src/modules/feeds/webhookReceiver.ts');
