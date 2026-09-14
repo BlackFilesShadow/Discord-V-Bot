@@ -160,9 +160,10 @@ export const adminPayCommand: Command = {
         payload: { targetUserId: target.id, amount: amount.toString(), reason: grund },
       });
       logAudit('PRIVILEGED_ACTION_QUEUED', 'SECURITY', { guildId: scope.guildId, nitradoConnId: connId, actor: scope.actorDiscordId, target: target.id, actionId: action.id, actionType: 'REMOVE_MONEY' });
+      const pendingCfg = await getConfig(scope.guildId, connId);
       await statusReply(i, 'INFO', 'Abbuchung wartet auf Bestätigung', {
         footerText: 'V-Bot Economy • Administration',
-        description: `-${fmt(amount)} Coins von <@${target.id}> wurden noch **nicht** abgezogen.`,
+        description: `-${fmt(amount)} ${pendingCfg.currencyName} von <@${target.id}> wurden noch **nicht** abgezogen.`,
         fields: [{ name: 'Bestätigen', value: `\`/confirm-action id:${action.id}\`` }, { name: 'Grund', value: grund }],
       });
       return;

@@ -9,6 +9,10 @@ import {
 } from '../modules/logging/auditRetentionScheduler';
 import { startMemberSyncScheduler, stopMemberSyncScheduler } from '../modules/members/memberSyncScheduler';
 import { startLeaveCleanupWorker, stopLeaveCleanupWorker } from '../modules/moderation/leaveCleanupWorker';
+import {
+  startPendingServerActionCleanupScheduler,
+  stopPendingServerActionCleanupScheduler,
+} from '../modules/nitrado/pendingServerActionCleanupScheduler';
 import { BOT_PRODUCT_NAME } from '../content/botInfo';
 
 let gaugeTimer: NodeJS.Timeout | null = null;
@@ -45,6 +49,7 @@ const readyEvent: BotEvent = {
     }
 
     startAuditLogRetentionScheduler();
+    startPendingServerActionCleanupScheduler();
     startMemberSyncScheduler(c);
     await startLeaveCleanupWorker();
   },
@@ -62,6 +67,7 @@ export function stopReadyRuntime(): void {
   stopLeaveCleanupWorker();
   stopMemberSyncScheduler();
   stopAuditLogRetentionScheduler();
+  stopPendingServerActionCleanupScheduler();
   stopAllLeaderboardFeeds();
 }
 
