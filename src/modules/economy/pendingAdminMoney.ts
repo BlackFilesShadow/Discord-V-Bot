@@ -15,6 +15,14 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
+ * Erwartete Geschaeftsregel-Ablehnung (z.B. zu wenig Wallet-Guthaben), keine
+ * technische Stoerung. Wird innerhalb der Transaktion geworfen, damit der
+ * bereits angelegte Ledger-Idempotenz-Key sauber zurueckrollt, aber ausserhalb
+ * der Transaktion in ein typisiertes Ergebnis statt eine Exception uebersetzt.
+ */
+class InsufficientWalletBalanceError extends Error {}
+
+/**
  * Exact-once Admin-Buchung fuer bestaetigte PendingServerActions.
  *
  * Der eindeutige Ledger-Key wird IN derselben DB-Transaktion vor Account und
@@ -24,7 +32,7 @@ function isUniqueViolation(error: unknown): boolean {
  */
 export async function applyPendingAdminMoneyAction(
   input: PendingAdminMoneyInput,
-): Promise<{ applied: boolean }> {
+): Promise<{ applied: boolean; failureReason?: 'INSUFFICIENT_WALLET_BALANCE' }> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.actionId)) {
     throw new Error('Pending-Action-ID ist fuer Economy-Idempotenz ungueltig.');
   }
@@ -65,7 +73,7 @@ export async function applyPendingAdminMoneyAction(
           },
         });
         if (changed.count !== 1) {
-          throw new Error('Empfaenger hat zu wenig Guthaben fuer negatives Delta');
+          throw new InsufficientWalletBalanceError('Empfaenger hat zu wenig Wallet-Guthaben fuer negatives Delta');
         }
       } else {
         await tx.economyAccount.upsert({
@@ -108,6 +116,9 @@ export async function applyPendingAdminMoneyAction(
     return { applied: true };
   } catch (error) {
     if (isUniqueViolation(error)) return { applied: false };
+    if (error instanceof InsufficientWalletBalanceError) {
+      return { applied: false, failureReason: 'INSUFFICIENT_WALLET_BALANCE' };
+    }
     throw error;
   }
 }

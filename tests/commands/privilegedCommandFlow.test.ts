@@ -214,6 +214,21 @@ describe('privileged durable confirmation flow', () => {
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: 'Guthaben wurde abgezogen.' }));
   });
 
+  it('/confirm-action reports insufficient wallet balance clearly instead of a generic internal error', async () => {
+    const actionId = '123e4567-e89b-42d3-a456-426614174000';
+    claimPendingServerAction.mockResolvedValue(claimedAction(actionId));
+    applyPendingAdminMoneyAction.mockResolvedValue({ applied: false, failureReason: 'INSUFFICIENT_WALLET_BALANCE' });
+    const { interaction, reply } = confirmInteraction(actionId);
+    await confirmActionCommand.execute(interaction);
+
+    expect(completePendingServerAction).toHaveBeenCalledTimes(1);
+    expect(releasePendingServerActionClaim).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('nicht genug Wallet-Guthaben'),
+    }));
+    expect(reply).not.toHaveBeenCalledWith(expect.objectContaining({ content: 'Guthaben wurde abgezogen.' }));
+  });
+
   it('/confirm-action terminally completes an inactive-server action without side effect', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     claimPendingServerAction.mockResolvedValue(claimedAction(actionId));
