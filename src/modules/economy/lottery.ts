@@ -249,9 +249,23 @@ export async function refreshLotteryMessage(client: Client, roundId: string): Pr
   const round = await fetchRoundViewById(roundId);
   if (!round?.messageId) return;
   const channel = await client.channels.fetch(round.channelId).catch(() => null);
-  if (!channel || !channel.isTextBased() || !('messages' in channel)) throw new Error('Lotterie-Channel nicht erreichbar.');
-  const message = await (channel as TextChannel).messages.fetch(round.messageId);
-  await message.edit({ embeds: [await createLotteryEmbed(round)], components: createLotteryButtons(round) });
+  if (!channel || !channel.isTextBased() || !('messages' in channel)) {
+    logger.warn(`Lotterie-Embed-Refresh ${roundId}: Channel ${round.channelId} nicht erreichbar.`);
+    return;
+  }
+  // Best-effort: eine geloeschte Lotterie-Nachricht darf die Auswertung (Gewinner-
+  // Auszahlung, Pot-Archivierung, Ankuendigung) nicht dauerhaft blockieren --
+  // announceTerminalRound() hat hierfuer bewusst KEIN eigenes try/catch, jeder
+  // Fehler hier wuerde sonst bei jedem Scheduler-Tick erneut geworfen werden,
+  // solange announcedAt nicht gesetzt ist.
+  const message = await (channel as TextChannel).messages.fetch(round.messageId).catch(() => null);
+  if (!message) {
+    logger.warn(`Lotterie-Embed-Refresh ${roundId}: Nachricht ${round.messageId} nicht gefunden (vermutlich geloescht).`);
+    return;
+  }
+  await message.edit({ embeds: [await createLotteryEmbed(round)], components: createLotteryButtons(round) }).catch(error => {
+    logger.warn(`Lotterie-Embed-Refresh ${roundId}: Nachricht ${round.messageId} konnte nicht aktualisiert werden.`, error as Error);
+  });
 }
 
 export async function createLotteryRound(args: {

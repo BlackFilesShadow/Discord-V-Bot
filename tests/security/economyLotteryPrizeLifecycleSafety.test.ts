@@ -37,4 +37,26 @@ describe('Economy-Lotterie — Gewinn-Lifecycle-Sicherheitsgate', () => {
     expect(lottery).toContain('const prizeText = round.activePrizeText ?? round.prizeSnapshot;');
     expect(lottery).toContain('round.prizeSnapshot ? ` Gewinn: **${round.prizeSnapshot}**.`');
   });
+
+  it('laesst eine geloeschte Lotterie-Nachricht die Auswertung (Auszahlung, Pot-Archivierung, Gewinner-Ankuendigung) nicht dauerhaft blockieren', () => {
+    // announceTerminalRound() hat bewusst KEIN eigenes try/catch um refreshLotteryMessage()
+    // -- jeder ungefangene Fehler dort wuerde bei jedem Scheduler-Tick erneut geworfen,
+    // solange announcedAt nicht gesetzt ist, und archiveTerminalPot() sowie die
+    // Gewinner-Ankuendigung nie erreichen. Die Robustheit muss deshalb INNERHALB von
+    // refreshLotteryMessage() liegen.
+    const refresh = lottery.slice(
+      lottery.indexOf('export async function refreshLotteryMessage'),
+      lottery.indexOf('export async function createLotteryRound'),
+    );
+    expect(refresh).not.toContain('throw new Error(');
+    expect(refresh).toContain(".messages.fetch(round.messageId).catch(() => null)");
+    expect(refresh).toContain('await message.edit({ embeds: [await createLotteryEmbed(round)], components: createLotteryButtons(round) }).catch(error => {');
+
+    const terminal = lottery.slice(
+      lottery.indexOf('async function announceTerminalRound'),
+      lottery.indexOf('async function archiveTerminalPot'),
+    );
+    expect(terminal).toContain('await refreshLotteryMessage(client, roundId);');
+    expect(terminal).not.toContain('refreshLotteryMessage(client, roundId).catch(');
+  });
 });
