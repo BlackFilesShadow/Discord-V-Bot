@@ -45,6 +45,11 @@ export const StatusIcons: Record<Exclude<EmbedStatus, 'NEUTRAL'>, StatusIcon> = 
 } as const;
 
 const LEADING_STATUS_RE = /^(?:✅|❌|❕|⚠️|⚠|ℹ️|ℹ)\s*/u;
+// Ein Titel, der bereits mit einem eigenen thematischen Emoji beginnt (z. B.
+// 🔨 BAN, 🎉 GIVEAWAY), das nicht eines der vier kanonischen Status-Icons ist,
+// darf nicht zusaetzlich das Status-Icon davor bekommen — sonst entstehen
+// doppelte Icons wie "❌ 🔨 BAN".
+const LEADING_EMOJI_RE = /^\p{Extended_Pictographic}️?\s*/u;
 const EMBED_DESCRIPTION_LIMIT = 4096;
 const EMBED_HEADING_LIMIT = 256;
 
@@ -54,6 +59,7 @@ export function statusTitle(status: EmbedStatus, title: string): string {
 
   const icon = StatusIcons[status];
   const withoutOldStatus = trimmed.replace(LEADING_STATUS_RE, '').trim();
+  if (withoutOldStatus === trimmed && LEADING_EMOJI_RE.test(trimmed)) return trimmed;
   return withoutOldStatus ? `${icon} ${withoutOldStatus}` : icon;
 }
 

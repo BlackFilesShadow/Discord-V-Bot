@@ -27,7 +27,7 @@ interface EmbedOptions {
 }
 
 const DEFAULT_COLOR: ColorResolvable = '#5865F2';
-const DEFAULT_FOOTER = 'Discord V Bot • © 2026';
+const DEFAULT_FOOTER = 'V-Bot Prime';
 
 function colorNumber(color: ColorResolvable | undefined): number | null {
   if (typeof color === 'number') return color;

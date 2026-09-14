@@ -60,4 +60,21 @@ describe('compact V-Bot embed design primitives', () => {
     expect(description.length).toBe(4096);
     expect(description.endsWith('…')).toBe(true);
   });
+
+  it('does not stack a second status icon in front of a title that already carries its own thematic emoji', () => {
+    const json = vEmbed(Colors.Error)
+      .setTitle('🔨 BAN · Case #5')
+      .setDescription('Details.')
+      .toJSON();
+
+    expect(json.description).toBe('**🔨 BAN · Case #5**\nDetails.');
+  });
+
+  it('still replaces a stale leading canonical status icon with the current one', () => {
+    const json = vEmbed(Colors.Success)
+      .setTitle('❌ Aktion fehlgeschlagen')
+      .toJSON();
+
+    expect(json.description).toBe('**✅ Aktion fehlgeschlagen**');
+  });
 });

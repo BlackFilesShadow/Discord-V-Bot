@@ -800,7 +800,7 @@ export const casinoStatsCommand: Command = {
     const payout = row?.payout ?? 0n;
     const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
     const net = payout - bet;
-    const winRate = decided > 0n ? Number((wins * 10_000n) / decided) / 100 : 0;
+    const winRate = decided > 0n ? Number((wins * 10_000n + decided / 2n) / decided) / 100 : 0;
     const e = casinoEmbed(net >= 0n ? Colors.Success : Colors.Error)
       .setDescription(compactDescription(`📊 Casino-Statistik · <@${target.id}>`, [
         `Runden: **${rounds.toString()}**`,
@@ -867,6 +867,22 @@ export const casinoVerifyCommand: Command = {
       return;
     }
     const snapshot = parsed.snapshot;
+    // Nur SLOT haengt im Legacy-Resolver ueberhaupt von winChancePct ab (COINFLIP/DICE/BLACKJACK
+    // sind seed-deterministisch). Ein Legacy-SLOT-Snapshot ohne erfasste Gewinnchance kann daher
+    // NIE reproduzierbar gewinnen (roll(...) < 0 ist nie wahr) — ein echter historischer Sieg
+    // wuerde faelschlich als "NICHT verifiziert" (Manipulationsverdacht) angezeigt, obwohl die
+    // Runde lediglich aelter ist als die Gewinnchance-Erfassung. Dieselbe ehrliche
+    // "kann nicht geprueft werden"-Antwort wie bei fehlendem Snapshot verwenden.
+    if (snapshot.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && snapshot.type === 'SLOT' && snapshot.winChancePct === null) {
+      await i.editReply({ embeds: [casinoStatusEmbed(
+        'INFO',
+        'Legacy-Runde',
+        'Diese Slot-Runde stammt aus der Zeit vor der Gewinnchance-Erfassung und kann deshalb nicht nachgerechnet werden.',
+        [{ name: 'Runde', value: `\`${round.id}\`` }, { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` }],
+        'V-Bot Casino Audit',
+      )], allowedMentions: { parse: [] } });
+      return;
+    }
     const clientSeed = round.clientSeed ?? (snapshot.type === 'SLOT' ? 'slot' : snapshot.type === 'BLACKJACK' ? 'blackjack' : snapshot.type === 'WHEEL' ? 'wheel' : '');
     let replay: PlayResult;
     try {
