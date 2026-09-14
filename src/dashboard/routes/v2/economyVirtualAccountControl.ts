@@ -25,7 +25,7 @@ import {
 } from '../../../modules/economy/virtualAccountManagerPanelSafety';
 import { retireVirtualAccountProjection } from '../../../modules/economy/virtualAccountDiscord';
 import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
-import { logAuditDb } from '../../../utils/logger';
+import { logAuditDb, logger } from '../../../utils/logger';
 
 export const economyVirtualAccountControlRouter = Router({ mergeParams: true });
 
@@ -92,6 +92,7 @@ async function validateManagers(guildId: string, raw: unknown): Promise<UserDisc
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > 25) throw new Error('managers muss eine Liste mit maximal 25 Discord-IDs sein.');
   const ids = [...new Set(raw.map(value => String(value).trim()))];
+  if (ids.length === 0) return [];
   const client = tryGetDashboardClient();
   if (!client) throw new Error('Bot nicht bereit; Kontoverwalter konnten nicht validiert werden.');
   const guild = client.guilds.cache.get(guildId);
@@ -289,7 +290,16 @@ economyVirtualAccountControlRouter.delete('/control/accounts/:accountId', requir
     });
     // Discord is retired only after the database transaction has committed. A
     // failed delete must never remove a still-live account projection/thread.
-    if (client) await retireVirtualAccountProjection(client, scope.guildId, connId, accountId);
+    // The account is already gone at this point, so a retirement failure must
+    // not surface as a "deletion failed" error to the caller -- that would
+    // both lie about the outcome and make a retry immediately 404.
+    if (client) {
+      await retireVirtualAccountProjection(client, scope.guildId, connId, accountId).catch(error => {
+        logger.error('Konto geloescht, aber Discord-Projektion konnte nicht zurueckgesetzt werden.', {
+          accountId, guildId: String(scope.guildId), nitradoConnId: String(connId), error: (error as Error).message,
+        });
+      });
+    }
     if (client) await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(scope.actorDiscordId)).catch(() => undefined);
     logAuditDb('ECONOMY_VIRTUAL_ACCOUNT_DELETED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { accountId, accountName: deleted.name, deletionMode: deleted.mode, nitradoConnId: connId, walletRemoved: deleted.walletRemoved, bankRemoved: deleted.bankRemoved } });
     res.json({ ok: true, deleted });

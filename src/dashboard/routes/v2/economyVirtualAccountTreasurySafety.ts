@@ -161,6 +161,7 @@ async function validateManagers(guildId: string, raw: unknown): Promise<UserDisc
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw) || raw.length > 25) throw new Error('managers muss eine Liste mit maximal 25 Discord-IDs sein.');
   const ids = [...new Set(raw.map(value => String(value).trim()))];
+  if (ids.length === 0) return [];
   const client = tryGetDashboardClient();
   if (!client) throw new Error('Bot nicht bereit; Kontoverwalter konnten nicht validiert werden.');
   const guild = client.guilds.cache.get(guildId);
