@@ -16,6 +16,7 @@ const claimPendingServerAction = jest.fn();
 const completePendingServerAction = jest.fn();
 const releasePendingServerActionClaim = jest.fn();
 const adminPay = jest.fn();
+const getConfig = jest.fn();
 const applyPendingAdminMoneyAction = jest.fn();
 const forceAdminLinkByPlayerName = jest.fn();
 const forceAdminUnlinkUser = jest.fn();
@@ -35,7 +36,7 @@ jest.mock('../../src/modules/nitrado/pendingServerAction', () => ({
   completePendingServerAction,
   releasePendingServerActionClaim,
 }));
-jest.mock('../../src/modules/economy/repository', () => ({ __esModule: true, adminPay }));
+jest.mock('../../src/modules/economy/repository', () => ({ __esModule: true, adminPay, getConfig }));
 jest.mock('../../src/modules/economy/pendingAdminMoney', () => ({ __esModule: true, applyPendingAdminMoneyAction }));
 jest.mock('../../src/modules/linking/linkService', () => ({ __esModule: true, isValidPlayerName: (value: string) => value.length >= 1 && value.length <= 64 && !/[\r\n]/.test(value) }));
 jest.mock('../../src/modules/linking/adminForceLink', () => ({ __esModule: true, forceAdminLinkByPlayerName, forceAdminUnlinkUser }));
@@ -124,6 +125,7 @@ describe('privileged durable confirmation flow', () => {
     applyPendingAdminMoneyAction.mockResolvedValue({ applied: true });
     applySuccessfulLinkEconomyEffects.mockResolvedValue({ granted: false, amount: 0n });
     deactivateLinkRewardState.mockResolvedValue(undefined);
+    getConfig.mockResolvedValue({ currencyName: 'Muscheln', emoji: '🐚' });
   });
 
   it('/add-money books immediately and creates no pending confirmation', async () => {
@@ -134,17 +136,28 @@ describe('privileged durable confirmation flow', () => {
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId,
       targetUserId: TEST_TARGET_USER, delta: 250n, reason: 'Korrektur', actorDiscordId: scope.actorDiscordId,
     });
-    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('sofort gutgeschrieben') }));
+    expect(getConfig).toHaveBeenCalledWith(scope.guildId, scope.nitradoConnId);
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('sofort gutgeschrieben'),
+    }));
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('Muscheln'),
+    }));
+    expect(reply).not.toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('Coins'),
+    }));
   });
 
-  it('/remove-money still queues a persistent step-up action', async () => {
+  it('/remove-money still queues a persistent step-up action and announces the guild currency', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     createPendingServerAction.mockResolvedValue({ id: actionId });
     const { interaction, reply } = moneyInteraction();
     await removeMoneyCommand.execute(interaction);
     expect(adminPay).not.toHaveBeenCalled();
+    expect(getConfig).toHaveBeenCalledWith(scope.guildId, scope.nitradoConnId);
     expect(createPendingServerAction).toHaveBeenCalledWith(prismaMock, expect.objectContaining({ actionType: 'REMOVE_MONEY' }));
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining(actionId) }));
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Muscheln') }));
   });
 
   it('/force-link queues an explicit admin override without requiring an ADM/session hit', async () => {

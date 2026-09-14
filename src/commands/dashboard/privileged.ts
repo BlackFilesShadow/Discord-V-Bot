@@ -3,7 +3,7 @@ import type { ChatInputCommandInteraction } from 'discord.js';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
-import { adminPay } from '../../modules/economy/repository';
+import { adminPay, getConfig } from '../../modules/economy/repository';
 import { applyPendingAdminMoneyAction } from '../../modules/economy/pendingAdminMoney';
 import { isValidPlayerName } from '../../modules/linking/linkService';
 import {
@@ -123,7 +123,8 @@ export const addMoneyCommand: Command = {
       target: target.id,
       amount: String(amount),
     });
-    await reply(i, `+${amount.toLocaleString('de-DE')} Coins wurden <@${target.id}> sofort gutgeschrieben.`);
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
+    await reply(i, `+${amount.toLocaleString('de-DE')} ${cfg.currencyName} wurden <@${target.id}> sofort gutgeschrieben.`);
   }),
 };
 
@@ -139,7 +140,8 @@ export const removeMoneyCommand: Command = {
     if (target.bot) { await reply(i, 'Bots besitzen kein Economy-Guthaben.'); return; }
     const amount = i.options.getInteger('betrag', true);
     const reason = i.options.getString('grund', true);
-    await queueAction(i, scope, ACTIONS.REMOVE_MONEY, { targetUserId: target.id, amount: String(amount), reason }, `-${amount.toLocaleString('de-DE')} Coins fuer <@${target.id}> sind vorbereitet.`);
+    const cfg = await getConfig(scope.guildId, scope.nitradoConnId!);
+    await queueAction(i, scope, ACTIONS.REMOVE_MONEY, { targetUserId: target.id, amount: String(amount), reason }, `-${amount.toLocaleString('de-DE')} ${cfg.currencyName} fuer <@${target.id}> sind vorbereitet.`);
   }),
 };
 
