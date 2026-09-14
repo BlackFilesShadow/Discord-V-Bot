@@ -395,7 +395,7 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
     if (!ensureNitradoWriteAllowed(req, res, { action: 'NITRADO_WHITELIST_SYNC_PUSH', danger: false })) return;
   }
 
-  let dbInserted = 0, jobsCreated = 0;
+  let dbInserted = 0, jobsCreated = 0, banBlocked = 0;
   const dbDeleted = 0;
   try {
     await withFreshAdmBinding(binding, async () => {
@@ -405,8 +405,16 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
       // - KEIN Sync-Modus loescht lokale oder remote Whitelist-Eintraege.
       // Destruktive Aktionen bleiben ausschliesslich dem gezielten Einzel-Remove,
       // SERVER_BAN_ADD und dem verifizierten Bye-Cleanup vorbehalten.
+      // Dieselbe Ban-Grenze wie bei jedem anderen Whitelist-Write (POST /, Approval-Button,
+      // Slash-Commands) gilt auch hier: ein aktiv gebannter Name wird nie als SYNCED
+      // importiert und nie erneut zu Nitrado gepusht.
       if (direction === 'pull' || direction === 'merge') {
         for (const name of onlyRemote) {
+          if (await isWhitelistBlockedByActiveServerBan(
+            prisma as unknown as BanClient,
+            { guildId: scope.guildId, nitradoConnId: connId },
+            name,
+          )) { banBlocked++; continue; }
           try {
             await prisma.whitelistEntry.create({
               data: {
@@ -423,6 +431,11 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
       }
       if (direction === 'push' || direction === 'merge') {
         for (const name of onlyLocal) {
+          if (await isWhitelistBlockedByActiveServerBan(
+            prisma as unknown as BanClient,
+            { guildId: scope.guildId, nitradoConnId: connId },
+            name,
+          )) { banBlocked++; continue; }
           if (await enqueueWhitelistAdd(
             prisma as unknown as WhitelistOutboxClient,
             { guildId: scope.guildId, nitradoConnId: connId },
@@ -438,10 +451,10 @@ whitelistRouter.post('/sync', requireGuildPermission('whitelist.manage'), async 
 
   logAuditDb('WHITELIST_SYNC', 'WHITELIST', {
     actorUserId: req.auth!.userId, guildId: scope.guildId,
-    details: { direction, dbInserted, dbDeleted, jobsCreated, nitradoConnId: connId, ...diff.counts },
+    details: { direction, dbInserted, dbDeleted, jobsCreated, banBlocked, nitradoConnId: connId, ...diff.counts },
   });
   emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'synced' } });
-  res.json({ ok: true, applied: true, diff, dbInserted, dbDeleted, jobsCreated });
+  res.json({ ok: true, applied: true, diff, dbInserted, dbDeleted, jobsCreated, banBlocked });
 });
 
 whitelistRouter.get('/channels', requireGuildPermission('whitelist.manage'), async (req, res) => {

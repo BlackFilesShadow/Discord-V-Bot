@@ -121,15 +121,17 @@ export const serverBanCommand: Command = {
 
           // Nicht vor Remote-Bestaetigung loeschen. PENDING_REMOVE verhindert
           // gleichzeitig ein Re-Add durch den Whitelist-Reconciler.
+          // Case-insensitiv wie banReconciliation.ts, da Nitrado Listen-Identitaeten
+          // ebenfalls case-insensitiv behandelt.
           await tx.whitelistEntry.updateMany({
-            where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: identifier },
+            where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: { equals: identifier, mode: 'insensitive' } },
             data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
           });
           await tx.whitelistRequest.updateMany({
             where: {
               guildId: scope.guildId,
               nitradoConnId: target.id,
-              gameId: identifier,
+              gameId: { equals: identifier, mode: 'insensitive' },
               status: { in: ['PENDING', 'APPROVED'] },
             },
             data: { status: 'CANCELLED' },

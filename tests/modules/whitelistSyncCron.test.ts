@@ -13,6 +13,7 @@ const whitelistDeleteMany = jest.fn(async () => ({ count: 1 }));
 const playerSessionFindMany = jest.fn();
 const jobFindMany = jest.fn();
 const jobCreate = jest.fn(async () => ({}));
+const serverBanEntryFindUnique = jest.fn(async (): Promise<{ active: boolean; expiresAt: Date | null } | null> => null);
 const queryRaw = jest.fn(async () => []);
 const transaction = jest.fn();
 const getWhitelist = jest.fn();
@@ -38,6 +39,7 @@ jest.mock('../../src/database/prisma', () => ({
     },
     playerSession: { findMany: playerSessionFindMany },
     nitradoJob: { findMany: jobFindMany, create: jobCreate },
+    serverBanEntry: { findUnique: serverBanEntryFindUnique },
   },
 }));
 
@@ -90,6 +92,7 @@ beforeEach(() => {
   playerSessionFindMany.mockResolvedValue([]);
   jobFindMany.mockResolvedValue([]);
   jobCreate.mockResolvedValue({});
+  serverBanEntryFindUnique.mockResolvedValue(null);
   queryRaw.mockResolvedValue([]);
   getWhitelist.mockResolvedValue([]);
   decryptMock.mockReturnValue('decrypted-token');
@@ -128,6 +131,16 @@ it('queued genau einen ADD-Job unter dem cross-process Subject-Lock wenn lokal r
       payload: { gameId: 'Alice' },
     },
   });
+});
+
+it('queued keinen ADD-Job fuer einen aktiv gebannten Namen (Defense-in-Depth)', async () => {
+  whitelistFindMany.mockResolvedValue([{ id: 'wl-1', gameId: 'Alice', syncState: 'LOCAL_ONLY' }]);
+  getWhitelist.mockResolvedValue([]);
+  serverBanEntryFindUnique.mockResolvedValue({ active: true, expiresAt: null });
+
+  await runWhitelistSyncOnce();
+
+  expect(jobCreate).not.toHaveBeenCalled();
 });
 
 it('behaelt einen remote-only Eintrag fail-closed und queued keinen REMOVE-Job', async () => {

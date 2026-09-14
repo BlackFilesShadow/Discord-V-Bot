@@ -34,7 +34,8 @@ describe('NitradoClient whitelist settings safety', () => {
   it('behaelt den produktiv bestaetigten general.whitelist Read-Modify-Write-Pfad', async () => {
     requestMock
       .mockResolvedValueOnce(settings('player-a\r\nplayer-b'))
-      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } });
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValueOnce(settings('player-a\r\nplayer-b\r\nplayer-c'));
     const client = new NitradoClient('token-1234');
 
     await client.addToWhitelist('123', 'player-c');
@@ -50,6 +51,25 @@ describe('NitradoClient whitelist settings safety', () => {
     const post = requestMock.mock.calls[1][0] as { data: string };
     expect(new URLSearchParams(post.data).get('key')).toBe('whitelist');
     expect(new URLSearchParams(post.data).get('value')).toBe('player-a\r\nplayer-b\r\nplayer-c');
+    // Wie beim Remove wird auch der Add erst nach einem bestaetigten Remote-Post-Read quittiert.
+    expect(requestMock).toHaveBeenCalledTimes(3);
+    expect(requestMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      method: 'GET',
+      url: '/services/123/gameservers',
+    }));
+  });
+
+  it('quittiert Whitelist-Add erst nach bestaetigtem Remote-Post-Read', async () => {
+    requestMock
+      .mockResolvedValueOnce(settings('player-a'))
+      .mockResolvedValueOnce({ status: 200, headers: {}, data: { data: {} } })
+      .mockResolvedValueOnce(settings('player-a'))
+      .mockResolvedValueOnce(settings('player-a\r\nplayer-b'));
+    const client = new NitradoClient('token-1234');
+
+    await expect(client.addToWhitelist('123', 'player-b')).resolves.toBeUndefined();
+    // 1x GET (Read-Modify), 1x POST (Write), 2x GET (Bestaetigung: 1. Versuch noch nicht sichtbar, 2. Versuch bestaetigt).
+    expect(requestMock).toHaveBeenCalledTimes(4);
   });
 
   it.each([true, false, 'true', 'false'])('interpretiert Default %p als leere Spieler-Liste', async value => {

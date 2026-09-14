@@ -197,6 +197,7 @@ async function dateContextForOffset(
       const local = localParts(previous.occurredAt, timeZone);
       const context = newDateContext(local.date, timeZone);
       context.prevTimeMs = local.timeMs;
+      context.prevOccurredAtMs = previous.occurredAt.getTime();
       return context;
     }
   }

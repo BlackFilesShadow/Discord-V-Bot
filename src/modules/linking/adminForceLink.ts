@@ -56,10 +56,11 @@ function normalizePlayerName(value: string): string {
   return value.trim();
 }
 
-async function observedNameHashes(raw: RawDb, guildId: string, playerName: string, secret: string): Promise<string[]> {
+async function observedNameHashes(raw: RawDb, guildId: string, nitradoConnId: string, playerName: string, secret: string): Promise<string[]> {
   const sessions = await raw.$queryRawUnsafe<Array<{ gameId: string }>>(
-    'SELECT DISTINCT "gameId" FROM "PlayerSession" WHERE "guildId"=$1 AND "playerName"=$2 LIMIT 5000',
+    'SELECT DISTINCT "gameId" FROM "PlayerSession" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "playerName"=$3 LIMIT 5000',
     guildId,
+    nitradoConnId,
     playerName,
   );
   return [...new Set(sessions.map(row => identityHash(row.gameId, secret)))];
@@ -132,11 +133,12 @@ async function persistAdminForcedLink(args: {
     );
     if (forcedOwner[0]) return { ok: false, reason: 'PLAYER_NAME_TAKEN', playerName: args.playerName } as const;
 
-    const nameHashes = await observedNameHashes(raw, args.scope.guildId, args.playerName, args.secret);
+    const nameHashes = await observedNameHashes(raw, args.scope.guildId, args.scope.nitradoConnId, args.playerName, args.secret);
     for (const observedHash of nameHashes) {
       const owner = await raw.$queryRawUnsafe<Array<{ userDiscordId: string }>>(
-        'SELECT "userDiscordId" FROM "GameIdentityLink" WHERE "guildId"=$1 AND "identityHash"=$2 AND "status"=\'VERIFIED\'::"GameIdentityStatus" AND "userDiscordId"<>$3 LIMIT 1 FOR UPDATE',
+        'SELECT "userDiscordId" FROM "GameIdentityLink" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "identityHash"=$3 AND "status"=\'VERIFIED\'::"GameIdentityStatus" AND "userDiscordId"<>$4 LIMIT 1 FOR UPDATE',
         args.scope.guildId,
+        args.scope.nitradoConnId,
         observedHash,
         args.userDiscordId,
       );
@@ -145,8 +147,9 @@ async function persistAdminForcedLink(args: {
 
     if (hash) {
       const identityOwner = await raw.$queryRawUnsafe<Array<{ userDiscordId: string }>>(
-        'SELECT "userDiscordId" FROM "GameIdentityLink" WHERE "guildId"=$1 AND "identityHash"=$2 AND "status"=\'VERIFIED\'::"GameIdentityStatus" AND "userDiscordId"<>$3 LIMIT 1 FOR UPDATE',
+        'SELECT "userDiscordId" FROM "GameIdentityLink" WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "identityHash"=$3 AND "status"=\'VERIFIED\'::"GameIdentityStatus" AND "userDiscordId"<>$4 LIMIT 1 FOR UPDATE',
         args.scope.guildId,
+        args.scope.nitradoConnId,
         hash,
         args.userDiscordId,
       );
