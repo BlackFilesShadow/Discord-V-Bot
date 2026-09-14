@@ -35,6 +35,16 @@ describe('bot-admin feed control-plane architecture', () => {
     expect(adapter).not.toContain('prisma.feed.delete');
   });
 
+  test('removes the shadowed legacy /bot-admin feed routes (unsupported types, no URL validation, no webhookSecret)', () => {
+    const legacy = read('src/dashboard/routes/v2/botAdmin.ts');
+    expect(legacy).not.toContain("botAdminRouter.post('/feeds'");
+    expect(legacy).not.toContain("botAdminRouter.get('/feeds'");
+    expect(legacy).not.toContain("botAdminRouter.post('/feeds/:id/toggle'");
+    expect(legacy).not.toContain("botAdminRouter.delete('/feeds/:id'");
+    expect(legacy).not.toContain("from '../../../modules/feeds/feedManager'");
+    expect(legacy).not.toContain("'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'");
+  });
+
   test('keeps guild and bot-admin auth transports separate while sharing domain logic', () => {
     const guildRoute = read('src/dashboard/routes/v2/feeds.ts');
     const botAdminRoute = read('src/dashboard/routes/v2/botAdminFeeds.ts');

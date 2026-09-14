@@ -1,9 +1,11 @@
 /**
  * Smoke + Pen-Tests fuer /api/v2/bot-admin/* (GLOBALER Bot-Admin-Bereich).
  *
- * Verifiziert Passwort-Login + BotAdminSession-Gate (requireBotAdmin), die
- * Confirm-Pflicht fuer gefaehrliche Aktionen, die guildId-Pflicht guild-gebundener
- * Routen und dass NIE Secrets ausgegeben werden (insb. Feed-webhookSecret).
+ * Verifiziert Passwort-Login + BotAdminSession-Gate (requireBotAdmin) und die
+ * Confirm-Pflicht fuer gefaehrliche Aktionen. Die guildId-Pflicht und
+ * Secret-Redaktion (webhookSecret) der Feed-Routen werden in
+ * botAdminFeeds.test.ts gegen botAdminFeedsRouter getestet -- der kanonische,
+ * unter /bot-admin/feeds gemountete Router (siehe botAdminFeedControlPlaneArchitecture.test.ts).
  */
 
 const prismaMock = {
@@ -251,51 +253,6 @@ describe('Bot-Admin — gefaehrliche Aktionen', () => {
     const r = await request(makeApp()).post(`${BASE}/danger/purge-deleted-packages`).send({ confirm: 'DELETE' });
     expect(r.status).toBe(200);
     expect(r.body.purged).toBe(7);
-  });
-});
-
-describe('Bot-Admin — guild-gebundene Routen', () => {
-  it('GET /feeds ohne guildId -> 400', async () => {
-    const r = await request(makeApp()).get(`${BASE}/feeds`);
-    expect(r.status).toBe(400);
-    expect(r.body.error).toMatch(/guildId/);
-  });
-
-  it('GET /feeds mit guildId gibt webhookSecret NIE aus', async () => {
-    const r = await request(makeApp()).get(`${BASE}/feeds?guildId=${GID}`);
-    expect(r.status).toBe(200);
-    const dump = JSON.stringify(r.body);
-    expect(dump).not.toMatch(/webhookSecret/);
-    expect(dump).not.toMatch(/TOP-SECRET-VALUE/);
-    expect(r.body.items[0]).toMatchObject({ id: 'f1', name: 'RSS' });
-  });
-
-  it('POST /feeds blockt private/lokale Hosts (SSRF)', async () => {
-    const { createFeed } = jest.requireMock('../../src/modules/feeds/feedManager') as { createFeed: jest.Mock };
-    for (const url of ['http://127.0.0.1/rss', 'http://localhost:8080/x', 'http://169.254.169.254/latest', 'http://[::1]/rss']) {
-      const r = await request(makeApp()).post(`${BASE}/feeds?guildId=${GID}`)
-        .send({ name: 'Feed', feedType: 'RSS', url, channelId: '222222222222222222' });
-      expect(r.status).toBe(400);
-      expect(r.body.error).toMatch(/SSRF|privat/i);
-    }
-    expect(createFeed).not.toHaveBeenCalled();
-  });
-
-  it('POST /feeds lehnt nicht-http(s)-Schemata ab', async () => {
-    const r = await request(makeApp()).post(`${BASE}/feeds?guildId=${GID}`)
-      .send({ name: 'Feed', feedType: 'RSS', url: 'ftp://example.com/rss', channelId: '222222222222222222' });
-    expect(r.status).toBe(400);
-    expect(r.body.error).toMatch(/http/i);
-  });
-
-  it('POST /feeds erlaubt oeffentliche http(s)-URL', async () => {
-    const { createFeed } = jest.requireMock('../../src/modules/feeds/feedManager') as { createFeed: jest.Mock };
-    createFeed.mockResolvedValueOnce('feed-new');
-    const r = await request(makeApp()).post(`${BASE}/feeds?guildId=${GID}`)
-      .send({ name: 'Feed', feedType: 'RSS', url: 'https://example.com/rss.xml', channelId: '222222222222222222' });
-    expect(r.status).toBe(201);
-    expect(r.body.id).toBe('feed-new');
-    expect(createFeed).toHaveBeenCalled();
   });
 });
 

@@ -4,12 +4,13 @@
  * Liefert die echten Daten fuer die letzten verbliebenen Stub-Seiten:
  *
  *   GET /server-stats        Dashboard-Status: Uptime, Sessions, Sockets, Prisma-Top
- *   GET /errors              Error-Monitoring: errorCounter aus Prom + letzte Error-Logs
- *   GET /sync                Live-Sync: NitradoJob-Outbox + EconomyLink-Counts
- *   GET /security            Security-Status: SecurityEvents 24h, DevSessions, BruteForce
  *   GET /debug               Debug-Tools: Heap, EventLoop-Lag, GC, V8 Stats
  *   POST /debug/heap-snapshot  Schreibt Heap-Snapshot in os.tmpdir() (Audit + StepUp)
  *   GET /commands            Command-Diag: Slash-Command-Registry des Discord-Clients
+ *
+ * /errors, /sync und /security werden von devDiagnosticsStubsRouter (vor
+ * diesem Router unter /dev/stubs gemountet, siehe v2.ts) bereitgestellt und
+ * leben deshalb dort, nicht hier.
  *
  * Alle Endpoints requireDev (DEVELOPER + DevSession + MFA + IP-Allow).
  * Mutating /debug/heap-snapshot zusaetzlich validateStepUpInput.
@@ -25,31 +26,12 @@ import { validateStepUpInput } from '../../middleware/devSecurity';
 import prisma from '../../../database/prisma';
 import { tryGetDashboardClient } from '../../clientRegistry';
 import { getIo } from '../../socket/emitter';
-import { getPrismaSnapshot, queryLogRing } from '../../services/observability';
-import { errorCounter } from '../../../utils/metrics';
+import { getPrismaSnapshot } from '../../services/observability';
 import { logger, logAudit, logAuditDb } from '../../../utils/logger';
 import { buildInventory, SPEC_KEEP_COMMANDS, MOVED_TO_DASHBOARD } from '../../../commands/inventory';
 
 export const devStubsRouter = Router();
 devStubsRouter.use(requireDev);
-
-/**
- * Pseudonymisiert eine IP-Adresse fuer die Anzeige (DSGVO/Datensparsamkeit):
- * letztes IPv4-Oktett bzw. die letzten IPv6-Segmente werden maskiert, sodass
- * das Subnetz/der Angreifer-Cluster erkennbar bleibt, die exakte IP aber nicht.
- */
-function maskIp(ip: string | null): string | null {
-  if (!ip) return ip;
-  if (ip.includes('.')) {
-    const parts = ip.split('.');
-    if (parts.length === 4) return `${parts[0]}.${parts[1]}.${parts[2]}.x`;
-  }
-  if (ip.includes(':')) {
-    const seg = ip.split(':');
-    if (seg.length > 2) return `${seg[0]}:${seg[1]}:::x`;
-  }
-  return 'x';
-}
 
 // EventLoop-Histogramm laeuft permanent, damit Mittelwert+Max sinnvoll sind.
 const eldHist = monitorEventLoopDelay({ resolution: 20 });
@@ -108,118 +90,7 @@ devStubsRouter.get('/server-stats', async (_req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// 2. error-monitoring
-// ----------------------------------------------------------------------------
-devStubsRouter.get('/errors', async (_req, res) => {
-  // Prom-Counter pro source einsammeln.
-  const metric = await errorCounter.get();
-  const bySource = metric.values.map(v => ({
-    source: String(v.labels.source ?? 'unknown'),
-    count: Number(v.value),
-  }));
-  // Recent error log lines aus Ring-Buffer.
-  const recent = queryLogRing({ level: 'error', limit: 200 });
-  // Webhook-Konfig-Status (no leak, nur boolean).
-  const webhookEnabled = (process.env.ERROR_WEBHOOK_URL ?? '').startsWith('https://discord.com/api/webhooks/');
-  res.json({
-    bySource,
-    totalCount: bySource.reduce((s, r) => s + r.count, 0),
-    recent,
-    webhookEnabled,
-    generatedAt: new Date().toISOString(),
-  });
-});
-
-// ----------------------------------------------------------------------------
-// 3. live-sync
-// ----------------------------------------------------------------------------
-devStubsRouter.get('/sync', async (_req, res) => {
-  // NitradoJob-Aggregate (DEV-only, globaler Outbox-Health-Snapshot)
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-Portal: globale Outbox-Aggregation, requireDev geschuetzt.
-  const nitradoStatus = await prisma.nitradoJob.groupBy({
-    by: ['status'],
-    _count: { _all: true },
-  });
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-Portal: globale Aggregation.
-  const nitradoOpsRaw = await prisma.nitradoJob.groupBy({
-    by: ['operation'],
-    _count: { _all: true },
-    orderBy: { _count: { id: 'desc' } },
-    take: 10,
-  });
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-Portal: globale Failed-Outbox-Sicht.
-  const nitradoFailedSamples = await prisma.nitradoJob.findMany({
-    where: { status: 'FAILED' },
-    orderBy: { updatedAt: 'desc' },
-    take: 10,
-    select: { id: true, guildId: true, operation: true, attempts: true, lastError: true, updatedAt: true },
-  });
-  // Verifizierte Spielidentitaets-Bindungen je Guild (DEV-only)
-  // eslint-disable-next-line local/no-unscoped-prisma-query -- DEV-Portal: Cross-Guild-Counts gewuenscht.
-  const linksByGuild = await prisma.gameIdentityLink.groupBy({
-    by: ['guildId'],
-    where: { status: 'VERIFIED' },
-    _count: { _all: true },
-    orderBy: { _count: { id: 'desc' } },
-    take: 20,
-  });
-  res.json({
-    nitrado: {
-      byStatus: nitradoStatus.map(r => ({ status: r.status, count: r._count._all })),
-      byOperation: nitradoOpsRaw.map(r => ({ operation: r.operation, count: r._count._all })),
-      recentFailed: nitradoFailedSamples.map(r => ({ ...r, updatedAt: r.updatedAt.toISOString() })),
-    },
-    economyLinks: {
-      byGuild: linksByGuild.map(r => ({ guildId: r.guildId, count: r._count._all })),
-      total: linksByGuild.reduce((s, r) => s + r._count._all, 0),
-    },
-    generatedAt: new Date().toISOString(),
-  });
-});
-
-// ----------------------------------------------------------------------------
-// 4. security-status
-// ----------------------------------------------------------------------------
-devStubsRouter.get('/security', async (_req, res) => {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const eventsByType = await prisma.securityEvent.groupBy({
-    by: ['eventType', 'severity'],
-    _count: { _all: true },
-    where: { createdAt: { gte: since } },
-  });
-  const recentEvents = await prisma.securityEvent.findMany({
-    where: { createdAt: { gte: since } },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-    select: {
-      id: true, eventType: true, severity: true, description: true,
-      ipAddress: true, createdAt: true,
-    },
-  });
-  const activeDevSessions = await prisma.devSession.count({
-    where: { revokedAt: null, expiresAt: { gt: new Date() } },
-  });
-  const bruteForceLast24h = eventsByType
-    .filter(r => r.eventType === 'BRUTE_FORCE')
-    .reduce((s, r) => s + r._count._all, 0);
-  const loginFailLast24h = eventsByType
-    .filter(r => r.eventType === 'LOGIN_FAILURE')
-    .reduce((s, r) => s + r._count._all, 0);
-  res.json({
-    windowHours: 24,
-    activeDevSessions,
-    bruteForceLast24h,
-    loginFailLast24h,
-    eventsByType: eventsByType.map(r => ({
-      eventType: r.eventType, severity: r.severity, count: r._count._all,
-    })),
-    recentEvents: recentEvents.map(r => ({ ...r, ipAddress: maskIp(r.ipAddress), createdAt: r.createdAt.toISOString() })),
-    generatedAt: new Date().toISOString(),
-  });
-});
-
-// ----------------------------------------------------------------------------
-// 5. debug-tools
+// 2. debug-tools
 // ----------------------------------------------------------------------------
 devStubsRouter.get('/debug', (_req, res) => {
   const heap = v8.getHeapStatistics();
@@ -301,7 +172,7 @@ devStubsRouter.post('/debug/heap-snapshot', heapSnapshotLimiter, (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// 6. command-diag — Command-Inventory & Migrationsstatus (Spec §15)
+// 3. command-diag — Command-Inventory & Migrationsstatus (Spec §15)
 // ----------------------------------------------------------------------------
 devStubsRouter.get('/commands', (_req, res) => {
   const client = tryGetDashboardClient();

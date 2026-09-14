@@ -24,6 +24,7 @@ import { getProviderConfigurationHealth, getStats } from '../../../modules/ai/pr
 import { nitradoWriteProtectionStatus } from '../../middleware/nitradoWriteGuard';
 import { config } from '../../../config';
 import { getMemberSyncStatus } from '../../../modules/members/memberSyncScheduler';
+import { rejectGlobalOnlyForRestrictedSession } from './devDiagnosticScope';
 
 export const devStatusRouter = Router();
 devStatusRouter.use(requireDev);
@@ -42,7 +43,8 @@ async function timed<T>(fn: () => Promise<T>): Promise<{ value: T | null; ms: nu
 
 // --- Database -------------------------------------------------------------
 
-devStatusRouter.get('/database', async (_req, res) => {
+devStatusRouter.get('/database', async (req, res) => {
+  if (rejectGlobalOnlyForRestrictedSession(req, res)) return;
   const ping = await timed(async () => {
     const r = await prisma.$queryRawUnsafe<Array<{ ok: number }>>('SELECT 1 AS ok');
     return r[0]?.ok === 1;
@@ -100,7 +102,8 @@ devStatusRouter.get('/database', async (_req, res) => {
 
 // --- Discord --------------------------------------------------------------
 
-devStatusRouter.get('/discord', (_req, res) => {
+devStatusRouter.get('/discord', (req, res) => {
+  if (rejectGlobalOnlyForRestrictedSession(req, res)) return;
   const client = tryGetDashboardClient();
   if (!client) return res.json({ ok: false, error: 'Discord-Client nicht gebunden.' });
 

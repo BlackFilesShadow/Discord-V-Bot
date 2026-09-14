@@ -33,8 +33,6 @@ import { approveManufacturer, denyManufacturer } from '../../../modules/registra
 import { generateOneTimePassword, hashPassword } from '../../../utils/password';
 import { validateFile } from '../../../utils/validator';
 import { safeDm } from '../../../utils/safeSend';
-import { createFeed } from '../../../modules/feeds/feedManager';
-import { isBlockedHost } from '../../../utils/ssrf';
 import { getMenuFull, publishMenu } from '../../../modules/selfrole/selfRoleMenu';
 import { closeTicket } from '../../../modules/ticket/ticketManager';
 import { translate } from '../../../modules/ai/translator';
@@ -898,62 +896,10 @@ botAdminRouter.post('/knowledge/brief/regenerate', ba, async (req, res) => {
 });
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// FEEDS  (guild-gebunden)
+// FEEDS (guild-gebunden): siehe botAdminFeedsRouter, gemountet unter
+// /bot-admin/feeds VOR diesem Router (v2.ts) -- deckt die komplette Feed-
+// Verwaltung ueber dieselbe feedControlPlane.ts wie das Guild-Dashboard ab.
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-botAdminRouter.get('/feeds', ba, async (req, res) => {
-  const guildId = reqGuildId(req, res); if (!guildId) return;
-  const feeds = await prisma.feed.findMany({ where: { guildId }, orderBy: STABLE_CREATED_DESC });
-  // webhookSecret NIE ausgeben.
-  res.json({ items: feeds.map(({ webhookSecret: _omit, ...rest }) => rest) });
-});
-
-botAdminRouter.post('/feeds', ba, async (req, res) => {
-  const guildId = reqGuildId(req, res); if (!guildId) return;
-  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
-  const feedType = String(req.body?.feedType ?? '').toUpperCase();
-  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
-  const channelId = String(req.body?.channelId ?? '');
-  const interval = Math.min(86400, Math.max(60, parseInt(String(req.body?.interval ?? 300), 10) || 300));
-  if (name.length < 1 || name.length > 100) { res.status(400).json({ error: 'name 1..100 Zeichen.' }); return; }
-  if (!['RSS', 'TWITCH', 'TWITTER', 'STEAM', 'NEWS', 'WEBHOOK', 'CUSTOM'].includes(feedType)) { res.status(400).json({ error: 'Ungültiger feedType.' }); return; }
-  if (!SNOWFLAKE_RE.test(channelId)) { res.status(400).json({ error: 'Ungültige channelId.' }); return; }
-  if (!url || url.length > 2000) { res.status(400).json({ error: 'Ungültige url.' }); return; }
-  // SSRF-Schutz (analog feeds.ts): URL-basierte Quellen duerfen nur http(s) und
-  // keine lokalen/privaten Hosts sein. Name-/ID-basierte Typen (TWITCH/STEAM)
-  // enthalten kein Schema und bleiben unberuehrt.
-  if (url.includes('://')) {
-    let parsed: URL;
-    try { parsed = new URL(url); } catch { res.status(400).json({ error: 'Ungültige url.' }); return; }
-    if (!['http:', 'https:'].includes(parsed.protocol)) {
-      res.status(400).json({ error: 'Nur http:// oder https:// URLs erlaubt.' }); return;
-    }
-    if (isBlockedHost(parsed.hostname)) {
-      res.status(400).json({ error: 'Lokale/private Hosts sind nicht erlaubt (SSRF-Schutz).' }); return;
-    }
-  }
-  const id = await createFeed(name, feedType, url, channelId, interval, actor(req), guildId);
-  audit(req, 'BOTADMIN_FEED_CREATE', { feedId: id, feedType, channelId }, { category: 'FEED', channelId, guildId });
-  res.status(201).json({ id });
-});
-
-botAdminRouter.post('/feeds/:id/toggle', ba, async (req, res) => {
-  const guildId = reqGuildId(req, res); if (!guildId) return;
-  const feed = await prisma.feed.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!feed) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
-  const updated = await prisma.feed.update({ where: { id: feed.id }, data: { isActive: !feed.isActive } });
-  audit(req, 'BOTADMIN_FEED_TOGGLE', { feedId: feed.id, isActive: updated.isActive }, { category: 'FEED', guildId });
-  res.json({ id: updated.id, isActive: updated.isActive });
-});
-
-botAdminRouter.delete('/feeds/:id', ba, async (req, res) => {
-  const guildId = reqGuildId(req, res); if (!guildId) return;
-  const feed = await prisma.feed.findFirst({ where: { id: String(req.params.id), guildId } });
-  if (!feed) { res.status(404).json({ error: 'Feed nicht gefunden.' }); return; }
-  await prisma.feed.delete({ where: { id: feed.id } });
-  audit(req, 'BOTADMIN_FEED_DELETE', { feedId: feed.id }, { category: 'FEED', guildId });
-  res.json({ deleted: true });
-});
-
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ÃœBERSETZUNGEN  (guild-gebunden)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•

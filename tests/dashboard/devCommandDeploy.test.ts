@@ -108,4 +108,44 @@ describe('DEV command deploy route', () => {
     expect(res.status).toBe(503);
     expect(deployMock).not.toHaveBeenCalled();
   });
+
+  it('blockiert einen zweiten gleichzeitigen Reload mit 409 statt races auf der Command-Registry', async () => {
+    let releaseDeploy!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseDeploy = resolve; });
+    deployMock.mockImplementation(async () => {
+      await gate;
+      return { globalCount: 1, guildCount: 20, guildsOk: 2, guildsFailed: 0, failedGuildIds: [] };
+    });
+
+    const instance = app();
+    // supertest-Requests sind "thenable" und starten erst beim Awaiten/`.end()`;
+    // ueber `.end()` mit Callback in ein Promise verpackt, um den Request sofort
+    // (synchron) auszuloesen statt lazy erst beim spaeteren `await`.
+    function post(): Promise<request.Response> {
+      return new Promise((resolve, reject) => {
+        request(instance)
+          .post('/commands/reload')
+          .send({ scope: 'deploy', reason: 'test' })
+          .end((err, res) => {
+            if (err && !res) reject(err);
+            else resolve(res);
+          });
+      });
+    }
+
+    const first = post();
+    // Sicherstellen, dass der erste Request den Lock bereits gesetzt hat, bevor der zweite startet.
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = await post();
+
+    expect(second.status).toBe(409);
+    expect(deployMock).toHaveBeenCalledTimes(1);
+
+    releaseDeploy();
+    const firstRes = await first;
+    expect(firstRes.status).toBe(200);
+
+    const third = await post();
+    expect(third.status).toBe(200);
+  });
 });
