@@ -34,7 +34,8 @@ jest.mock('../../src/utils/logger', () => ({
   logAudit: jest.fn(),
 }));
 
-import { publishMenu } from '../../src/modules/selfrole/selfRoleMenu';
+import { logger } from '../../src/utils/logger';
+import { detachMenuComponents, publishMenu } from '../../src/modules/selfrole/selfRoleMenu';
 
 interface MenuLike { [k: string]: unknown }
 
@@ -107,5 +108,49 @@ describe('publishMenu — verknuepfte Einbettung (entkoppelt)', () => {
     await publishMenu(menu as any, channel as any);
     expect(react).toHaveBeenCalledWith('🎮');
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('detachMenuComponents — Fehlschlaege werden geloggt statt still verschluckt', () => {
+  it('loggt, wenn der Kanal nicht aufloesbar ist', async () => {
+    const client = { channels: { cache: new Map(), fetch: jest.fn().mockResolvedValue(null) } };
+    await detachMenuComponents(client as any, CH, EMB_MSG, false);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(CH));
+  });
+
+  it('loggt, wenn die Nachricht nicht gefunden wird', async () => {
+    const channel = {
+      isTextBased: () => true,
+      isDMBased: () => false,
+      messages: { fetch: jest.fn().mockResolvedValue(null) },
+    };
+    const client = { channels: { cache: new Map([[CH, channel]]), fetch: jest.fn() } };
+    await detachMenuComponents(client as any, CH, EMB_MSG, false);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(EMB_MSG));
+  });
+
+  it('loggt, wenn das Entfernen der Komponenten fehlschlaegt', async () => {
+    const message = { edit: jest.fn().mockRejectedValue(new Error('Missing Permissions')), reactions: { removeAll: jest.fn() } };
+    const channel = {
+      isTextBased: () => true,
+      isDMBased: () => false,
+      messages: { fetch: jest.fn().mockResolvedValue(message) },
+    };
+    const client = { channels: { cache: new Map([[CH, channel]]), fetch: jest.fn() } };
+    await detachMenuComponents(client as any, CH, EMB_MSG, false);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining(EMB_MSG), expect.any(Error));
+  });
+
+  it('entfernt Komponenten still-erfolgreich ohne Logging, wenn alles klappt', async () => {
+    const message = { edit: jest.fn().mockResolvedValue({}), reactions: { removeAll: jest.fn().mockResolvedValue({}) } };
+    const channel = {
+      isTextBased: () => true,
+      isDMBased: () => false,
+      messages: { fetch: jest.fn().mockResolvedValue(message) },
+    };
+    const client = { channels: { cache: new Map([[CH, channel]]), fetch: jest.fn() } };
+    await detachMenuComponents(client as any, CH, EMB_MSG, false);
+    expect(message.edit).toHaveBeenCalledWith({ components: [] });
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 });

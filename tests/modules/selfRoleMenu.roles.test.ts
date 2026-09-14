@@ -124,3 +124,44 @@ describe('handleSelfRoleButton — TOGGLE (Rolle Geben/Nehmen)', () => {
     expect(replyDescription(reply)).toContain(`Die Rolle „${ROLE_NAME}“ wurde dir entfernt.`);
   });
 });
+
+describe('handleSelfRoleButton — verwaiste Buttons (geloeschtes/archiviertes Menue)', () => {
+  function makeOrphanedInteraction() {
+    const { btn, add, remove, reply } = makeInteraction(false);
+    const editMessage = jest.fn().mockResolvedValue({});
+    const message = { id: 'msg1', channelId: '1', components: [{ type: 1 }], edit: editMessage };
+    return { btn: { ...btn, message }, add, remove, reply, editMessage, message };
+  }
+
+  it('entfernt die verwaisten Buttons von der Nachricht, wenn das Menue nicht mehr existiert', async () => {
+    findUnique.mockResolvedValue(null);
+    const { btn, reply, editMessage } = makeOrphanedInteraction();
+    await handleSelfRoleButton(btn as any);
+    expect(replyDescription(reply)).toContain('Menü ist inaktiv oder nicht gefunden.');
+    expect(editMessage).toHaveBeenCalledWith({ components: [] });
+  });
+
+  it('entfernt die verwaisten Buttons, wenn das Menue archiviert ist', async () => {
+    findUnique.mockResolvedValue({ ...menuRow('GIVE'), archived: true });
+    const { btn, editMessage } = makeOrphanedInteraction();
+    await handleSelfRoleButton(btn as any);
+    expect(editMessage).toHaveBeenCalledWith({ components: [] });
+  });
+
+  it('ruehrt die Nachricht nicht an, wenn sie bereits keine Komponenten mehr hat', async () => {
+    findUnique.mockResolvedValue(null);
+    const { btn, editMessage, message } = makeOrphanedInteraction();
+    message.components = [];
+    await handleSelfRoleButton(btn as any);
+    expect(editMessage).not.toHaveBeenCalled();
+  });
+
+  it('bricht die normale Rollenvergabe nicht ab -- Selbstheilung greift nur im Fehlerfall', async () => {
+    findUnique.mockResolvedValue(menuRow('GIVE'));
+    const { btn, add, reply } = makeOrphanedInteraction();
+    await handleSelfRoleButton(btn as any);
+    expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
+    expect(replyDescription(reply)).toContain(`Du hast die Rolle „${ROLE_NAME}“ erhalten.`);
+    expect((btn.message as { edit: jest.Mock }).edit).not.toHaveBeenCalled();
+  });
+});

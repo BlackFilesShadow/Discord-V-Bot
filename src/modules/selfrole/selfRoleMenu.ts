@@ -372,6 +372,20 @@ function errorEmbed(title: string, message: string): EmbedBuilder {
   return vEmbed(Colors.Error).setTitle(title).setDescription(`❌ ${message}`).setFooter({ text: `${Brand.footerText} • Self-Role` });
 }
 
+// Best-effort Selbstheilung: Wenn ein Klick auf ein geloeschtes/archiviertes
+// Menue trifft, waren dessen Buttons bereits verwaist auf der Nachricht stehen
+// geblieben (detachMenuComponents() ist beim Loeschen/Archivieren best-effort
+// und kann z.B. bei kaltem Client-Cache stillschweigend fehlschlagen). Die
+// anklickte Nachricht ist unabhaengig vom (moeglicherweise abweichenden)
+// DB-Stand bereits bekannt -- also gleich hier bereinigen, statt auf den
+// naechsten manuellen Archiv-/Loeschversuch zu warten.
+async function stripOrphanedComponents(message: Message): Promise<void> {
+  if (message.components.length === 0) return;
+  await message.edit({ components: [] }).catch(error => {
+    logger.warn(`SelfRole: verwaiste Buttons auf Nachricht ${message.id} in Kanal ${message.channelId} konnten nicht selbstheilend entfernt werden.`, error as Error);
+  });
+}
+
 export async function handleSelfRoleButton(btn: ButtonInteraction): Promise<void> {
   const parts = btn.customId.split('_');
   if (parts.length < 3 || parts[1] === 'sel') return;
@@ -391,6 +405,7 @@ export async function handleSelfRoleButton(btn: ButtonInteraction): Promise<void
   }
   if (!menu || !menu.isActive || menu.archived) {
     await btn.reply({ embeds: [errorEmbed('Self-Role', 'Menü ist inaktiv oder nicht gefunden.')], flags: MessageFlags.Ephemeral });
+    await stripOrphanedComponents(btn.message);
     return;
   }
   const opt = menu.options.find(o => o.id === token && o.isActive)
@@ -428,6 +443,7 @@ export async function handleSelfRoleSelect(sel: StringSelectMenuInteraction): Pr
   }
   if (!menu || !menu.isActive || menu.archived) {
     await sel.reply({ embeds: [errorEmbed('Self-Role', 'Menü ist inaktiv oder nicht gefunden.')], flags: MessageFlags.Ephemeral });
+    await stripOrphanedComponents(sel.message);
     return;
   }
   const opt = menu.options.find(o => o.isActive && o.id === sel.values[0]);
@@ -548,10 +564,18 @@ export async function detachMenuComponents(
 ): Promise<void> {
   const channel = client.channels.cache.get(channelId)
     ?? await client.channels.fetch(channelId).catch(() => null);
-  if (!channel || !channel.isTextBased() || channel.isDMBased()) return;
+  if (!channel || !channel.isTextBased() || channel.isDMBased()) {
+    logger.warn(`SelfRole: Kanal ${channelId} zum Entfernen der Menue-Komponenten nicht aufloesbar (Nachricht ${messageId}). Buttons bleiben ggf. verwaist stehen.`);
+    return;
+  }
   const msg = await (channel as TextChannel).messages.fetch(messageId).catch(() => null);
-  if (!msg) return;
-  await msg.edit({ components: [] }).catch(() => {});
+  if (!msg) {
+    logger.warn(`SelfRole: Nachricht ${messageId} in Kanal ${channelId} zum Entfernen der Menue-Komponenten nicht gefunden. Buttons bleiben ggf. verwaist stehen.`);
+    return;
+  }
+  await msg.edit({ components: [] }).catch(error => {
+    logger.warn(`SelfRole: Menue-Komponenten auf Nachricht ${messageId} in Kanal ${channelId} konnten nicht entfernt werden.`, error as Error);
+  });
   if (isReaction) await msg.reactions.removeAll().catch(() => {});
 }
 
