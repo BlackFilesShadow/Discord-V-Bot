@@ -1,0 +1,4 @@
+# Synthetic test-fixture Discord snowflake, not a real credential.
+# tests/dashboard/botAdminDangerSafety.test.ts:11 — fake req.auth.discordId used to
+# stub the requireBotAdmin middleware in a step-up gating test.
+98273a8dbe90d3b6d97a9b3498ebe67b8ed245ba:tests/dashboard/botAdminDangerSafety.test.ts:discord-client-id:11
