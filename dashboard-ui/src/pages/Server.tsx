@@ -180,6 +180,13 @@ export default function Server() {
 // Nitrado-Slots
 // ============================================================================
 
+// Neue Slots sind auf 4 begrenzt (siehe src/modules/nitrado/gameServerScope.ts,
+// MAX_GAME_SERVERS_PER_GUILD): Slot 5 wird von jedem servergescopten Verbraucher
+// als LEGACY_SLOT fail-closed abgelehnt. Bereits bestehende Slot-5-Verbindungen
+// bleiben unten in der Liste sichtbar und verwaltbar (Token/Alias/Loeschen), nur
+// das Anlegen eines neuen Slots 5 wird hier verhindert.
+const MAX_NEW_SLOT = 4;
+
 function statusColor(status: Slot['status']): string {
   if (status === 'ACTIVE') return 'text-ok';
   if (status === 'EXPIRED') return 'text-warn';
@@ -210,10 +217,10 @@ function NitradoTab({ guildId, canManage, slots }: { guildId: string; canManage:
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.length}/5)</h2>
+          <h2 className="text-lg font-semibold text-white">Nitrado-Slots ({slots.filter(row => row.slot <= MAX_NEW_SLOT).length}/{MAX_NEW_SLOT})</h2>
           <p className="text-xs text-muted mt-1">Page 1: Verbindung, Service-ID, Token und Gameserver-Slots. Killfeed & ADM liegen direkt im jeweiligen Slot unter Page 2.</p>
         </div>
-        {slots.length < 5 && (
+        {slots.filter(row => row.slot <= MAX_NEW_SLOT).length < MAX_NEW_SLOT && (
           <Button onClick={() => setShowAdd(value => !value)} size="sm">
             <Plus className="h-4 w-4 mr-1" /> {showAdd ? 'Abbrechen' : 'Slot hinzufuegen'}
           </Button>
@@ -392,7 +399,7 @@ function UpdateTokenForm({ guildId, slot, onDone }: { guildId: string; slot: num
 }
 
 function AddSlotForm({ guildId, usedSlots, onDone }: { guildId: string; usedSlots: number[]; onDone: () => void }) {
-  const free = [1, 2, 3, 4, 5].filter(n => !usedSlots.includes(n));
+  const free = [1, 2, 3, 4].filter(n => !usedSlots.includes(n));
   const [slot, setSlot] = useState<number>(free[0] ?? 1);
   const [alias, setAlias] = useState('');
   const [token, setToken] = useState('');

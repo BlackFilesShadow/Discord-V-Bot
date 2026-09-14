@@ -23,6 +23,7 @@ jest.mock('../../src/modules/nitrado/repository', () => ({
   updateServiceId: jest.fn(),
   NitradoSlotVersionConflictError: class NitradoSlotVersionConflictError extends Error {},
   NitradoConnectionBusyError: class NitradoConnectionBusyError extends Error {},
+  NitradoAliasConflictError: class NitradoAliasConflictError extends Error {},
 }));
 
 const validateTokenDetailed = jest.fn();
@@ -84,11 +85,33 @@ describe('Nitrado dashboard create CRUD contract', () => {
       .send({ slot: 1.5, alias: 'Chernarus', token: 'a'.repeat(40) });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('slot 1..5');
+    expect(res.body.error).toBe('slot 1..4');
     expect(getSlot).not.toHaveBeenCalled();
     expect(validateTokenDetailed).not.toHaveBeenCalled();
     expect(createSlot).not.toHaveBeenCalled();
     expect(logAuditDb).not.toHaveBeenCalled();
+  });
+
+  it('rejects creating slot 5: MAX_GAME_SERVERS_PER_GUILD caps new slots at 4, slot 5 is legacy-only and every scoped consumer rejects it', async () => {
+    const res = await request(app())
+      .post(`/api/v2/guilds/${GUILD}/nitrado`)
+      .send({ slot: 5, alias: 'Chernarus', token: 'a'.repeat(40) });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('slot 1..4');
+    expect(getSlot).not.toHaveBeenCalled();
+    expect(validateTokenDetailed).not.toHaveBeenCalled();
+    expect(createSlot).not.toHaveBeenCalled();
+    expect(logAuditDb).not.toHaveBeenCalled();
+  });
+
+  it('still allows creating slot 4 (the highest active slot)', async () => {
+    const res = await request(app())
+      .post(`/api/v2/guilds/${GUILD}/nitrado`)
+      .send({ slot: 4, alias: 'Chernarus', token: 'a'.repeat(40) });
+
+    expect(res.status).toBe(201);
+    expect(createSlot).toHaveBeenCalledWith(expect.objectContaining({ slot: 4 }));
   });
 
   it('rejects a whitespace-only alias before token validation or persistence', async () => {
