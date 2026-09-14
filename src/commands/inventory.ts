@@ -39,7 +39,7 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
   'admin-monitor', 'admin-stats', 'admin-validate', 'ai-trigger',
   'admin-config', 'admin-export', 'admin-security', 'xp-config',
   'dev-admin', 'dev-db', 'dev-eval', 'dev-login', 'dev-reload',
-  'ping', 'status',
+  'ping', 'status', 'link-panel',
 ]);
 
 /**
@@ -55,7 +55,7 @@ export const SPEC_KEEP_COMMANDS = new Set<string>([
   'search', 'ticket', 'balance', 'bank',
   'blackjack', 'coinflip', 'dice', 'slot', 'roulette', 'highlow', 'baccarat', 'wheel',
   'deposit', 'faction', 'factions', 'fraktionen', 'join', 'leave',
-  'link', 'unlink', 'links', 'link-info', 'link-panel',
+  'link', 'unlink', 'links', 'link-info',
   'force-link', 'force-unlink', 'confirm-action',
   'pay', 'admin-pay', 'add-money', 'remove-money',
   'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',

@@ -5,7 +5,6 @@ import {
   unlinkCommand,
   linksCommand,
   linkInfoCommand,
-  linkPanelCommand,
 } from '../../src/commands/dashboard/linking';
 import { forceLinkCommand, forceUnlinkCommand } from '../../src/commands/dashboard/privileged';
 
@@ -32,15 +31,57 @@ describe('Konsolen-taugliche Account-Verknuepfung', () => {
     expect(option(linkCommand, 'platform')).toBeUndefined();
   });
 
-  it('stellt Unlink, Liste, GUID-Lookup und persistenten Kanal als eigene Funktionen bereit', () => {
+  it('stellt Unlink, Liste und GUID-Lookup als eigene Funktionen bereit', () => {
     expect(unlinkCommand.data.name).toBe('unlink');
     expect(linksCommand.data.name).toBe('links');
     expect(linkInfoCommand.data.name).toBe('link-info');
-    expect(linkPanelCommand.data.name).toBe('link-panel');
-    expect(String(linkPanelCommand.data.description)).toContain('persistenten');
     expect(option(linkInfoCommand, 'user')).toBeDefined();
     expect(option(linkInfoCommand, 'id')).toBeDefined();
-    expect(option(linkPanelCommand, 'channel')).toEqual(expect.objectContaining({ required: true }));
+  });
+
+  it('bietet den persistenten Verknuepfungs-Kanal ausschliesslich ueber das Dashboard an (kein /link-panel mehr)', () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../src/commands/dashboard/linking.ts'),
+      'utf8',
+    );
+    expect(source).not.toContain("linkPanelCommand");
+    expect(source).not.toContain(".setName('link-panel')");
+    expect(source).not.toContain('publishLinkingInfoEmbed');
+
+    const inventorySource = fs.readFileSync(
+      path.resolve(__dirname, '../../src/commands/inventory.ts'),
+      'utf8',
+    );
+    expect(inventorySource).toContain("MOVED_TO_DASHBOARD = new Set<string>([");
+    expect(inventorySource.slice(
+      inventorySource.indexOf('MOVED_TO_DASHBOARD = new Set<string>(['),
+      inventorySource.indexOf('SPEC_KEEP_COMMANDS'),
+    )).toContain("'link-panel'");
+    expect(inventorySource.slice(
+      inventorySource.indexOf('SPEC_KEEP_COMMANDS = new Set<string>(['),
+    )).not.toContain("'link-panel'");
+  });
+
+  it('bietet den Verknuepfungs-Kanal als eigene Karte im Whitelist-Tab an, mit strikt allen Text-/Ankuendigungskanaelen', () => {
+    const ui = fs.readFileSync(
+      path.resolve(__dirname, '../../dashboard-ui/src/pages/ServerSlot.tsx'),
+      'utf8',
+    );
+
+    expect(ui).toContain('function LinkPanelChannelCard(');
+    expect(ui).toContain('<WhitelistChannelsCard guildId={guildId} slot={slot} />');
+    expect(ui).toContain('<LinkPanelChannelCard guildId={guildId} slot={slot} />');
+    expect(ui.indexOf('<WhitelistChannelsCard guildId={guildId} slot={slot} />'))
+      .toBeLessThan(ui.indexOf('<LinkPanelChannelCard guildId={guildId} slot={slot} />'));
+
+    const cardSource = ui.slice(ui.indexOf('function LinkPanelChannelCard('), ui.indexOf('function ChannelPicker('));
+    expect(cardSource).toContain('/api/v2/guilds/${guildId}/economy-links/channel${qs}');
+    expect(cardSource).toContain('/api/v2/guilds/${guildId}/economy-links/channel/repost${qs}');
+    // Strikt alle Text-/Ankuendigungskanaele: dieselbe ungefilterte /channels-Quelle
+    // wie die Whitelist-Kanal-Integration, NICHT der bot-berechtigungsgefilterte
+    // dashboardChannels() aus economyLink.ts.
+    expect(cardSource).toContain('/api/v2/guilds/${guildId}/channels');
+    expect(cardSource).toContain("filter(c => c.type === 0 || c.type === 5)");
   });
 
   it('/link-info zeigt ohne Suchwert den eigenen Link und schuetzt Fremdabfragen weiter mit economy.view', () => {
@@ -60,11 +101,7 @@ describe('Konsolen-taugliche Account-Verknuepfung', () => {
     expect(source).toContain("? `Du bist auf **${alias}** noch nicht mit einer DayZ-Identität verknüpft. Nutze \\`/link\\`, um deine Verbindung einzurichten.`");
   });
 
-  it('persistiert den Link-Kanal und bietet dieselbe Konfiguration ueber die Dashboard-API an', () => {
-    const commandSource = fs.readFileSync(
-      path.resolve(__dirname, '../../src/commands/dashboard/linking.ts'),
-      'utf8',
-    );
+  it('persistiert den Link-Kanal ausschliesslich ueber die Dashboard-API', () => {
     const routeSource = fs.readFileSync(
       path.resolve(__dirname, '../../src/dashboard/routes/v2/economyLink.ts'),
       'utf8',
@@ -74,7 +111,7 @@ describe('Konsolen-taugliche Account-Verknuepfung', () => {
       'utf8',
     );
 
-    expect(commandSource).toContain('publishLinkingInfoEmbed');
+    expect(routeSource).toContain('publishLinkingInfoEmbed');
     expect(routeSource).toContain("economyLinkRouter.get('/channel'");
     expect(routeSource).toContain("economyLinkRouter.patch('/channel'");
     expect(routeSource).toContain("economyLinkRouter.post('/channel/repost'");

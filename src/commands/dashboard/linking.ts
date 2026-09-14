@@ -1,5 +1,4 @@
 import {
-  ChannelType,
   MessageFlags,
   SlashCommandBuilder,
   type ChatInputCommandInteraction,
@@ -25,7 +24,6 @@ import {
   applySuccessfulLinkEconomyEffects,
   deactivateLinkRewardState,
 } from '../../modules/linking/linkRewards';
-import { publishLinkingInfoEmbed } from '../../modules/linking/linkingChannel';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 import { Colors, vEmbed } from '../../utils/embedDesign';
 import { logAudit } from '../../utils/logger';
@@ -322,40 +320,7 @@ export const linkInfoCommand: Command = {
   }),
 };
 
-export const linkPanelCommand: Command = {
-  data: slotOption(new SlashCommandBuilder()
-    .setName('link-panel')
-    .setDescription('Berechtigt: Setzt den persistenten Verknüpfungs-Kanal und veröffentlicht die Anleitung.')
-    .addChannelOption(option => option
-      .setName('channel')
-      .setDescription('Kanal für die Verknüpfungs-Anleitung')
-      .setRequired(true)
-      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)) as SlashCommandBuilder),
-  execute: withGuildScope({ requirePerm: 'economy.manage', acceptSlotOption: true }, async (interaction, scope) => {
-    const selectedChannel = interaction.options.getChannel('channel', true);
-    const result = await publishLinkingInfoEmbed({
-      client: interaction.client,
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId!,
-      channelId: selectedChannel.id,
-    });
-    if (!result.ok) {
-      await statusReply(interaction, 'ERROR', 'Verknüpfungs-Kanal konnte nicht gesetzt werden', result.reason);
-      return;
-    }
-
-    logAudit('LINK_PANEL_CONFIGURED', 'LINKING', {
-      guildId: scope.guildId,
-      nitradoConnId: scope.nitradoConnId,
-      actor: scope.actorDiscordId,
-      channelId: result.channelId,
-      messageId: result.messageId,
-    });
-    await statusReply(
-      interaction,
-      'SUCCESS',
-      'Verknüpfungs-Kanal gespeichert',
-      `Die Anleitung ist in <#${result.channelId}> hinterlegt. Bei erneutem Setzen wird die bestehende Info-Nachricht aktualisiert; wurde sie gelöscht, erstellt V-Bot automatisch eine neue.`,
-    );
-  }),
-};
+// /link-panel wurde entfernt (siehe MOVED_TO_DASHBOARD in inventory.ts): dieselbe
+// Funktion -- Verknuepfungs-Kanal setzen + Anleitung veroeffentlichen -- steht
+// jetzt ausschliesslich im Dashboard unter
+// /api/v2/guilds/:guildId/economy-links/channel (economyLink.ts) zur Verfuegung.
