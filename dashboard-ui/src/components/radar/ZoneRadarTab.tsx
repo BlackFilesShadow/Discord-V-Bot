@@ -8,8 +8,25 @@ import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ZoneEditor, type EditableRadarZone, type RadarFunctionDefinition } from './ZoneEditor';
+import type { RadarLiveEvent } from './DayzRadarMap';
 
 const DayzRadarMap = lazy(async () => ({ default: (await import('./DayzRadarMap')).DayzRadarMap }));
+
+interface RadarSocketEventPayload {
+  guildId: string;
+  nitradoConnId: string;
+  zoneId: string;
+  radarEventId: string;
+  functionKey: string;
+  actorName: string | null;
+  x: number;
+  y: number;
+  altitude: number | null;
+  admOccurredAt: string | null;
+}
+
+const MAX_LIVE_EVENTS = 40;
+const LIVE_EVENT_TTL_MS = 3 * 60_000;
 
 type RadarMap = 'CHERNARUS' | 'LIVONIA' | 'SAKHAL';
 
@@ -49,6 +66,7 @@ const MAP_LABELS: Record<RadarMap, string> = {
 export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; slot: string; canManage: boolean }) {
   const queryClient = useQueryClient();
   const [editorId, setEditorId] = useState<string | 'new' | null>(null);
+  const [liveEvents, setLiveEvents] = useState<RadarLiveEvent[]>([]);
   const query = `?slot=${encodeURIComponent(slot)}`;
   const config = useQuery({
     queryKey: ['radar-config', guildId, slot],
@@ -62,17 +80,42 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
     const socket = getGuildSocket();
     const join = () => joinRadarRoom(guildId, nitradoConnId);
     const refresh = () => { void queryClient.invalidateQueries({ queryKey: ['radar-zones', guildId, slot] }); };
+    const recordLiveEvent = (payload: RadarSocketEventPayload) => {
+      setLiveEvents(previous => [
+        {
+          id: payload.radarEventId,
+          x: payload.x,
+          y: payload.y,
+          functionKey: payload.functionKey,
+          punitive: payload.functionKey.startsWith('BAN_'),
+          actorName: payload.actorName,
+          receivedAt: Date.now(),
+        },
+        ...previous.filter(event => event.id !== payload.radarEventId),
+      ].slice(0, MAX_LIVE_EVENTS));
+    };
+    const handleLiveEvent = (payload: RadarSocketEventPayload) => {
+      refresh();
+      recordLiveEvent(payload);
+    };
     join();
     socket.on('connect', join);
-    socket.on('radar.player.detected', refresh);
-    socket.on('radar.zone.event', refresh);
+    socket.on('radar.player.detected', handleLiveEvent);
+    socket.on('radar.zone.event', handleLiveEvent);
     return () => {
       socket.off('connect', join);
-      socket.off('radar.player.detected', refresh);
-      socket.off('radar.zone.event', refresh);
+      socket.off('radar.player.detected', handleLiveEvent);
+      socket.off('radar.zone.event', handleLiveEvent);
       socket.emit('leave.radar', { guildId, nitradoConnId });
     };
   }, [guildId, slot, config.data?.nitradoConnId, queryClient]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLiveEvents(previous => previous.filter(event => Date.now() - event.receivedAt < LIVE_EVENT_TTL_MS));
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const functions = useQuery({
     queryKey: ['radar-functions', guildId],
@@ -171,9 +214,29 @@ export function ZoneRadarTab({ guildId, slot, canManage }: { guildId: string; sl
               zones={(zones.data?.zones ?? [])
                 .filter(zone => zone.map === activeMap)
                 .map(zone => ({ id: zone.id, name: zone.name, isActive: zone.isActive, geometry: zone.geometry }))}
+              liveEvents={liveEvents}
             />
           </Suspense>
         </div>
+        {liveEvents.length > 0 && (
+          <div className="mt-4 space-y-1.5 border-t border-border/60 pt-4" aria-label="Live-Radar-Ereignisse">
+            <p className="text-xs font-medium text-muted">Live-Ereignisse</p>
+            <ul className="space-y-1 text-xs text-muted">
+              {liveEvents.slice(0, 8).map(event => {
+                const definition = functionByKey.get(event.functionKey);
+                return (
+                  <li key={event.id} className="flex items-center justify-between gap-3 rounded border border-border/50 bg-bg-elev/30 px-2.5 py-1.5">
+                    <span className={event.punitive ? 'text-danger' : 'text-accent'}>
+                      {definition?.label ?? event.functionKey}
+                    </span>
+                    <span className="truncate text-white">{event.actorName ?? '—'}</span>
+                    <span>{new Date(event.receivedAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </Card>
 
       {editing && canManage && <Card className="p-5 sm:p-6">
