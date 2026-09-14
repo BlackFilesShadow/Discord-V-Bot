@@ -24,6 +24,7 @@ const updateServiceIdMock = jest.fn(async (..._a: unknown[]) => ({ slot: 1, alia
 const createSlotMock = jest.fn(async (..._a: unknown[]) => ({ id: CONN_ID, slot: 1, alias: 'A', alias5: 'ABCDE', status: 'ACTIVE' }));
 const mockVersionConflictError = class NitradoSlotVersionConflictError extends Error {};
 const mockBusyError = class NitradoConnectionBusyError extends Error {};
+const mockAliasConflictError = class NitradoAliasConflictError extends Error {};
 
 jest.mock('../../src/modules/nitrado/repository', () => ({
   __esModule: true,
@@ -37,6 +38,7 @@ jest.mock('../../src/modules/nitrado/repository', () => ({
   updateServiceId: (...a: unknown[]) => updateServiceIdMock(...a),
   NitradoSlotVersionConflictError: mockVersionConflictError,
   NitradoConnectionBusyError: mockBusyError,
+  NitradoAliasConflictError: mockAliasConflictError,
 }));
 
 const validateTokenMock = jest.fn();

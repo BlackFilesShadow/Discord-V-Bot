@@ -44,6 +44,20 @@ export class NitradoConnectionBusyError extends Error {
   }
 }
 
+export class NitradoAliasConflictError extends Error {
+  constructor() {
+    super('Dieser Alias wird bereits von einem anderen Slot in diesem Server verwendet.');
+    this.name = 'NitradoAliasConflictError';
+  }
+}
+
+// Kontrollzeichen (inkl. Zeilenumbruch/Tab) im Alias wuerden Discord-Autocomplete-
+// Eintraege, Embed-Felder und Dashboard-Listen sichtbar verunstalten.
+const CONTROL_CHARS_RE = /[\x00-\x1F\x7F]/;
+function assertNoControlChars(alias: string): void {
+  if (CONTROL_CHARS_RE.test(alias)) throw new Error('Alias darf keine Steuerzeichen/Zeilenumbrueche enthalten');
+}
+
 async function withConfigMutationLock<T>(
   nitradoConnId: NitradoConnId,
   work: () => Promise<T>,
@@ -140,6 +154,12 @@ export async function createSlot(args: {
 }): Promise<NitradoConnectionRow> {
   if (args.slot < 1 || args.slot > 5) throw new Error('Slot muss 1..5 sein');
   if (!args.alias || args.alias.length < 1 || args.alias.length > 40) throw new Error('Alias 1..40 Zeichen');
+  assertNoControlChars(args.alias);
+  const duplicateAlias = await prisma.nitradoConnection.findFirst({
+    where: { guildId: args.guildId, alias: args.alias },
+    select: { id: true },
+  });
+  if (duplicateAlias) throw new NitradoAliasConflictError();
   const encryptedToken = encrypt(args.rawToken, config.security.encryptionKey);
   const alias5 = await uniqueAlias5();
   const row = await prisma.$transaction(async tx => {
@@ -441,20 +461,67 @@ export async function updateServiceId(
   });
 }
 
+/**
+ * Benennt einen existierenden Slot um.
+ *
+ * `expectedId + expectedUpdatedAt` binden den Write an exakt den zuvor gelesenen
+ * Slot-Snapshot, damit ein Delete+Recreate desselben Slot-Indexes zwischen Lesen
+ * und Schreiben nicht unbemerkt den falschen (neuen) Datensatz umbenennt — analog
+ * zu updateToken/updateServiceId. Der Connection-Lock serialisiert zusaetzlich
+ * gegen eine gleichzeitige Umbenennung desselben Slots.
+ *
+ * Die Eindeutigkeitspruefung ist Best-Effort (kein DB-Constraint auf
+ * guildId+alias): ein enges Zeitfenster, in dem zwei verschiedene Slots
+ * gleichzeitig auf denselben Alias umbenannt werden, bleibt theoretisch offen.
+ */
 export async function updateAlias(
   guildId: GuildId,
   slot: number,
   alias: string,
+  options: { expectedId?: NitradoConnId; expectedUpdatedAt?: Date } = {},
 ): Promise<NitradoConnectionRow | null> {
   const trimmed = alias.trim();
   if (trimmed.length < 1 || trimmed.length > 40) throw new Error('Alias 1..40 Zeichen');
-  const updated = await prisma.nitradoConnection.updateMany({
-    where: { guildId, slot },
-    data: { alias: trimmed },
-  });
-  if (updated.count === 0) return null;
-  const row = await prisma.nitradoConnection.findUnique({
+  assertNoControlChars(trimmed);
+
+  const current = await prisma.nitradoConnection.findUnique({
     where: { guildId_slot: { guildId, slot } },
+    select: { id: true },
   });
-  return row ? rowToConn(row) : null;
+  if (!current) return null;
+  if (options.expectedId && current.id !== options.expectedId) {
+    throw new NitradoSlotVersionConflictError();
+  }
+  const targetId = options.expectedId ?? asNitradoConnId(current.id);
+
+  return withConfigMutationLock(targetId, async () => {
+    const exactWhere = {
+      guildId,
+      slot,
+      id: targetId,
+      ...(options.expectedUpdatedAt ? { updatedAt: options.expectedUpdatedAt } : {}),
+    };
+    const before = await prisma.nitradoConnection.findFirst({ where: exactWhere, select: { id: true } });
+    if (!before) {
+      if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+      return null;
+    }
+
+    const duplicateAlias = await prisma.nitradoConnection.findFirst({
+      where: { guildId, alias: trimmed, id: { not: targetId } },
+      select: { id: true },
+    });
+    if (duplicateAlias) throw new NitradoAliasConflictError();
+
+    const updated = await prisma.nitradoConnection.updateMany({
+      where: exactWhere,
+      data: { alias: trimmed },
+    });
+    if (updated.count === 0) {
+      if (options.expectedId || options.expectedUpdatedAt) throw new NitradoSlotVersionConflictError();
+      return null;
+    }
+    const row = await prisma.nitradoConnection.findFirst({ where: { id: targetId, guildId, slot } });
+    return row ? rowToConn(row) : null;
+  });
 }
