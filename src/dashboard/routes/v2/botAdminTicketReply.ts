@@ -58,6 +58,20 @@ function auditTicketAction(req: Request, action: string, ticketId: string, detai
   });
 }
 
+/**
+ * AuditLog.targetId refers to the internal User primary key, while owner
+ * tickets identify their recipient by Discord snowflake. Preserve the latter
+ * as audit metadata and only persist a resolved internal key in targetId.
+ */
+async function resolveAuditTargetUserId(discordId: string | null | undefined): Promise<string | null> {
+  if (!discordId) return null;
+  const user = await prisma.user.findUnique({
+    where: { discordId },
+    select: { id: true },
+  });
+  return user?.id ?? null;
+}
+
 function requireDiscordClient(res: Response) {
   const client = tryGetDashboardClient();
   if (!client) res.status(503).json({ error: 'Discord-Client nicht verfügbar.' });
@@ -291,12 +305,14 @@ botAdminTicketReplyRouter.post(
 
     if (!result.ok) {
       if (result.recorded) {
+        const targetUserId = await resolveAuditTargetUserId(result.userDiscordId);
         logAuditDb('BOTADMIN_TICKET_REPLY_DELIVERY_FAILED', 'TICKET', {
           actorUserId: req.auth!.userId,
-          targetUserId: result.userDiscordId ?? null,
+          targetUserId,
           details: {
             ticketId: String(req.params.id),
             ticketNumber: result.ticketNumber ?? null,
+            targetDiscordId: result.userDiscordId ?? null,
             code: result.code,
             recorded: true,
             delivered: false,
@@ -323,12 +339,14 @@ botAdminTicketReplyRouter.post(
       return;
     }
 
+    const targetUserId = await resolveAuditTargetUserId(result.userDiscordId);
     logAuditDb('BOTADMIN_TICKET_REPLY', 'TICKET', {
       actorUserId: req.auth!.userId,
-      targetUserId: result.userDiscordId,
+      targetUserId,
       details: {
         ticketId: String(req.params.id),
         ticketNumber: result.ticketNumber,
+        targetDiscordId: result.userDiscordId,
         recorded: true,
         delivered: true,
         attachmentCount: files.length,
