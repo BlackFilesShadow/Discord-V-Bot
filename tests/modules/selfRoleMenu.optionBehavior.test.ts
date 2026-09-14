@@ -138,4 +138,26 @@ describe('SelfRole pro Option', () => {
     const dm = send.mock.calls[0][0] as { embeds?: unknown[] };
     expect(dm.embeds).toHaveLength(1);
   });
+
+  it('entfernt verwaiste Dropdown-Komponenten, wenn das Select-Menue archiviert wurde', async () => {
+    findUnique.mockResolvedValue({ ...menuRow('SELECT'), archived: true });
+    const { guild, member } = makeGuildMember(false);
+    const deferUpdate = jest.fn().mockResolvedValue({});
+    const editReply = jest.fn().mockResolvedValue({});
+    const followUp = jest.fn().mockResolvedValue({});
+    const reply = jest.fn().mockResolvedValue({});
+    const editMessage = jest.fn().mockResolvedValue({});
+    const message = { id: 'msg1', channelId: '222222222222222222', components: [{ type: 1 }], edit: editMessage };
+
+    await handleSelfRoleSelect({
+      customId: 'selfrole_sel_m1', values: ['o1'], guild, member, message,
+      deferUpdate, editReply, followUp, reply,
+    } as never);
+
+    expect(reply).toHaveBeenCalledTimes(1);
+    const arg = reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }> };
+    expect(arg.embeds[0].data.description).toContain('Menü ist inaktiv oder nicht gefunden.');
+    expect(editMessage).toHaveBeenCalledWith({ components: [] });
+    expect(deferUpdate).not.toHaveBeenCalled();
+  });
 });

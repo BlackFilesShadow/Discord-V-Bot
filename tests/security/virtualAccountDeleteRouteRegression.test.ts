@@ -58,4 +58,13 @@ describe('Virtual account delete route regression', () => {
     expect(ui).toContain('if (!deleteArmed)');
     expect(ui).toContain('remove.mutate(account.id)');
   });
+
+  it('never reports the already-committed deletion as failed just because post-commit Discord retirement errors', () => {
+    // Die DB-Loeschung ist zu diesem Zeitpunkt bereits committet; ein Fehler bei
+    // retireVirtualAccountProjection darf NICHT in den aeusseren try/catch
+    // durchschlagen (das wuerde 400 "Loeschung fehlgeschlagen" liefern, obwohl
+    // das Konto schon weg ist -- ein Retry bekaeme dann nur noch 404).
+    expect(route).toContain('await retireVirtualAccountProjection(client, scope.guildId, connId, accountId).catch(error => {');
+    expect(route).not.toMatch(/if \(client\) await retireVirtualAccountProjection\(client, scope\.guildId, connId, accountId\);/);
+  });
 });

@@ -469,6 +469,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
     <div className="grid gap-6 lg:grid-cols-2 items-start">
       <div className="space-y-6">
         <WhitelistChannelsCard guildId={guildId} slot={slot} />
+        <LinkPanelChannelCard guildId={guildId} slot={slot} />
       </div>
 
       <div className="space-y-6">
@@ -714,6 +715,97 @@ function WhitelistChannelsCard({ guildId, slot }: { guildId: string; slot: strin
           </Button>
           <Button variant="ghost" disabled={repost.isPending || channelControlsDisabled || !draft.infoChannelId} onClick={() => { setMsg(null); repost.mutate(); }}>
             Info-Embed neu posten
+          </Button>
+        </div>
+        {msg && <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>}
+      </div>
+    </Card>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Verknuepfungs-Kanal (Discord <-> DayZ) -- ehemals /link-panel; dieselbe
+// Funktion (publishLinkingInfoEmbed ueber economyLinkRouter) jetzt im Dashboard.
+// ----------------------------------------------------------------------------
+
+interface LinkPanelChannelState {
+  channelId: string | null;
+  infoMessageId: string | null;
+}
+
+function LinkPanelChannelCard({ guildId, slot }: { guildId: string; slot: string }) {
+  const qc = useQueryClient();
+  const qs = `?slot=${slot}`;
+
+  const channels = useQuery({
+    queryKey: ['guild-channels', guildId],
+    queryFn: () => api.get<{ channels: ChannelOption[] }>(`/api/v2/guilds/${guildId}/channels`),
+    retry: false,
+  });
+  const cfg = useQuery({
+    queryKey: ['link-panel-channel', guildId, slot],
+    queryFn: () => api.get<LinkPanelChannelState>(`/api/v2/guilds/${guildId}/economy-links/channel${qs}`),
+    retry: false,
+  });
+
+  const [value, setValue] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (cfg.data && !dirty) setValue(cfg.data.channelId);
+  }, [cfg.data, dirty]);
+
+  const save = useMutation({
+    mutationFn: (channelId: string) =>
+      api.patch<LinkPanelChannelState & { ok: boolean }>(`/api/v2/guilds/${guildId}/economy-links/channel${qs}`, { channelId }),
+    onSuccess: res => {
+      setValue(res.channelId);
+      setDirty(false);
+      setMsg({ ok: true, text: 'Gespeichert. Die Anleitung wurde im gewaehlten Kanal veroeffentlicht.' });
+      void qc.invalidateQueries({ queryKey: ['link-panel-channel', guildId, slot] });
+    },
+    onError: (e: Error) => setMsg({ ok: false, text: `Fehler: ${e.message}` }),
+  });
+
+  const repost = useMutation({
+    mutationFn: () => api.post<{ ok: boolean }>(`/api/v2/guilds/${guildId}/economy-links/channel/repost${qs}`, {}),
+    onSuccess: () => {
+      setMsg({ ok: true, text: 'Anleitung neu gepostet.' });
+      void qc.invalidateQueries({ queryKey: ['link-panel-channel', guildId, slot] });
+    },
+    onError: (e: Error) => setMsg({ ok: false, text: `Fehler: ${e.message}` }),
+  });
+
+  const channelsForbidden = channels.isError;
+  const controlsDisabled = channelsForbidden || cfg.isFetching || cfg.isError;
+  // Strikt alle Text-/Ankuendigungs-Kanaele der Guild, ungefiltert nach Bot-
+  // Berechtigung -- dieselbe Quelle/derselbe Filter wie die Whitelist-
+  // Kanal-Integration oben, damit hier kein Kanal aus Sicht der Administration
+  // "fehlt".
+  const opts = (channels.data?.channels ?? []).filter(c => c.type === 0 || c.type === 5);
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Verknuepfungs-Kanal (Discord ↔ DayZ)</CardTitle></CardHeader>
+      {channelsForbidden && <p className="text-xs text-warn mb-3">Kanal-Liste fuer die Verknuepfung nicht verfuegbar (nur Owner kann Kanaele waehlen).</p>}
+      {cfg.isLoading && <p className="text-xs text-muted mb-3">Verknuepfungs-Kanal-Konfiguration wird geladen…</p>}
+      {cfg.isError && <p className="text-xs text-danger mb-3">Verknuepfungs-Kanal-Konfiguration konnte nicht geladen werden.</p>}
+      <div className="space-y-4">
+        <ChannelPicker
+          label="Verknuepfungs-Kanal (1× Anleitung als Embed)"
+          help="Sobald ein Kanal gewaehlt wird, postet der Bot dort automatisch genau ein Embed mit der /link-Anleitung. Wechselst du den Kanal, wird das Embed neu gepostet."
+          value={value}
+          onChange={v => { setDirty(true); setValue(v); }}
+          options={opts}
+          forbidden={controlsDisabled}
+        />
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={!value || save.isPending || controlsDisabled} onClick={() => { setMsg(null); save.mutate(value!); }}>
+            {save.isPending ? 'Wird uebernommen…' : 'Übernehmen'}
+          </Button>
+          <Button variant="ghost" disabled={repost.isPending || controlsDisabled || !cfg.data?.channelId} onClick={() => { setMsg(null); repost.mutate(); }}>
+            Anleitung neu posten
           </Button>
         </div>
         {msg && <p className={`text-xs ${msg.ok ? 'text-ok' : 'text-danger'}`}>{msg.text}</p>}

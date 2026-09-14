@@ -140,4 +140,16 @@ describe('virtuelle Economy-Konten — Production-Invarianten', () => {
     expect(permissionMigration).toContain('"previousViewChannel" SMALLINT');
     expect(permissionMigration).toContain('"previousEveryoneView" SMALLINT');
   });
+
+  it('validiert Kontoverwalter nur wenn welche gesendet wurden -- ein leeres managers[] darf keinen Bot-Ready-Check ausloesen', () => {
+    // Die UI sendet bei JEDEM Speichern eines Kontos das volle managers[]
+    // (auch wenn leer, s. VirtualAccountsControlPanel.tsx `managers: draft.managers`).
+    // Ohne den fruehen Return wuerde jede Config-Aenderung an einem Konto ohne
+    // Verwalter mit "Bot nicht bereit"/"Bot nicht in Guild" fehlschlagen, sobald
+    // der Discord-Client/Guild-Cache nicht warm ist -- auch fuer Aenderungen,
+    // die gar keine Verwalter betreffen (Name, Waehrung, Zinssatz, ...).
+    for (const source of [control, controlSafety]) {
+      expect(source).toMatch(/const ids = \[\.\.\.new Set\(raw\.map\(value => String\(value\)\.trim\(\)\)\)\];\s*\n\s*if \(ids\.length === 0\) return \[\];/);
+    }
+  });
 });

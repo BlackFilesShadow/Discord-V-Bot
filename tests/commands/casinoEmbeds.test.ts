@@ -4,7 +4,8 @@
  * Guarantees:
  * - all eight money commands acknowledge first and finish with a public embed;
  * - allowedMentions.parse=[] is kept on the visible result;
- * - each result exposes the round audit footer/id;
+ * - the visible description never surfaces win-chance/audit-round-id/verify
+ *   hints (players never see these; only the low-key Hash/Nonce footer remains);
  * - all commands retain optional gameserver selection;
  * - persisted result JSON keeps bigint payout JSON-safe and includes V3 audit.
  */
@@ -166,7 +167,9 @@ describe('Casino V3 command embeds', () => {
     expect(description).toContain('**Einsatz:**');
     expect(description).toContain('**Auszahlung:**');
     expect(description).toContain('**Result:**');
-    expect(description).toContain('**Audit:**');
+    expect(description).not.toContain('**Server-Chance:**');
+    expect(description).not.toContain('**Audit:**');
+    expect(description).not.toContain('/casino-verify');
     expect(description).toContain(':coin:');
     expect(json.fields ?? []).toHaveLength(0);
     expect(json.timestamp).toBeUndefined();

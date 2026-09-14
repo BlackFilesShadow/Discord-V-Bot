@@ -196,10 +196,8 @@ function buildRoundEmbed(args: {
   payout: bigint;
   coin: string;
   details: { name: string; value: string; inline?: boolean }[];
-  roundId: string;
   serverSeedHash: string;
   nonce: bigint;
-  winChancePct: number;
 }): EmbedBuilder {
   const def = casinoDefinition(args.type);
   const net = args.payout - args.bet;
@@ -217,8 +215,6 @@ function buildRoundEmbed(args: {
       `**Einsatz:** ${fmt(args.bet)} ${args.coin}`,
       `**Auszahlung:** ${fmt(args.payout)} ${args.coin}`,
       `**Result:** ${meta.word} · **${netStr} ${args.coin}**`,
-      `**Server-Chance:** ${args.winChancePct}%`,
-      `**Audit:** Runde \`${args.roundId}\` · mit \`/casino-verify\` nachpruefbar.`,
     ]));
 }
 
@@ -713,10 +709,8 @@ async function executeGame(i: ChatInputCommandInteraction, scope: GuildScope, ty
         payout: out.result.payout,
         coin: economyConfig.emoji,
         details: embedDetails(type, out.result),
-        roundId: out.roundId,
         serverSeedHash: seedHash(out.serverSeed),
         nonce: out.nonce,
-        winChancePct: out.config.winChancePct,
       })],
       allowedMentions: { parse: [] },
     });
