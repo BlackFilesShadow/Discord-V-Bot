@@ -12,12 +12,12 @@ import {
   updateConfiguredVirtualAccount,
 } from '../../../modules/economy/virtualAccountConfiguration';
 import {
-  ensureBankTreasury,
   ensureVirtualAccountFinance,
   listVirtualAccountManagers,
 } from '../../../modules/economy/virtualAccountFinance';
 import { deleteUnusedVirtualAccount, listHiddenVirtualAccountIds, restoreHiddenVirtualAccount } from '../../../modules/economy/virtualAccountDeletion';
 import { safePayoutVirtualAccountToUser } from '../../../modules/economy/virtualAccountMoneySafety';
+import { ensureBankTreasurySerialized } from '../../../modules/economy/virtualAccountTreasury';
 import {
   configureVirtualManagerPanelSafe,
   getVirtualManagerPanelSafe,
@@ -309,7 +309,7 @@ economyVirtualAccountControlRouter.post('/control/accounts/:accountId/sync', req
 economyVirtualAccountControlRouter.post('/control/bank-treasury', requireGuildPermission('economy.manage'), async (req, res) => {
   const { scope, connId } = scoped(req);
   try {
-    const result = await ensureBankTreasury({ guildId: scope.guildId, nitradoConnId: connId, createdByDiscordId: asUserDiscordId(scope.actorDiscordId) });
+    const result = await ensureBankTreasurySerialized({ guildId: scope.guildId, nitradoConnId: connId, createdByDiscordId: asUserDiscordId(scope.actorDiscordId) });
     res.json({ account: await serializeAccount(scope.guildId, connId, result.account.id) });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });

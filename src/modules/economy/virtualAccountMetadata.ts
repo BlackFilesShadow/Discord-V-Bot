@@ -169,6 +169,14 @@ export async function createCustomVirtualAccountWithMetadata(args: {
         accountId, String(args.guildId), String(args.nitradoConnId), description, channelId, archiveChannelId,
       );
       if (metadataChanged !== 1) throw new Error('Metadaten des virtuellen Kontos konnten nicht erstellt werden.');
+
+      // Ohne Kontoverwalter waere das Konto im rollenlosen Discord-Panel fuer
+      // niemanden sichtbar/verwaltbar. Mindestens der Ersteller wird deshalb
+      // wie beim primaeren Erstellungspfad automatisch eingetragen.
+      await raw.$executeRawUnsafe(
+        'INSERT INTO "EconomyVirtualAccountManager" ("id", "accountId", "guildId", "nitradoConnId", "userDiscordId", "addedByDiscordId", "createdAt") VALUES ($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP)',
+        randomUUID(), accountId, String(args.guildId), String(args.nitradoConnId), String(args.createdByDiscordId), String(args.createdByDiscordId),
+      );
     });
   } catch (error) {
     const candidate = typeof error === 'object' && error !== null
