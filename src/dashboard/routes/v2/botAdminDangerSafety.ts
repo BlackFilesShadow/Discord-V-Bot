@@ -1,11 +1,17 @@
 import { Router, type Request } from 'express';
 import { requireBotAdmin } from '../../middleware/auth';
+import { requireVerifiedDevMutationStepUp } from '../../middleware/devStepUp';
 import prisma from '../../../database/prisma';
 import { logAudit, logAuditDb } from '../../../utils/logger';
 import { hardDeletePackage, HardDeletePackageError } from '../../../modules/packages/hardDeletePackage';
 
 export const botAdminDangerSafetyRouter = Router();
 botAdminDangerSafetyRouter.use(requireBotAdmin);
+// Irreversibler, systemweiter Hard-Delete (DB-Zeilen + physische Dateien):
+// dieselbe kryptografische Step-Up-Pruefung (2FA/TOTP oder DEV_PASSWORD, mit
+// DB-persistiertem Brute-Force-Lockout) wie fuer DEV-Mutationen vergleichbarer
+// Tragweite, nicht nur ein client-seitiger "DELETE"-Bestaetigungsstring.
+botAdminDangerSafetyRouter.use(requireVerifiedDevMutationStepUp);
 
 function actor(req: Request): string {
   return String(req.auth?.discordId ?? req.auth?.userId ?? 'dashboard');

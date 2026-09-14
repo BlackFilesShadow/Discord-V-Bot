@@ -2,11 +2,27 @@ const twoFactorFindUnique = jest.fn();
 const decryptMock = jest.fn();
 const verifyTotpMock = jest.fn();
 const logAuditMock = jest.fn();
+const mockBotConfigStore = new Map<string, { key: string; value: unknown }>();
 
 jest.mock('../../src/database/prisma', () => ({
   __esModule: true,
   default: {
     twoFactorAuth: { findUnique: (...args: unknown[]) => twoFactorFindUnique(...args) },
+    botConfig: {
+      findUnique: async ({ where: { key } }: { where: { key: string } }) =>
+        mockBotConfigStore.get(key) ?? null,
+      upsert: async ({ where: { key }, create, update }: {
+        where: { key: string };
+        create: { value: unknown };
+        update: { value: unknown };
+      }) => {
+        const value = mockBotConfigStore.has(key) ? update.value : create.value;
+        mockBotConfigStore.set(key, { key, value });
+      },
+      deleteMany: async ({ where }: { where?: { key?: string } }) => {
+        if (where?.key) mockBotConfigStore.delete(where.key);
+      },
+    },
   },
 }));
 
@@ -35,6 +51,7 @@ function req(): Request {
 }
 
 beforeEach(() => {
+  mockBotConfigStore.clear();
   twoFactorFindUnique.mockReset();
   decryptMock.mockReset();
   verifyTotpMock.mockReset();

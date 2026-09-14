@@ -5,6 +5,7 @@ import { config } from '../../config';
 import { decrypt, verify2FAToken } from '../../utils/security';
 import { logAudit } from '../../utils/logger';
 import { validateStepUpInput, type StepUpInput } from './devSecurity';
+import { getDevFails, setDevFails, clearDevFails } from '../../utils/devAuthStore';
 
 export type DevStepUpError =
   | 'reason_missing'
@@ -20,26 +21,21 @@ export type VerifiedDevStepUpResult =
 
 const MAX_FAILURES = 5;
 const LOCK_MS = 15 * 60 * 1000;
-interface FailureState { count: number; firstAt: number; lockedUntil: number }
-const failures = new Map<string, FailureState>();
 
-function failureKey(req: Request): string {
-  return `${String(req.auth?.discordId ?? req.auth?.userId ?? 'unknown')}|${req.ip ?? 'unknown'}`;
-}
-
-function locked(key: string): boolean {
-  const entry = failures.get(key);
+async function locked(userId: string): Promise<boolean> {
+  const entry = await getDevFails(userId);
   if (!entry) return false;
-  if (entry.lockedUntil > Date.now()) return true;
-  if (Date.now() - entry.firstAt > LOCK_MS) failures.delete(key);
-  return false;
+  return entry.lockedUntil > Date.now();
 }
 
-function registerFailure(key: string): void {
-  const current = failures.get(key) ?? { count: 0, firstAt: Date.now(), lockedUntil: 0 };
+async function registerFailure(userId: string): Promise<void> {
+  const previous = await getDevFails(userId);
+  const current = (previous && previous.lockedUntil > 0 && previous.lockedUntil <= Date.now())
+    ? { count: 0, lockedUntil: 0 }
+    : (previous ?? { count: 0, lockedUntil: 0 });
   current.count += 1;
   if (current.count >= MAX_FAILURES) current.lockedUntil = Date.now() + LOCK_MS;
-  failures.set(key, current);
+  await setDevFails(userId, current);
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -54,15 +50,16 @@ function constantTimeEqual(a: string, b: string): boolean {
  * - aktive 2FA -> TOTP gegen das verschluesselt gespeicherte Secret
  * - keine aktive 2FA -> erneute Eingabe von DEV_PASSWORD
  * - Credential wird niemals geloggt oder in eine URL geschrieben
- * - 5 Fehlversuche pro Developer/IP sperren Step-Up fuer 15 Minuten
+ * - 5 Fehlversuche pro Developer sperren Step-Up fuer 15 Minuten (DB-persistiert,
+ *   ueberlebt Prozess-Neustarts und Mehrfach-Instanzen)
  */
 export async function verifyDevStepUp(req: Request, input: StepUpInput): Promise<VerifiedDevStepUpResult> {
   const shape = validateStepUpInput(input);
   if (!shape.ok) return { ok: false, error: shape.error ?? 'reauth_invalid' };
   if (!req.auth) return { ok: false, error: 'no_credential' };
 
-  const key = failureKey(req);
-  if (locked(key)) {
+  const userId = String(req.auth.discordId);
+  if (await locked(userId)) {
     logAudit('DEV_STEP_UP_RATE_LIMITED', 'SECURITY', {
       userId: req.auth.userId, discordId: req.auth.discordId, ip: req.ip,
     });
@@ -99,15 +96,16 @@ export async function verifyDevStepUp(req: Request, input: StepUpInput): Promise
   }
 
   if (!valid) {
-    registerFailure(key);
+    await registerFailure(userId);
+    const after = await getDevFails(userId);
     logAudit('DEV_STEP_UP_FAILED', 'SECURITY', {
       userId: req.auth.userId, discordId: req.auth.discordId, ip: req.ip, mode,
-      failureCount: failures.get(key)?.count ?? 1,
+      failureCount: after?.count ?? 1,
     });
     return { ok: false, error: 'reauth_invalid' };
   }
 
-  failures.delete(key);
+  await clearDevFails(userId);
   logAudit('DEV_STEP_UP_OK', 'SECURITY', {
     userId: req.auth.userId, discordId: req.auth.discordId, ip: req.ip, mode,
     reason: String(input.reason ?? '').trim(),
@@ -115,7 +113,7 @@ export async function verifyDevStepUp(req: Request, input: StepUpInput): Promise
   return { ok: true, mode };
 }
 
-function statusFor(error: DevStepUpError): number {
+export function statusFor(error: DevStepUpError): number {
   if (error === 'rate_limited') return 429;
   if (error === 'no_credential') return 503;
   if (error === 'reauth_invalid') return 403;

@@ -12,7 +12,7 @@ import {
   type VirtualAccountRawDb,
 } from './virtualAccounts';
 import { replaceVirtualAccountManagers } from './virtualAccountFinance';
-import { systemUserToVirtualAccount, systemVirtualAccountToUser } from './systemVirtualTransfers';
+import { systemVirtualAccountToUser } from './systemVirtualTransfers';
 
 const MAX_PRICE = 1_000_000_000_000_000n;
 const MAX_STOCK = 1_000_000_000;
@@ -142,12 +142,6 @@ function cleanSku(value: string): string {
   const sku = cleanText(value, MAX_TEXT.sku, 'SKU').toUpperCase();
   if (!/^[A-Z0-9][A-Z0-9._:-]*$/.test(sku)) throw new Error('SKU darf nur A-Z, 0-9, Punkt, Unterstrich, Doppelpunkt und Bindestrich enthalten.');
   return sku;
-}
-
-function operationKey(listingId: string, external: string): string {
-  const key = cleanText(external, 48, 'Idempotency-Key');
-  if (!/^[A-Za-z0-9._:-]+$/.test(key)) throw new Error('Idempotency-Key enthaelt ungueltige Zeichen.');
-  return `market:${listingId}:${key}`;
 }
 
 function validatePrice(price: bigint): void {
@@ -406,40 +400,6 @@ export async function archiveMarketListing(args: {
   return row;
 }
 
-export async function restockMarketListing(args: {
-  guildId: GuildId;
-  nitradoConnId: NitradoConnId;
-  listingId: string;
-  stock: number;
-  price?: bigint;
-  maxPerPurchase?: number;
-  actorDiscordId: UserDiscordId;
-}): Promise<MarketListingView> {
-  await assertEnabled(args.guildId, args.nitradoConnId);
-  validateStock(args.stock);
-  if (args.price !== undefined) validatePrice(args.price);
-  if (args.maxPerPurchase !== undefined) validateMaxPerPurchase(args.maxPerPurchase);
-  await prisma.$transaction(async tx => {
-    const raw = tx as unknown as VirtualAccountRawDb;
-    const locked = await raw.$queryRawUnsafe<DbListing[]>(
-      'SELECT * FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
-      args.listingId, String(args.guildId), String(args.nitradoConnId),
-    );
-    if (!locked[0] || locked[0].archivedAt) throw new Error('Listing nicht gefunden oder archiviert.');
-    await raw.$executeRawUnsafe(
-      'UPDATE "EconomyMarketListing" SET "stock"=$4, "price"=COALESCE($5,"price"), "maxPerPurchase"=COALESCE($6,"maxPerPurchase"), "active"=TRUE, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
-      args.listingId, String(args.guildId), String(args.nitradoConnId), args.stock, args.price ?? null, args.maxPerPurchase ?? null,
-    );
-  });
-  const row = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
-  if (!row) throw new Error('Listing konnte nicht aktualisiert werden.');
-  logAudit('MARKET_LISTING_RESTOCKED', 'ECONOMY', {
-    guildId: args.guildId, nitradoConnId: args.nitradoConnId, listingId: args.listingId,
-    stock: args.stock, price: args.price?.toString(), actorDiscordId: args.actorDiscordId,
-  });
-  return row;
-}
-
 const PURCHASE_SELECT = `SELECT p."id", p."idempotencyKey", p."listingId", p."guildId", p."nitradoConnId", p."vendorAccountId", p."userDiscordId", p."sourcePocket", p."quantity", p."unitPrice", p."amount", p."createdAt", COALESCE(f."status", 'LEGACY') AS "fulfillmentStatus", COALESCE(f."deliveryItems", '[]'::jsonb) AS "deliveryItems", f."fulfilledAt", f."fulfilledByDiscordId", f."fulfillmentNote", f."refundedAt", f."refundedByDiscordId", f."refundReason" FROM "EconomyMarketPurchase" p LEFT JOIN "EconomyMarketPurchaseFulfillment" f ON f."purchaseId"=p."id" AND f."guildId"=p."guildId" AND f."nitradoConnId"=p."nitradoConnId"`;
 
 function toPurchase(row: DbPurchaseBase): MarketPurchaseView {
@@ -450,11 +410,6 @@ function toPurchase(row: DbPurchaseBase): MarketPurchaseView {
   return { ...row, sourcePocket, fulfillmentStatus, deliveryItems: parseStoredItems(row.deliveryItems) };
 }
 
-async function existingPurchase(key: string): Promise<MarketPurchaseView | null> {
-  const rows = await rawDb().$queryRawUnsafe<DbPurchaseBase[]>(`${PURCHASE_SELECT} WHERE p."idempotencyKey"=$1 LIMIT 1`, key);
-  return rows[0] ? toPurchase(rows[0]) : null;
-}
-
 export async function getMarketPurchase(guildId: GuildId, nitradoConnId: NitradoConnId, purchaseId: string): Promise<MarketPurchaseView | null> {
   await assertEconomyScopeReady(guildId, nitradoConnId);
   const rows = await rawDb().$queryRawUnsafe<DbPurchaseBase[]>(
@@ -462,110 +417,6 @@ export async function getMarketPurchase(guildId: GuildId, nitradoConnId: Nitrado
     purchaseId, String(guildId), String(nitradoConnId),
   );
   return rows[0] ? toPurchase(rows[0]) : null;
-}
-
-function assertPurchaseReplay(row: MarketPurchaseView, args: {
-  listingId: string; guildId: GuildId; nitradoConnId: NitradoConnId; vendorAccountId: string;
-  userDiscordId: UserDiscordId; sourcePocket: EconomyPocket; quantity: number;
-}): void {
-  const same = row.listingId === args.listingId
-    && row.guildId === String(args.guildId)
-    && row.nitradoConnId === String(args.nitradoConnId)
-    && row.vendorAccountId === args.vendorAccountId
-    && row.userDiscordId === String(args.userDiscordId)
-    && row.sourcePocket === args.sourcePocket
-    && row.quantity === args.quantity;
-  if (!same) throw new Error('Market-Idempotency-Key wurde mit anderen Kaufdaten wiederverwendet.');
-}
-
-export async function buyMarketListing(args: {
-  guildId: GuildId;
-  nitradoConnId: NitradoConnId;
-  listingId: string;
-  userDiscordId: UserDiscordId;
-  quantity: number;
-  sourcePocket?: EconomyPocket;
-  idempotencyKey: string;
-}): Promise<{ booked: boolean; purchase: MarketPurchaseView; listing: MarketListingView }> {
-  if (!Number.isSafeInteger(args.quantity) || args.quantity < 1 || args.quantity > MAX_PER_PURCHASE) throw new Error(`Menge muss zwischen 1 und ${MAX_PER_PURCHASE} liegen.`);
-  const sourcePocket = args.sourcePocket ?? 'WALLET';
-  if (sourcePocket !== 'WALLET' && sourcePocket !== 'BANK') throw new Error('Quellkonto ungueltig.');
-  const key = operationKey(args.listingId, args.idempotencyKey);
-  const replay = await existingPurchase(key);
-  if (replay) {
-    assertPurchaseReplay(replay, { ...args, sourcePocket, vendorAccountId: replay.vendorAccountId });
-    const replayListing = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
-    if (!replayListing) throw new Error('Bestaetigter Schwarzmarkt-Kauf ist inkonsistent.');
-    return { booked: false, purchase: replay, listing: replayListing };
-  }
-  await assertEnabled(args.guildId, args.nitradoConnId);
-  const initial = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
-  if (!initial || !initial.active || initial.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
-  if (args.quantity > initial.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${initial.maxPerPurchase} erlaubt.`);
-  const amount = initial.price * BigInt(args.quantity);
-
-  const transfer = await systemUserToVirtualAccount({
-    idempotencyKey: key,
-    guildId: args.guildId,
-    nitradoConnId: args.nitradoConnId,
-    virtualAccountId: initial.vendorAccountId,
-    fromUserId: args.userDiscordId,
-    sourcePocket,
-    amount,
-    expectedKind: 'MARKET_VENDOR',
-    economyTxType: 'MARKET_PURCHASE',
-    entryType: 'MARKET_PURCHASE',
-    reason: `Schwarzmarkt: ${initial.name} x${args.quantity}`,
-    sourceRef: `market-listing:${args.listingId}`,
-    actorDiscordId: args.userDiscordId,
-  }, {
-    beforeClaim: async raw => {
-      const rows = await raw.$queryRawUnsafe<DbListing[]>(
-        'SELECT * FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
-        args.listingId, String(args.guildId), String(args.nitradoConnId),
-      );
-      const listing = rows[0];
-      if (!listing || !listing.active || listing.archivedAt) throw new Error('Aktives Listing nicht gefunden.');
-      if (listing.vendorAccountId !== initial.vendorAccountId || listing.price !== initial.price) throw new Error('Listing wurde waehrend des Kaufs geaendert. Bitte erneut versuchen.');
-      if (args.quantity > listing.maxPerPurchase) throw new Error(`Pro Kauf sind maximal ${listing.maxPerPurchase} erlaubt.`);
-      if (listing.stock < args.quantity) throw new Error(`Nicht genug Bestand. Verfuegbar: ${listing.stock}.`);
-      const storedItems = await loadListingItems(raw, args.guildId, args.nitradoConnId, args.listingId);
-      const deliveryItems = storedItems.length > 0
-        ? storedItems.map(({ className, quantity }) => ({ itemText: className, quantity }))
-        : [{ itemText: listing.name, quantity: 1 }];
-      return { listing, deliveryItems };
-    },
-    mutate: async ({ raw, preflight }) => {
-      const stockUpdate = await raw.$executeRawUnsafe(
-        'UPDATE "EconomyMarketListing" SET "stock"="stock"-$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "active"=TRUE AND "archivedAt" IS NULL AND "stock">=$4',
-        args.listingId, String(args.guildId), String(args.nitradoConnId), args.quantity,
-      );
-      if (stockUpdate !== 1) throw new Error('Bestand konnte nicht atomar reserviert werden.');
-      const purchaseId = randomUUID();
-      await raw.$executeRawUnsafe(
-        'INSERT INTO "EconomyMarketPurchase" ("id","idempotencyKey","listingId","guildId","nitradoConnId","vendorAccountId","userDiscordId","sourcePocket","quantity","unitPrice","amount","createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CURRENT_TIMESTAMP)',
-        purchaseId, key, args.listingId, String(args.guildId), String(args.nitradoConnId), preflight.listing.vendorAccountId,
-        String(args.userDiscordId), sourcePocket, args.quantity, preflight.listing.price, amount,
-      );
-      const deliverySnapshot = preflight.deliveryItems.map(item => ({ itemText: item.itemText, quantity: item.quantity * args.quantity }));
-      await raw.$executeRawUnsafe(
-        'INSERT INTO "EconomyMarketPurchaseFulfillment" ("purchaseId","guildId","nitradoConnId","status","deliveryItems","createdAt","updatedAt") VALUES ($1,$2,$3,\'PENDING\',$4::jsonb,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)',
-        purchaseId, String(args.guildId), String(args.nitradoConnId), JSON.stringify(deliverySnapshot),
-      );
-      return true;
-    },
-  });
-
-  const purchase = await existingPurchase(key);
-  const listing = await getMarketListing(args.guildId, args.nitradoConnId, args.listingId);
-  if (!purchase || !listing) throw new Error('Schwarzmarkt-Kauf konnte nicht vollstaendig gelesen werden.');
-  assertPurchaseReplay(purchase, { ...args, sourcePocket, vendorAccountId: purchase.vendorAccountId });
-  logAudit('MARKET_PURCHASE', 'ECONOMY', {
-    guildId: args.guildId, nitradoConnId: args.nitradoConnId, listingId: args.listingId, purchaseId: purchase.id,
-    userDiscordId: args.userDiscordId, quantity: args.quantity, amount: amount.toString(), booked: transfer.booked,
-    fulfillmentStatus: purchase.fulfillmentStatus,
-  });
-  return { booked: transfer.booked, purchase, listing };
 }
 
 export async function markMarketPurchaseDelivered(args: {
@@ -600,75 +451,6 @@ export async function markMarketPurchaseDelivered(args: {
     actorDiscordId: args.actorDiscordId, changed,
   });
   return { changed, purchase };
-}
-
-export async function refundMarketPurchase(args: {
-  guildId: GuildId;
-  nitradoConnId: NitradoConnId;
-  purchaseId: string;
-  actorDiscordId: UserDiscordId;
-  reason: string;
-}): Promise<{ booked: boolean; purchase: MarketPurchaseView }> {
-  await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
-  const reason = cleanText(args.reason, MAX_TEXT.note, 'Refund-Grund');
-  const before = await getMarketPurchase(args.guildId, args.nitradoConnId, args.purchaseId);
-  if (!before) throw new Error('Schwarzmarkt-Kauf nicht gefunden.');
-  if (before.fulfillmentStatus === 'REFUNDED') return { booked: false, purchase: before };
-  if (before.fulfillmentStatus !== 'PENDING') throw new Error(`Nur offene Bestellungen koennen refundiert werden (Status: ${before.fulfillmentStatus}).`);
-
-  const transfer = await systemVirtualAccountToUser({
-    idempotencyKey: `market-refund:${before.id}`,
-    guildId: args.guildId,
-    nitradoConnId: args.nitradoConnId,
-    virtualAccountId: before.vendorAccountId,
-    toUserId: before.userDiscordId as UserDiscordId,
-    targetPocket: before.sourcePocket,
-    amount: before.amount,
-    expectedKind: 'MARKET_VENDOR',
-    economyTxType: 'TRANSFER',
-    entryType: 'MARKET_REFUND',
-    reason: `Schwarzmarkt-Refund: ${reason}`,
-    sourceRef: `market-purchase:${before.id}`,
-    actorDiscordId: args.actorDiscordId,
-  }, {
-    beforeLock: async raw => {
-      const listings = await raw.$queryRawUnsafe<DbListing[]>(
-        'SELECT * FROM "EconomyMarketListing" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 LIMIT 1 FOR UPDATE',
-        before.listingId, String(args.guildId), String(args.nitradoConnId),
-      );
-      if (!listings[0]) throw new Error('Listing des Kaufs nicht mehr vorhanden.');
-      const rows = await raw.$queryRawUnsafe<DbPurchaseBase[]>(
-        `${PURCHASE_SELECT.replace('LEFT JOIN', 'JOIN')} WHERE p."id"=$1 AND p."guildId"=$2 AND p."nitradoConnId"=$3 LIMIT 1 FOR UPDATE OF p, f`,
-        before.id, String(args.guildId), String(args.nitradoConnId),
-      );
-      if (!rows[0]) throw new Error('Schwarzmarkt-Kauf nicht gefunden.');
-      const locked = toPurchase(rows[0]);
-      if (locked.fulfillmentStatus !== 'PENDING') throw new Error(`Bestellung ist nicht mehr offen (Status: ${locked.fulfillmentStatus}).`);
-      if (locked.vendorAccountId !== before.vendorAccountId || locked.amount !== before.amount || locked.userDiscordId !== before.userDiscordId || locked.sourcePocket !== before.sourcePocket) {
-        throw new Error('Bestelldaten wurden unerwartet veraendert; Refund abgebrochen.');
-      }
-      return locked;
-    },
-    mutate: async ({ raw, preflight }) => {
-      await raw.$executeRawUnsafe(
-        'UPDATE "EconomyMarketListing" SET "stock"="stock"+$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3',
-        preflight.listingId, String(args.guildId), String(args.nitradoConnId), preflight.quantity,
-      );
-      const updated = await raw.$executeRawUnsafe(
-        'UPDATE "EconomyMarketPurchaseFulfillment" SET "status"=\'REFUNDED\', "refundedAt"=CURRENT_TIMESTAMP, "refundedByDiscordId"=$4, "refundReason"=$5, "updatedAt"=CURRENT_TIMESTAMP WHERE "purchaseId"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "status"=\'PENDING\'',
-        preflight.id, String(args.guildId), String(args.nitradoConnId), String(args.actorDiscordId), reason,
-      );
-      if (updated !== 1) throw new Error('Refund-Status wurde parallel veraendert.');
-      return true;
-    },
-  });
-  const purchase = await getMarketPurchase(args.guildId, args.nitradoConnId, args.purchaseId);
-  if (!purchase) throw new Error('Refundierter Kauf konnte nicht gelesen werden.');
-  logAudit('MARKET_PURCHASE_REFUNDED', 'ECONOMY', {
-    guildId: args.guildId, nitradoConnId: args.nitradoConnId, purchaseId: args.purchaseId,
-    actorDiscordId: args.actorDiscordId, amount: before.amount.toString(), sourcePocket: before.sourcePocket, booked: transfer.booked,
-  });
-  return { booked: transfer.booked, purchase };
 }
 
 export async function payoutMarketVendor(args: {

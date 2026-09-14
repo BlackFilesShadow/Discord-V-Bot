@@ -6,6 +6,8 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () => {
   const market = read('src/modules/economy/blackMarket.ts');
+  const inventoryless = read('src/modules/economy/blackMarketInventoryless.ts');
+  const inventorylessRefund = read('src/modules/economy/blackMarketInventorylessRefund.ts');
   const transfers = read('src/modules/economy/systemVirtualTransfers.ts');
   const route = read('src/dashboard/routes/v2/economyBlackMarket.ts');
   const command = read('src/commands/dashboard/blackMarket.ts');
@@ -21,24 +23,23 @@ describe('Economy-Schwarzmarkt — Fulfillment- und Vendor-Lifecycle-Gate', () =
     expect(migration).toContain('CREATE TABLE "EconomyMarketListingItem"');
     expect(migration).toContain('CREATE TABLE "EconomyMarketPurchaseFulfillment"');
     expect(migration).toContain('EconomyMarketPurchase_id_scope_key');
-    expect(market).toContain('deliverySnapshot');
-    expect(market).toContain('itemText: item.itemText');
+    expect(inventoryless).toContain('deliverySnapshot');
+    expect(inventoryless).toContain('itemText: item.itemText');
     expect(market).toContain("'PENDING'");
   });
 
   it('erstellt bei einfachen Angeboten automatisch den Item-Snapshot und multipliziert ihn mit der Kaufmenge', () => {
     expect(market).toContain("[{ itemText: name, quantity: 1 }]");
-    expect(market).toContain("[{ itemText: listing.name, quantity: 1 }]");
-    expect(market).toContain('quantity: item.quantity * args.quantity');
+    expect(inventoryless).toContain("[{ itemText: listing.name, quantity: 1 }]");
+    expect(inventoryless).toContain('quantity: item.quantity * args.quantity');
     expect(market).not.toContain('noch kein DayZ-Liefer-Bundle');
   });
 
-  it('macht Refund atomar mit Vendor-Abbuchung, User-Gutschrift, Status und Bestandsrueckgabe', () => {
-    const refund = market.slice(market.indexOf('export async function refundMarketPurchase'));
+  it('macht Refund atomar mit Vendor-Abbuchung, User-Gutschrift und Status (inventoryless, keine Bestandsrueckgabe)', () => {
+    const refund = inventorylessRefund.slice(inventorylessRefund.indexOf('export async function refundInventorylessMarketPurchase'));
     expect(refund).toContain('systemVirtualAccountToUser');
-    expect(refund).toContain('beforeLock: async raw =>');
+    expect(refund).toContain('beforeLock: async');
     expect(refund).toContain('FOR UPDATE');
-    expect(refund).toContain('"stock"="stock"+$4');
     expect(refund).toContain('REFUNDED');
     expect(refund).toContain('targetPocket: before.sourcePocket');
     expect(transfers).toContain('beforeLock?:');

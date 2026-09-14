@@ -18,8 +18,8 @@
  *     niemals eine Rolle oder Identitaet.
  *
  * Brute-Force-Schutz:
- *   - In-Memory-Tracking pro userDiscordId+IP.
- *   - Nach MAX_FAILS Fehlversuchen wird der Account/IP fuer LOCK_MS gesperrt.
+ *   - DB-persistiertes Tracking pro Developer-Discord-ID (devAuthStore.ts).
+ *   - Nach MAX_FAILS Fehlversuchen wird der Account fuer LOCK_MS gesperrt.
  *   - Erfolg leert den Counter.
  *   - Zusaetzlich: express-rate-limit auf POST /login.
  */
@@ -34,36 +34,38 @@ import { tryGetDashboardClient } from '../../clientRegistry';
 import { logAudit, logger } from '../../../utils/logger';
 import { config } from '../../../config';
 import { isGlobalDeveloperEligible } from '../../../modules/auth/globalDeveloperIdentity';
+import { getDevFails, setDevFails, clearDevFails } from '../../../utils/devAuthStore';
 
 export { isGlobalDeveloperEligible };
 export const devRouter = Router();
 
-// --- Brute-Force-Tracking -------------------------------------------------
+// --- Brute-Force-Tracking ---------------------------------------------------
+// DB-persistiert (siehe devAuthStore.ts) statt In-Memory, damit ein Prozess-
+// Neustart oder Mehrfach-Instanzen den Lockout nicht zuruecksetzen/fragmentieren.
+// Keying pro Developer-Discord-ID, konsistent mit dem Discord-Interaction-
+// Login-Pfad (interactionCreate.ts) und devStepUp.ts.
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
-interface FailRecord { count: number; firstAt: number; lockedUntil: number }
-const failures = new Map<string, FailRecord>();
 
-function bruteKey(userDiscordId: string, ip: string | undefined): string {
-  return `${userDiscordId}|${ip ?? 'unknown'}`;
-}
-
-function isLocked(key: string): number {
-  const rec = failures.get(key);
+async function isLocked(userDiscordId: string): Promise<number> {
+  const rec = await getDevFails(userDiscordId);
   if (!rec) return 0;
   if (rec.lockedUntil > Date.now()) return rec.lockedUntil - Date.now();
-  if (Date.now() - rec.firstAt > LOCK_MS) failures.delete(key);
   return 0;
 }
 
-function registerFail(key: string): void {
-  const rec = failures.get(key) ?? { count: 0, firstAt: Date.now(), lockedUntil: 0 };
-  rec.count += 1;
-  if (rec.count >= MAX_FAILS) rec.lockedUntil = Date.now() + LOCK_MS;
-  failures.set(key, rec);
+async function registerFail(userDiscordId: string): Promise<{ count: number; lockedUntil: number }> {
+  const previous = await getDevFails(userDiscordId);
+  const current = (previous && previous.lockedUntil > 0 && previous.lockedUntil <= Date.now())
+    ? { count: 0, lockedUntil: 0 }
+    : (previous ?? { count: 0, lockedUntil: 0 });
+  current.count += 1;
+  if (current.count >= MAX_FAILS) current.lockedUntil = Date.now() + LOCK_MS;
+  await setDevFails(userDiscordId, current);
+  return current;
 }
 
-function clearFails(key: string): void { failures.delete(key); }
+async function clearFails(userDiscordId: string): Promise<void> { await clearDevFails(userDiscordId); }
 
 async function revokeActiveDevSessions(userDiscordId: string): Promise<void> {
   await prisma.devSession.updateMany({
@@ -165,13 +167,14 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
     return;
   }
 
-  const key = bruteKey(req.auth.discordId, req.ip);
-  const lockedFor = isLocked(key);
+  const key = String(req.auth.discordId);
+  const lockedFor = await isLocked(key);
   if (lockedFor > 0) {
     logAudit('DEV_LOGIN_LOCKED', 'SECURITY', { userId: req.auth.userId, ip: req.ip, lockedForMs: lockedFor });
+    const rec = await getDevFails(key);
     recordDevAuthFailure({
       userId: req.auth.userId, ip: req.ip, userAgent: String(req.headers['user-agent'] ?? ''),
-      reason: 'locked', failureCount: failures.get(key)?.count ?? MAX_FAILS,
+      reason: 'locked', failureCount: rec?.count ?? MAX_FAILS,
       lockedUntil: new Date(Date.now() + lockedFor),
     });
     res.status(429).json({ error: 'Zu viele Fehlversuche. Account voruebergehend gesperrt.', retryAfterMs: lockedFor });
@@ -194,19 +197,18 @@ devRouter.post('/login', loginLimiter, async (req, res) => {
   const a = crypto.createHash('sha256').update(provided).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   if (!crypto.timingSafeEqual(a, b)) {
-    registerFail(key);
-    const rec = failures.get(key);
-    logAudit('DEV_LOGIN_FAILED', 'SECURITY', { userId: req.auth.userId, ip: req.ip, count: rec?.count ?? 1 });
+    const rec = await registerFail(key);
+    logAudit('DEV_LOGIN_FAILED', 'SECURITY', { userId: req.auth.userId, ip: req.ip, count: rec.count });
     recordDevAuthFailure({
       userId: req.auth.userId, ip: req.ip, userAgent: String(req.headers['user-agent'] ?? ''),
-      reason: 'bad_password', failureCount: rec?.count ?? 1,
-      lockedUntil: rec?.lockedUntil ? new Date(rec.lockedUntil) : null,
+      reason: 'bad_password', failureCount: rec.count,
+      lockedUntil: rec.lockedUntil ? new Date(rec.lockedUntil) : null,
     });
     res.status(403).json({ error: 'Passwort falsch.' });
     return;
   }
 
-  clearFails(key);
+  await clearFails(key);
 
   // Vorhandene DevSessions des Users widerrufen, damit nur eine aktiv ist.
   await revokeActiveDevSessions(String(req.auth.discordId));

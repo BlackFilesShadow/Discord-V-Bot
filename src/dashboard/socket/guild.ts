@@ -75,6 +75,40 @@ function sessionFor(socket: Socket): SocketSessionShape {
   return req.session as SocketSessionShape;
 }
 
+const GUILD_AUTH_RECHECK_MS = 5_000;
+
+// Access is only checked at join-time above. Without this sweep, a guild owner revoking a
+// moderator's grant (or the moderator leaving the guild) would leave that moderator's
+// already-joined socket receiving economy/casino/killfeed/radar events until it happens to
+// disconnect and reconnect. Each tick re-derives current membership/permissions fresh from
+// Discord + DB (the same resolveGuildAccess() the HTTP routes use) and leaves any room the
+// socket is no longer entitled to — mirroring the /dev namespace's continuous revalidation.
+async function revalidateSocketRooms(socket: Socket, userDiscordId: string): Promise<void> {
+  const accessCache = new Map<string, GuildAccessResult>();
+  const accessFor = async (guildId: string): Promise<GuildAccessResult> => {
+    const cached = accessCache.get(guildId);
+    if (cached) return cached;
+    const access = await resolveGuildAccess(guildId, userDiscordId);
+    accessCache.set(guildId, access);
+    return access;
+  };
+
+  for (const room of socket.rooms) {
+    if (room === socket.id) continue;
+    const parts = room.split(':');
+    if (parts[0] === 'g' && parts.length === 2 && isSnowflake(parts[1])) {
+      const access = await accessFor(parts[1]);
+      if (!access.allowed) await socket.leave(room);
+    } else if (parts[0] === 'gs' && parts.length === 3 && isSnowflake(parts[1]) && isConnectionId(parts[2])) {
+      const access = await accessFor(parts[1]);
+      if (!serverFeedPermissionAllows(access.isOwner, access.permissions)) await socket.leave(room);
+    } else if (parts[0] === 'gr' && parts.length === 3 && isSnowflake(parts[1]) && isConnectionId(parts[2])) {
+      const access = await accessFor(parts[1]);
+      if (!radarPermissionAllows(access.isOwner, access.permissions)) await socket.leave(room);
+    }
+  }
+}
+
 export function registerGuildNamespace(io: IOServer): void {
   const ns = io.of('/guild');
 
@@ -210,4 +244,25 @@ export function registerGuildNamespace(io: IOServer): void {
       logger.debug(`/guild getrennt: ${socket.id} (${reason})`);
     });
   });
+
+  // Fortlaufende serverseitige AuthZ pro Room (siehe revalidateSocketRooms oben).
+  let authSweepRunning = false;
+  setInterval(() => {
+    if (authSweepRunning || ns.sockets.size === 0) return;
+    authSweepRunning = true;
+    void (async () => {
+      for (const socket of ns.sockets.values()) {
+        const userDiscordId = sessionFor(socket)?.discordId;
+        if (!userDiscordId) {
+          socket.disconnect(true);
+          continue;
+        }
+        try {
+          await revalidateSocketRooms(socket, userDiscordId);
+        } catch (error) {
+          logger.error('Guild-Namespace-Revalidierung fehlgeschlagen:', error as Error);
+        }
+      }
+    })().finally(() => { authSweepRunning = false; });
+  }, GUILD_AUTH_RECHECK_MS).unref();
 }

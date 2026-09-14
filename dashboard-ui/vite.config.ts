@@ -49,11 +49,17 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
-          if (id.includes('react-dom') || id.includes('/react/') || id.includes('\\react\\')) {
+          if (
+            id.includes('react-dom') ||
+            id.includes('/react/') ||
+            id.includes('\\react\\') ||
+            id.includes('/scheduler/') ||
+            id.includes('\\scheduler\\')
+          ) {
             return 'vendor-react';
           }
           if (id.includes('react-router')) return 'vendor-router';
-          if (id.includes('@tanstack/react-query')) return 'vendor-query';
+          if (id.includes('@tanstack/react-query') || id.includes('@tanstack/query-core')) return 'vendor-query';
           if (id.includes('socket.io-client') || id.includes('engine.io-client')) return 'vendor-socket';
           if (id.includes('lucide-react')) return 'vendor-lucide';
           if (id.includes('zod')) return 'vendor-zod';

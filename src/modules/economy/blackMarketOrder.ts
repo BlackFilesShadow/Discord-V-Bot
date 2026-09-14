@@ -156,6 +156,30 @@ async function existingOrderByKey(guildId: GuildId, nitradoConnId: NitradoConnId
   return rows[0] ? getMarketOrder(guildId, nitradoConnId, rows[0].id) : null;
 }
 
+// Backport of blackMarketOrderV2.ts's assertReplayMatches: an idempotency-key replay must
+// verify the cached order actually matches the current request before returning it, not just
+// that a row with this key exists — otherwise a reused/collided key could silently return an
+// unrelated prior order for a different set of listings.
+function assertOrderReplayMatches(replay: MarketOrderView, args: {
+  userDiscordId: UserDiscordId;
+  listingIds: string[];
+}): void {
+  if (replay.userDiscordId !== String(args.userDiscordId)) {
+    throw new Error('Idempotency-Key wurde fuer einen anderen Besteller verwendet.');
+  }
+  if (replay.purchases.length !== args.listingIds.length) {
+    throw new Error('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+  }
+  const expected = new Set(args.listingIds);
+  for (const purchase of replay.purchases) {
+    const valid = expected.has(purchase.listingId)
+      && purchase.quantity === ORDER_QUANTITY
+      && purchase.vendorAccountId === replay.vendorAccountId
+      && purchase.sourcePocket === 'WALLET';
+    if (!valid) throw new Error('Idempotency-Key wurde mit anderen Bestelldaten wiederverwendet.');
+  }
+}
+
 export async function createMarketOrder(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
@@ -170,7 +194,10 @@ export async function createMarketOrder(args: {
   const key = orderKey(args.idempotencyKey);
 
   const replay = await existingOrderByKey(args.guildId, args.nitradoConnId, key);
-  if (replay) return { booked: false, order: replay };
+  if (replay) {
+    assertOrderReplayMatches(replay, { userDiscordId: args.userDiscordId, listingIds });
+    return { booked: false, order: replay };
+  }
 
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
   const cfg = await getConfig(args.guildId, args.nitradoConnId);
