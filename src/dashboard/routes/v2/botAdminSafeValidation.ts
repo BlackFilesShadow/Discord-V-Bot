@@ -10,7 +10,10 @@ import { safeValidateUpload, SafeUploadValidationError } from '../../../modules/
  * Schutzschranken wie der migrierte Command-Center-Pfad sicher.
  */
 export const botAdminSafeValidationRouter = Router();
-botAdminSafeValidationRouter.use(requireBotAdmin);
+// Pfadgebunden statt global: ein ungebundenes .use(requireBotAdmin) wuerde JEDE
+// Anfrage unter /bot-admin abfangen (auch /login und /status, die von hier aus
+// nie erreichbar sein sollen), bevor botAdminRouter ueberhaupt drankommt.
+botAdminSafeValidationRouter.use('/validate', requireBotAdmin);
 
 botAdminSafeValidationRouter.post('/validate', async (req, res) => {
   const uploadId = typeof req.body?.uploadId === 'string' ? req.body.uploadId.trim() : '';
