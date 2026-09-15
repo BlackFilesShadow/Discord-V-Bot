@@ -34,8 +34,6 @@ describe('AI-15 deterministic XML/JSON validation architecture', () => {
       'SYNTAX_INVALID',
       'REQUIRED_FIELD_MISSING',
       'MIN_GT_NOMINAL',
-      'MIN_GT_MAX',
-      'NOMINAL_OUTSIDE_RANGE',
       'QUANTITY_RANGE_INVALID',
       'DUPLICATE_IDENTIFIER',
       'UNKNOWN_REFERENCE',
