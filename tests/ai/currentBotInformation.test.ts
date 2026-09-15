@@ -24,7 +24,7 @@ describe('current bot information surfaces', () => {
   const aiCatalog = read('src/modules/ai/commandCatalog.ts');
   const aiHandler = read('src/modules/ai/aiHandler.ts');
   const aiTriggers = read('src/modules/ai/triggers.ts');
-  const about = read('src/commands/about.ts');
+  const about = read('src/commands/user/about.ts');
   const botInfo = read('src/content/botInfo.ts');
   const help = read('src/commands/user/help.ts');
   const handler = read('src/commands/handler.ts');
@@ -83,7 +83,7 @@ describe('current bot information surfaces', () => {
 
   it('nutzt fuer Bot-Selbstauskunft eine einzige kanonische Quelle ohne Runtime-Markdown', () => {
     expect(about).not.toContain('about.md');
-    expect(about).toContain("from '../content/botInfo'");
+    expect(about).toContain("from '../../content/botInfo'");
     expect(botInfo).toContain("import { BOT_DEVELOPER }");
     expect(botInfo).toContain('/help');
     expect(botInfo).toContain('getrennte Bot-Admin- und DEV-Bereiche');

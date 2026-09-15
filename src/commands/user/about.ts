@@ -1,7 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
-import { Command } from '../types';
-import { Colors, compactDescription, compactEmbed } from '../utils/embedDesign';
-import { BOT_PRODUCT_NAME, buildBotAboutText } from '../content/botInfo';
+import { Command } from '../../types';
+import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { BOT_PRODUCT_NAME, buildBotAboutText } from '../../content/botInfo';
 
 /**
  * Oeffentliche Bot-Selbstvorstellung aus derselben kanonischen Quelle wie der
