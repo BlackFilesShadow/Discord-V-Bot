@@ -18,7 +18,7 @@ import prisma from '../../../database/prisma';
 import { logAuditDb, logger } from '../../../utils/logger';
 import { emitGuildEvent } from '../../socket/emitter';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { postTemplateEmbed, unpostTemplateEmbed, purgeTemplateInstances } from '../../../modules/tickets/ticketSystem';
+import { postTemplateEmbed, unpostTemplateEmbed, purgeTemplateInstances, casMutateTicketUserIds } from '../../../modules/tickets/ticketSystem';
 import { validateBotChannelAccess } from '../../../utils/discordChannel';
 import { PermissionFlagsBits } from 'discord.js';
 
@@ -622,11 +622,15 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
       return res.status(500).json({ error: 'Discord-Permissions konnten nicht gesetzt werden.' });
     }
 
-    // DB erst NACH erfolgreicher Discord-Permission setzen.
-    const updated = await prisma.ticketInstance.update({
-      where: { id: instanceId },
-      data: { userIds: { set: [...ticket.userIds, userId] } },
-    });
+    // DB erst NACH erfolgreicher Discord-Permission setzen (CAS-gesichert gegen Races).
+    const newUserIds = await casMutateTicketUserIds(
+      instanceId,
+      ticket.userIds,
+      (curr) => (curr.includes(userId) ? curr : [...curr, userId]),
+    );
+    if (newUserIds === null) {
+      return res.status(409).json({ error: 'Ticket wurde zwischenzeitlich geändert, bitte erneut versuchen.' });
+    }
 
     // Notification im Channel: pingt den User -> hebt den Channel im Client hervor.
     try {
@@ -642,7 +646,7 @@ ticketsRouter.post('/instances/:instanceId/users', requireGuildPermission('ticke
       details: { instanceId, addedUser: userId },
     });
     emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId } });
-    return res.json({ success: true, userIds: updated.userIds });
+    return res.json({ success: true, userIds: newUserIds });
   } catch (err) {
     logger.error('Ticket /instances/:instanceId/users (POST) Fehler:', err as Error);
     return res.status(500).json({ error: 'Interner Fehler' });
@@ -673,10 +677,14 @@ ticketsRouter.delete('/instances/:instanceId/users', requireGuildPermission('tic
     if (!ticket.userIds.includes(userId)) {
       return res.status(404).json({ error: 'User nicht in Ticket' });
     }
-    const updated = await prisma.ticketInstance.update({
-      where: { id: instanceId },
-      data: { userIds: { set: ticket.userIds.filter((id) => id !== userId) } },
-    });
+    const newUserIds = await casMutateTicketUserIds(
+      instanceId,
+      ticket.userIds,
+      (curr) => curr.filter((id) => id !== userId),
+    );
+    if (newUserIds === null) {
+      return res.status(409).json({ error: 'Ticket wurde zwischenzeitlich geändert, bitte erneut versuchen.' });
+    }
     // Discord-Channel-Permissions zurueckziehen (best-effort).
     const cli = tryGetDashboardClient();
     if (cli) {
@@ -692,7 +700,7 @@ ticketsRouter.delete('/instances/:instanceId/users', requireGuildPermission('tic
       details: { instanceId, removedUser: userId },
     });
     emitGuildEvent(scope.guildId, { type: 'tickets.changed', payload: { guildId: scope.guildId } });
-    return res.json({ success: true, userIds: updated.userIds });
+    return res.json({ success: true, userIds: newUserIds });
   } catch (err) {
     logger.error('Ticket /instances/:instanceId/users (DELETE) Fehler:', err as Error);
     return res.status(500).json({ error: 'Interner Fehler' });

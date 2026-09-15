@@ -56,7 +56,7 @@ function menuRow(componentType: 'BUTTON' | 'SELECT' | 'REACTION' = 'BUTTON', ass
 
 function makeGuildMember(hasRole = false) {
   const ids = new Set<string>(hasRole ? [ROLE] : []);
-  const role = { id: ROLE, name: 'VIP', position: 1, managed: false };
+  const role = { id: ROLE, name: 'VIP', position: 1, managed: false, permissions: { has: () => false } };
   const rolesCache = new Map<string, unknown>([[ROLE, role]]);
   const add = jest.fn(async (id: string) => { ids.add(id); });
   const remove = jest.fn(async (id: string) => { ids.delete(id); });

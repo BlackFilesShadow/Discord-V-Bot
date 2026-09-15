@@ -1208,6 +1208,43 @@ export async function handleAddUserButton(btn: ButtonInteraction): Promise<void>
 }
 
 /**
+ * Compare-and-swap-Update fuer `TicketInstance.userIds`: verhindert, dass zwei
+ * gleichzeitige Add/Remove-Vorgaenge (Discord-Button + Dashboard, oder zwei
+ * parallele Dashboard-Requests) sich gegenseitig per read-then-overwrite
+ * ueberschreiben. `updateMany` mit einer exakten Array-Gleichheitsbedingung
+ * im `where` committet nur, wenn `userIds` seit dem uebergebenen Snapshot
+ * unveraendert ist; bei Konflikt wird der aktuelle Stand neu gelesen und
+ * `mutate` erneut darauf angewendet (bounded Retry). Aendert an der
+ * Geschaeftslogik (wer darf was, welche Checks vorher laufen) nichts -
+ * haertet nur den finalen Schreibvorgang gegen Races ab.
+ */
+export async function casMutateTicketUserIds(
+  instanceId: string,
+  initialUserIds: string[],
+  mutate: (current: string[]) => string[],
+  maxAttempts = 5,
+): Promise<string[] | null> {
+  let current = initialUserIds;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const next = mutate(current);
+    const result = await prisma.ticketInstance.updateMany({
+      where: { id: instanceId, userIds: { equals: current } },
+      data: { userIds: { set: next } },
+    });
+    if (result.count === 1) {
+      return next;
+    }
+    const fresh = await prisma.ticketInstance.findUnique({
+      where: { id: instanceId },
+      select: { userIds: true },
+    });
+    if (!fresh) return null;
+    current = fresh.userIds;
+  }
+  return null;
+}
+
+/**
  * Add-User-Select-Submit: validiert, prueft Mitgliedschaft, gewaehrt Channel-Zugriff
  * und persistiert den Nutzer in `TicketInstance.userIds`.
  */
@@ -1276,11 +1313,16 @@ export async function handleAddUserSelect(select: UserSelectMenuInteraction): Pr
       AttachFiles: true,
       EmbedLinks: true,
     });
-    // DB-State synchron halten: userIds Array um neuen Nutzer erweitern.
-    await prisma.ticketInstance.update({
-      where: { id: instance.id },
-      data: { userIds: { set: [...existingUserIds, target.id] } },
-    });
+    // DB-State synchron halten: userIds Array um neuen Nutzer erweitern (CAS-gesichert).
+    const newUserIds = await casMutateTicketUserIds(
+      instance.id,
+      existingUserIds,
+      (curr) => (curr.includes(target.id) ? curr : [...curr, target.id]),
+    );
+    if (newUserIds === null) {
+      await select.editReply({ content: 'Ticket wurde zwischenzeitlich geaendert, bitte erneut versuchen.' });
+      return;
+    }
     await ch.send({
       content: `\u2795 <@${target.id}> wurde von <@${select.user.id}> zum Ticket hinzugefuegt.`,
       allowedMentions: { users: [target.id] },
