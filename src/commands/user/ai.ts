@@ -89,6 +89,7 @@ export const aiCommand: Command = {
             mode: 'oneshot',
             context: context ?? undefined,
             guildId: interaction.guildId,
+            userId: interaction.user.id,
           });
           title = '🤖 AI-Antwort';
           body = r.success ? r.result || '_(leer)_' : aiErr(r.error);
