@@ -675,12 +675,6 @@ botAdminRouter.get('/tickets', ba, async (req, res) => {
   res.json({ items, ...offsetPageMeta(page, pageSize, total) });
 });
 
-botAdminRouter.get('/tickets/:id', ba, async (req, res) => {
-  const ticket = await prisma.ticket.findUnique({ where: { id: String(req.params.id) }, include: { messages: { orderBy: { createdAt: 'asc' } } } });
-  if (!ticket) { res.status(404).json({ error: 'Ticket nicht gefunden.' }); return; }
-  res.json(ticket);
-});
-
 botAdminRouter.post('/tickets/:id/close', ba, async (req, res) => {
   const ticket = await prisma.ticket.findUnique({ where: { id: String(req.params.id) } });
   if (!ticket) { res.status(404).json({ error: 'Ticket nicht gefunden.' }); return; }

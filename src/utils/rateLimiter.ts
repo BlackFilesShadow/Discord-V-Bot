@@ -19,7 +19,6 @@ const DEFAULT_LIMITS: Record<string, RateLimitConfig> = {
   download: { windowMs: 60000, maxRequests: 20 },
   login: { windowMs: 900000, maxRequests: 5 },
   message: { windowMs: 10000, maxRequests: 5 },
-  reaction: { windowMs: 5000, maxRequests: 10 },
   api: { windowMs: 60000, maxRequests: 60 },
   ai: { windowMs: 60_000, maxRequests: 20 },
 };
