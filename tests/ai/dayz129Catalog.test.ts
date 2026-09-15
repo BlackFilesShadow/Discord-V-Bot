@@ -70,6 +70,42 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     expect(event).toMatch(/Livonia/);
   });
 
+  test('plain "wie heisst X" naming questions resolve without any DayZ/classname marker', () => {
+    // Regressionsschutz: der aeussere Scope-Gate (explicitCatalogIntent)
+    // verlangte bisher ein explizites Marker-Wort ("classname", "types.xml",
+    // einen kuratierten Alias oder einen technisch aussehenden Identifier).
+    // Reine Umgangssprache wie "Wie heisst die Winchester?" erreichte die
+    // eigentliche Such-Engine dadurch nie, obwohl V3 den Alias laengst kennt.
+    expect(answerDayz129CatalogQuestion('Wie heißt die Winchester?')?.answer)
+      .toBe('Der Classname ist **`Winchester70`**.');
+    expect(answerDayz129CatalogQuestion('Wie heißt der Generator?')?.answer)
+      .toBe('Der Classname ist **`PowerGenerator`**.');
+    expect(answerDayz129CatalogQuestion('Wie heißt der Feldrucksack in Grün?')?.answer)
+      .toBe('Der Classname ist **`AliceBag_Green`**.');
+  });
+
+  test('naming questions stay silent (null) instead of guessing on no or ambiguous matches', () => {
+    // Ein Fehltreffer darf hier NIE eine DayZ-Fehlantwort erzwingen - sonst
+    // wuerde eine echte Allgemeinfrage wie "Wie heisst der Bundeskanzler?"
+    // faelschlich "kein Classname gefunden" statt der echten Antwort bekommen.
+    expect(answerDayz129CatalogQuestion('Wie heißt der Bundeskanzler von Deutschland?')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Wie heißt die Hauptstadt von Frankreich?')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Wie heißt mein bester Freund?')).toBeNull();
+    // "AK" matcht mehrere reale Classnames (AKM, AKS74U, ...) - mehrdeutig,
+    // deshalb bewusst kein Treffer statt eines geratenen Namens.
+    expect(answerDayz129CatalogQuestion('Wie heißt AK?')).toBeNull();
+    // "Holzbrett" matcht mehrere reale wooden-*-Classnames - ebenfalls
+    // mehrdeutig und deshalb kein Treffer ueber diesen schwachen Pfad.
+    expect(answerDayz129CatalogQuestion('Wie heißt das Holzbrett?')).toBeNull();
+  });
+
+  test('"was heisst X" (Bedeutungsfrage) triggert den Naming-Pfad nicht', () => {
+    // "was heisst X" ist im Deutschen ueblicherweise eine Bedeutungsfrage
+    // ("was heisst 'nominal'?"), keine Namensfrage - bewusst nicht Teil des
+    // schwachen Zusatzpfads, um keine Bedeutungsfragen falsch zu kapern.
+    expect(answerDayz129CatalogQuestion('Was heißt eigentlich Servus auf Englisch?')).toBeNull();
+  });
+
   test('ambiguous general words cannot accidentally trigger the DayZ catalog', () => {
     expect(answerDayz129CatalogQuestion('Apple')).toBeNull();
     expect(answerDayz129CatalogQuestion('Welche Vitamine hat Apple?')).toBeNull();

@@ -26,10 +26,15 @@ describe('AI DayZ conversation isolation architecture', () => {
     expect(handler).toContain('const hallucinationGuard = dayzDomain ? guardContext.guard : null;');
   });
 
-  it('requires explicit DayZ/catalog intent or a technical known identifier before catalog preflight', () => {
+  it('requires explicit DayZ/catalog intent or a technical known identifier before the full catalog preflight', () => {
     expect(catalog).toContain('function explicitCatalogIntent');
     expect(catalog).toContain('hasKnownTechnicalIdentifier');
-    expect(catalog).toContain('if (!explicitCatalogIntent(question)) return null;');
+    expect(catalog).toContain('if (explicitCatalogIntent(question)) return answerGeneralDayz129Question(question);');
+  });
+
+  it('keeps the weak "wie heisst X" naming fallback strict (single unambiguous match only)', () => {
+    expect(catalog).toContain('function answerNamingQuestion');
+    expect(catalog).toContain("if (candidates.length !== 1) return null;");
   });
 
   it('does not accept generic "kannst du" wording as implicit DayZ follow-up intent', () => {
