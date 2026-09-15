@@ -72,12 +72,18 @@ export function clearPendingMemberActivity(guildId: string, discordId: string): 
  * Throttled Activity-Update nach jeder verarbeiteten Nachricht. Best-effort,
  * Fehler werden geloggt aber nicht weitergereicht.
  *
- * Lifecycle-Fencing: Activity besitzt weder Create- noch Rejoin-Autoritaet.
- * Nur syncMemberProfile (echtes Join/Update-Ereignis) darf ein Profil anlegen
- * bzw. `isLeft/leftAt` auf aktiv setzen. Der Flush aktualisiert ausschliesslich
- * eine bereits aktive Zeile (`isLeft=false`). Dadurch kann ein vor dem Leave
- * gestarteter oder danach verspäteter Write weder den Leave-Marker noch die
- * letzte bekannte Identitaet nachtraeglich verfälschen.
+ * Lifecycle-Fencing: Activity besitzt keine Rejoin-Autoritaet. Nur
+ * syncMemberProfile (echtes Join/Update-Ereignis) darf `isLeft/leftAt` wieder
+ * auf aktiv setzen - eine bestehende isLeft=true-Zeile bleibt hier unangetastet.
+ * Der Flush aktualisiert primaer eine bereits aktive Zeile (`isLeft=false`).
+ * Dadurch kann ein vor dem Leave gestarteter oder danach verspäteter Write
+ * weder den Leave-Marker noch die letzte bekannte Identitaet nachtraeglich
+ * verfälschen.
+ *
+ * Backfill-Ausnahme: existiert ueberhaupt noch keine Zeile (Bestandsmitglied
+ * ohne je ausgeloestes Join-/Update-Event, z.B. weil MEMBER_SYNC_ENABLED aus
+ * ist), legt der Flush sie hier neu an - sonst bliebe das Profil dauerhaft
+ * luckenhaft, obwohl das Mitglied nachweislich aktiv im Server ist.
  */
 export async function trackMemberActivity(member: GuildMember): Promise<void> {
   const key = memberKey(member.guild.id, member.id);
@@ -91,7 +97,7 @@ export async function trackMemberActivity(member: GuildMember): Promise<void> {
   slot.count = 0;
   slot.lastFlushAt = now;
   try {
-    await prisma.guildMemberProfile.updateMany({
+    const result = await prisma.guildMemberProfile.updateMany({
       where: {
         guildId: member.guild.id,
         discordId: member.id,
@@ -109,6 +115,37 @@ export async function trackMemberActivity(member: GuildMember): Promise<void> {
         lastSeenAt: new Date(),
       },
     });
+
+    // Keine aktive Zeile getroffen: entweder existiert noch gar kein Profil
+    // (Bestandsmitglied ohne je ausgeloestes Join-/Update-Event - z.B. weil der
+    // Bot dem Server erst spaeter beigetreten ist und MEMBER_SYNC_ENABLED aus
+    // ist), oder das Mitglied hat aktuell eine isLeft=true-Zeile. Rejoin-
+    // Autoritaet bleibt bei syncMemberProfile - wir legen deshalb ausschliesslich
+    // dann neu an, wenn wirklich noch KEINE Zeile existiert; eine bestehende
+    // isLeft=true-Zeile bleibt unangetastet (Unique-Constraint blockt den Insert,
+    // per P2002 abgefangen).
+    if (result.count === 0) {
+      await prisma.guildMemberProfile.create({
+        data: {
+          guildId: member.guild.id,
+          discordId: member.id,
+          username: member.user.username,
+          nickname: member.nickname ?? null,
+          joinedAt: member.joinedAt ?? null,
+          topRolesJson: topRoleNames(member) as any,
+          isBoosting: !!member.premiumSince,
+          boostingSince: member.premiumSince ?? null,
+          isPending: !!member.pending,
+          timeoutUntil: member.communicationDisabledUntil ?? null,
+          messageCount: inc,
+          lastSeenAt: new Date(),
+          isLeft: false,
+          leftAt: null,
+        },
+      }).catch((e: any) => {
+        if (e?.code !== 'P2002') throw e;
+      });
+    }
   } catch (e) {
     logger.warn(`memberAwareness.trackMemberActivity fehlgeschlagen (${key}): ${String(e)}`);
   }

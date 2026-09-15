@@ -122,7 +122,7 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(rejoinSource).toContain('update: {}');
   });
 
-  it('allows activity writes only against an already active profile and never creates or revives lifecycle state', () => {
+  it('lets activity update only an already active profile, and only backfills a missing row through a unique-constraint-fenced create that can never revive an existing isLeft=true row', () => {
     const activityStart = awarenessSource.indexOf('export async function trackMemberActivity');
     const activityEnd = awarenessSource.indexOf('export async function syncMemberProfile', activityStart);
     const activityFunction = awarenessSource.slice(activityStart, activityEnd);
@@ -130,9 +130,14 @@ describe('Leave-1G rejoin fresh-state architecture gate', () => {
     expect(activityStart).toBeGreaterThanOrEqual(0);
     expect(activityFunction).toContain('await prisma.guildMemberProfile.updateMany({');
     expect(activityFunction).toContain('isLeft: false');
+    // Backfill never uses upsert (which would blindly overwrite an existing row's
+    // lifecycle fields) - it uses a plain create, which fails closed with P2002
+    // against the unique(guildId, discordId) constraint whenever a row already
+    // exists (isLeft=true included), so a leave-marked row can never be revived.
     expect(activityFunction).not.toContain('guildMemberProfile.upsert');
-    expect(activityFunction).not.toContain('leftAt: null');
-    expect(activityFunction).not.toContain('joinedAt: member.joinedAt');
+    expect(activityFunction).toContain('if (result.count === 0)');
+    expect(activityFunction).toContain('await prisma.guildMemberProfile.create({');
+    expect(activityFunction).toContain("if (e?.code !== 'P2002') throw e;");
     expect(awarenessSource).toContain('data: { isLeft: true, leftAt: new Date(), lastSeenAt: new Date() }');
   });
 
