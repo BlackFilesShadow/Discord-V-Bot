@@ -25,6 +25,7 @@ const ROLE_LOW = '333333333333333301';
 const ROLE_HIGH = '333333333333333302';
 const ROLE_MANAGED = '333333333333333303';
 const ROLE_LOW2 = '333333333333333304';
+const ROLE_ADMIN = '333333333333333305';
 const EMB_ID = 'emb-posted-1';
 const EMB_MSG = 'embmsg-1';
 
@@ -136,10 +137,11 @@ jest.mock('../../src/modules/selfrole/selfRoleMenu', () => ({
 }));
 
 // Fake Discord-Client mit Guild + Rollen-Hierarchie.
-function makeRole(id: string, position: number, managed: boolean) {
+function makeRole(id: string, position: number, managed: boolean, isAdmin = false) {
   const role = {
     id, position, managed, name: `role-${id}`,
     comparePositionTo(other: { position: number }) { return position - other.position; },
+    permissions: { has: () => isAdmin },
   };
   return role;
 }
@@ -148,6 +150,7 @@ const roleCache = new Map<string, unknown>([
   [ROLE_HIGH, makeRole(ROLE_HIGH, 100, false)],
   [ROLE_MANAGED, makeRole(ROLE_MANAGED, 2, true)],
   [ROLE_LOW2, makeRole(ROLE_LOW2, 3, false)],
+  [ROLE_ADMIN, makeRole(ROLE_ADMIN, 4, false, true)],
 ]);
 const textChannel = { isTextBased: () => true, isDMBased: () => false, messages: { delete: jest.fn().mockResolvedValue({}) } };
 const guild = {
@@ -325,6 +328,14 @@ describe('Reaktions-Embeds Router — Optionen & Rollen-Schutz', () => {
     const res = await request(app).post(`${BASE}/${m.body.id}/options`).send({ roleId: ROLE_MANAGED, label: 'Bot' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/Integration/i);
+  });
+
+  it('lehnt Rollen mit Administrator-Berechtigung ab', async () => {
+    const app = makeApp();
+    const m = await createMenu(app);
+    const res = await request(app).post(`${BASE}/${m.body.id}/options`).send({ roleId: ROLE_ADMIN, label: 'Admin' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Administrator/i);
   });
 
   it('lehnt Rollen oberhalb der Bot-Rolle ab (Hierarchie)', async () => {

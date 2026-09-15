@@ -249,6 +249,9 @@ async function safeSetRole(
   const role = await guild.roles.fetch(roleId).catch(() => null);
   if (!role) return '❌ Rolle existiert nicht mehr im Server.';
   if (role.managed) return '❌ Diese Rolle wird von einer Integration verwaltet und kann nicht vergeben werden.';
+  if (role.permissions.has(PermissionFlagsBits.Administrator)) {
+    return '❌ Rollen mit Administrator-Berechtigung können nicht vergeben werden.';
+  }
   if (me.roles.highest.position <= role.position) return '❌ Ich kann diese Rolle nicht vergeben (Bot-Rolle muss höher stehen).';
   if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) return '❌ Mir fehlt die Berechtigung „Rollen verwalten".';
 

@@ -44,9 +44,9 @@ function menuRow(assignMode: 'GIVE' | 'REMOVE' | 'TOGGLE') {
   };
 }
 
-function makeInteraction(hasRole: boolean) {
+function makeInteraction(hasRole: boolean, isAdminRole = false) {
   const memberRoleIds = new Set<string>(hasRole ? [ROLE] : []);
-  const role = { id: ROLE, name: ROLE_NAME, position: 1, managed: false };
+  const role = { id: ROLE, name: ROLE_NAME, position: 1, managed: false, permissions: { has: () => isAdminRole } };
   const rolesCache = new Map<string, unknown>([[ROLE, role]]);
   const add = jest.fn(async (id: string) => { memberRoleIds.add(id); });
   const remove = jest.fn(async (id: string) => { memberRoleIds.delete(id); });
@@ -163,5 +163,15 @@ describe('handleSelfRoleButton — verwaiste Buttons (geloeschtes/archiviertes M
     expect(add).toHaveBeenCalledWith(ROLE, expect.any(String));
     expect(replyDescription(reply)).toContain(`Du hast die Rolle „${ROLE_NAME}“ erhalten.`);
     expect((btn.message as { edit: jest.Mock }).edit).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleSelfRoleButton — Administrator-Rollen-Sperre (Laufzeit-Enforcement)', () => {
+  it('vergibt eine Rolle mit Administrator-Berechtigung nicht, selbst wenn sie als Option konfiguriert ist', async () => {
+    findUnique.mockResolvedValue(menuRow('GIVE'));
+    const { btn, add, reply } = makeInteraction(false, true);
+    await handleSelfRoleButton(btn as any);
+    expect(add).not.toHaveBeenCalled();
+    expect(replyDescription(reply)).toMatch(/Administrator/i);
   });
 });

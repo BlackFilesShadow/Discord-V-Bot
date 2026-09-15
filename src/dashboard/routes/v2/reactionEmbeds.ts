@@ -158,6 +158,9 @@ async function validateRole(guildId: string, roleId: string): Promise<string | n
   const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
   if (!role) return 'Rolle nicht gefunden.';
   if (role.managed) return 'Von Integrationen verwaltete Rollen sind nicht erlaubt.';
+  if (role.permissions.has(PermissionFlagsBits.Administrator)) {
+    return 'Rollen mit Administrator-Berechtigung können nicht als Reaktionsrolle vergeben werden.';
+  }
   const me = guild.members.me;
   if (!me) return null;
   if (!me.permissions.has(PermissionFlagsBits.ManageRoles)) return 'Dem Bot fehlt die Berechtigung „Rollen verwalten".';
