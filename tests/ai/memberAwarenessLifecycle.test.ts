@@ -4,6 +4,7 @@ import type { GuildMember } from 'discord.js';
 const mockProfileUpsert = jest.fn();
 const mockProfileUpdateMany = jest.fn();
 const mockProfileFindUnique = jest.fn();
+const mockProfileCreate = jest.fn();
 const mockUserUpdateMany = jest.fn();
 
 jest.mock('../../src/database/prisma', () => ({
@@ -13,6 +14,7 @@ jest.mock('../../src/database/prisma', () => ({
       upsert: mockProfileUpsert,
       updateMany: mockProfileUpdateMany,
       findUnique: mockProfileFindUnique,
+      create: mockProfileCreate,
     },
     user: {
       updateMany: mockUserUpdateMany,
@@ -67,6 +69,7 @@ describe('User-1 member awareness lifecycle', () => {
     mockProfileUpsert.mockResolvedValue({});
     mockProfileUpdateMany.mockResolvedValue({ count: 1 });
     mockProfileFindUnique.mockResolvedValue(null);
+    mockProfileCreate.mockResolvedValue({});
     mockUserUpdateMany.mockResolvedValue({ count: 1 });
   });
 
@@ -134,6 +137,40 @@ describe('User-1 member awareness lifecycle', () => {
     expect(payload.data).not.toHaveProperty('isLeft');
     expect(payload.data).not.toHaveProperty('leftAt');
     expect(payload.data).not.toHaveProperty('joinedAt');
+  });
+
+  it('backfills a missing profile row on activity when no active row exists yet (pre-existing member gap)', async () => {
+    mockProfileUpdateMany.mockResolvedValue({ count: 0 });
+    const m = member({ guildId: 'guild-backfill', discordId: 'discord-backfill', nickname: 'Gamma', role: 'Trader' });
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+
+    await trackMemberActivity(m);
+    now.mockRestore();
+
+    expect(mockProfileCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        guildId: 'guild-backfill',
+        discordId: 'discord-backfill',
+        nickname: 'Gamma',
+        topRolesJson: ['Trader'],
+        messageCount: 1,
+        isLeft: false,
+        leftAt: null,
+      }),
+    });
+  });
+
+  it('never revives an existing isLeft=true row via the activity backfill (unique-constraint race is swallowed)', async () => {
+    mockProfileUpdateMany.mockResolvedValue({ count: 0 });
+    mockProfileCreate.mockRejectedValueOnce({ code: 'P2002' });
+    const m = member({ guildId: 'guild-left', discordId: 'discord-left' });
+    const now = jest.spyOn(Date, 'now').mockReturnValue(100_000);
+
+    await expect(trackMemberActivity(m)).resolves.toBeUndefined();
+    now.mockRestore();
+
+    expect(mockProfileCreate).toHaveBeenCalledTimes(1);
+    expect(mockProfileUpsert).not.toHaveBeenCalled();
   });
 
   it('does not carry unflushed pre-leave message deltas into a later runtime phase', async () => {
