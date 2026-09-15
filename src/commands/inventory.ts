@@ -15,9 +15,25 @@ export interface CommandClassification {
   staysInDiscord: boolean;
 }
 
+/**
+ * Nur Commands, fuer die tatsaechlich ein funktionsgleicher (oder zumindest
+ * echter Lese-)Dashboard-Ersatz existiert, gehoeren hier rein. Ein Cross-Check
+ * 2026-09 hat den fruesten deutlich groesseren Stand dieses Sets widerlegt:
+ * `giveaway`, `poll`, `ticket`, `pay`, `transfer`, `virtual-account`, `lottery`
+ * sowie alle acht Casino-Spiele (`slot`..`wheel`) und `casino-verify` haben im
+ * Dashboard KEINE Mutation/Aktion, die dasselbe leistet wie der Discord-Befehl
+ * (teils nur eine Admin-Konfigurationsseite, teils gar nichts) - dort bestand
+ * nur eine oberflaechliche Namensaehnlichkeit zur jeweiligen Dashboard-Sektion.
+ * `ticket` verwechselte zusaetzlich zwei unterschiedliche Datenmodelle
+ * (Owner-Kontakt-`Ticket` des Slash-Commands vs. `TicketTemplate`/`TicketInstance`
+ * im Dashboard). Verifiziert und hier belassen: `factions`/`balance`/`bank`
+ * (identische Lesefunktion auf beiden Seiten) und `black-market` (beide Seiten
+ * rufen dieselbe `buyInventorylessMarketListing()` auf). `casino-stats` bleibt,
+ * weil eine eigene (wenn auch separat geschriebene) Aggregat-Statistik-Ansicht
+ * im Dashboard existiert.
+ */
 export const DASHBOARD_EXTRA = new Set<string>([
-  'giveaway', 'poll', 'ticket', 'factions', 'balance', 'bank', 'pay', 'transfer', 'virtual-account', 'lottery', 'black-market',
-  'slot', 'coinflip', 'dice', 'blackjack', 'roulette', 'highlow', 'baccarat', 'wheel', 'casino-stats', 'casino-verify',
+  'factions', 'balance', 'bank', 'black-market', 'casino-stats',
 ]);
 
 const ADMIN_EXTRA_NAMES = new Set<string>([
