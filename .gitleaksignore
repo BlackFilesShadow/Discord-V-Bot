@@ -2,3 +2,8 @@
 # tests/dashboard/botAdminDangerSafety.test.ts:11 — fake req.auth.discordId used to
 # stub the requireBotAdmin middleware in a step-up gating test.
 98273a8dbe90d3b6d97a9b3498ebe67b8ed245ba:tests/dashboard/botAdminDangerSafety.test.ts:discord-client-id:11
+
+# Synthetic test-fixture Discord snowflake, not a real credential.
+# tests/commands/whitelistRemoveHonestOutcome.test.ts:7 — fake GuildScope.actorDiscordId
+# used to stub withGuildScope in the /whitelist-remove honest-outcome regression test.
+eec62b43e2898647cf32cfb6144fe8ff36f71cc6:tests/commands/whitelistRemoveHonestOutcome.test.ts:discord-client-id:7

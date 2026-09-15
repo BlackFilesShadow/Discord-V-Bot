@@ -6,12 +6,15 @@ import { logAudit, logAuditDb } from '../../../utils/logger';
 import { hardDeletePackage, HardDeletePackageError } from '../../../modules/packages/hardDeletePackage';
 
 export const botAdminDangerSafetyRouter = Router();
-botAdminDangerSafetyRouter.use(requireBotAdmin);
+// Pfadgebunden statt global: ein ungebundenes .use(requireBotAdmin) wuerde JEDE
+// Anfrage unter /bot-admin abfangen (auch /login und /status, die von hier aus
+// nie erreichbar sein sollen), bevor botAdminRouter ueberhaupt drankommt.
+botAdminDangerSafetyRouter.use('/danger/purge-deleted-packages', requireBotAdmin);
 // Irreversibler, systemweiter Hard-Delete (DB-Zeilen + physische Dateien):
 // dieselbe kryptografische Step-Up-Pruefung (2FA/TOTP oder DEV_PASSWORD, mit
 // DB-persistiertem Brute-Force-Lockout) wie fuer DEV-Mutationen vergleichbarer
 // Tragweite, nicht nur ein client-seitiger "DELETE"-Bestaetigungsstring.
-botAdminDangerSafetyRouter.use(requireVerifiedDevMutationStepUp);
+botAdminDangerSafetyRouter.use('/danger/purge-deleted-packages', requireVerifiedDevMutationStepUp);
 
 function actor(req: Request): string {
   return String(req.auth?.discordId ?? req.auth?.userId ?? 'dashboard');

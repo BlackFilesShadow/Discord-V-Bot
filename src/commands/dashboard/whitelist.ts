@@ -353,14 +353,15 @@ export const wlRemoveCommand: Command = {
 
     const results: string[] = [];
     let failures = 0;
+    let untracked = 0;
     for (const target of targets) {
       try {
-        await prisma.$transaction(async tx => {
+        const hadLocalEntry = await prisma.$transaction(async tx => {
           // Lokalen Spiegel NICHT sofort loeschen. PENDING_REMOVE verhindert,
           // dass ein Remote-Fehler lokal bereits als erfolgreicher Remove gilt.
           // Der Whitelist-Reconciler loescht die Zeile erst nach einem frischen
           // Nitrado-Read, der die Abwesenheit bestaetigt.
-          await tx.whitelistEntry.updateMany({
+          const entryUpdate = await tx.whitelistEntry.updateMany({
             where: { guildId: scope.guildId, nitradoConnId: target.id, gameId: id },
             data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
           });
@@ -373,16 +374,29 @@ export const wlRemoveCommand: Command = {
             },
             data: { status: 'CANCELLED' },
           });
-          // Auch ohne lokale Zeile entfernen: Nitrado kann manuelle Eintraege
-          // enthalten, die der lokale Spiegel noch nicht kennt.
+          // Auch ohne lokale Zeile einreihen: Nitrado kann manuelle Eintraege
+          // enthalten, die der lokale Spiegel noch nicht kennt. WICHTIG: Ohne
+          // lokale Zeile gilt der Name fuer den Worker als UNTRACKED und wird
+          // von readWhitelistDesiredState()/whitelistIntent.ts aus Sicherheits-
+          // gruenden absichtlich NICHT automatisch von Nitrado entfernt (nur eine
+          // verifizierte Verlassen-Bereinigung darf einen UNTRACKED-Remove
+          // ausfuehren) — der Job wird dann als erledigt/superseded markiert,
+          // OHNE dass Nitrado je kontaktiert wurde. Die Antwort unten muss das
+          // ehrlich widerspiegeln statt pauschal Erfolg zu melden.
           await enqueueWhitelistRemove(
             tx as unknown as WhitelistOutboxClient,
             { guildId: scope.guildId, nitradoConnId: target.id },
             id,
           );
+          return entryUpdate.count > 0;
         });
-        logAudit('WL_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId });
-        results.push(`✅ **${targetLabel(target)}** — Remove-Sync eingereiht; lokale Finalisierung erfolgt erst nach Nitrado-Bestaetigung.`);
+        logAudit('WL_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId, hadLocalEntry });
+        if (hadLocalEntry) {
+          results.push(`✅ **${targetLabel(target)}** — Remove-Sync eingereiht; lokale Finalisierung erfolgt erst nach Nitrado-Bestaetigung.`);
+        } else {
+          untracked++;
+          results.push(`⚠️ **${targetLabel(target)}** — Kein lokaler Eintrag gefunden. Automatische Nitrado-Entfernung ist fuer nicht getrackte Namen aus Sicherheitsgruenden gesperrt; bitte Schreibweise pruefen oder den Eintrag direkt auf Nitrado entfernen.`);
+        }
       } catch (error) {
         failures++;
         results.push(`❌ **${targetLabel(target)}** — ${safeLine(error instanceof Error ? error.message : String(error))}`);
@@ -394,7 +408,7 @@ export const wlRemoveCommand: Command = {
       i,
       results.join('\n'),
       true,
-      failures === 0 ? 'SUCCESS' : failures === targets.length ? 'ERROR' : 'INFO',
+      failures === targets.length ? 'ERROR' : failures > 0 || untracked > 0 ? 'INFO' : 'SUCCESS',
       'Whitelist-Remove verarbeitet',
     );
   }),

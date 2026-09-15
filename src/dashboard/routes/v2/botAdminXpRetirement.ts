@@ -11,7 +11,10 @@ import { requireBotAdmin } from '../../middleware/auth';
  * surface before `botAdminRouter` so stale clients cannot reach that path.
  */
 export const botAdminXpRetirementRouter = Router();
-botAdminXpRetirementRouter.use(requireBotAdmin);
+// Pfadgebunden statt global: ein ungebundenes .use(requireBotAdmin) wuerde JEDE
+// Anfrage unter /bot-admin abfangen (auch /login und /status, die von hier aus
+// nie erreichbar sein sollen), bevor botAdminRouter ueberhaupt drankommt.
+botAdminXpRetirementRouter.use('/xp', requireBotAdmin);
 
 botAdminXpRetirementRouter.use('/xp', (_req, res) => {
   res.status(410).json({

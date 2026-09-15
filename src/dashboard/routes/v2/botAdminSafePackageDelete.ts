@@ -15,7 +15,10 @@ import { hardDeletePackage, HardDeletePackageError } from '../../../modules/pack
  * bestehenden, wiederherstellbaren Pfad zurueck.
  */
 export const botAdminSafePackageDeleteRouter = Router();
-botAdminSafePackageDeleteRouter.use(requireBotAdmin);
+// Pfadgebunden statt global: ein ungebundenes .use(requireBotAdmin) wuerde JEDE
+// Anfrage unter /bot-admin abfangen (auch /login und /status, die von hier aus
+// nie erreichbar sein sollen), bevor botAdminRouter ueberhaupt drankommt.
+botAdminSafePackageDeleteRouter.use('/packages/:id', requireBotAdmin);
 
 botAdminSafePackageDeleteRouter.delete('/packages/:id', async (req, res, next) => {
   if (req.query.hard !== 'true') {
