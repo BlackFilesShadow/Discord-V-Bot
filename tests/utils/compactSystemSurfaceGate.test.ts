@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const compactSystemSurfaces = [
-  'src/commands/about.ts',
+  'src/commands/user/about.ts',
   'src/commands/user/ticket.ts',
   'src/commands/user/register.ts',
   'src/commands/user/upload.ts',

@@ -25,7 +25,7 @@ jest.mock('../../src/database/prisma', () => ({
   },
 }));
 
-import aboutCommand from '../../src/commands/about';
+import aboutCommand from '../../src/commands/user/about';
 import ticketCommand from '../../src/commands/user/ticket';
 
 describe('public V-Bot system embed design', () => {

@@ -52,7 +52,7 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
 export const SPEC_KEEP_COMMANDS = new Set<string>([
   'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download',
   'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll', 'feedback', 'erinnerung',
-  'search', 'ticket', 'balance', 'bank',
+  'search', 'ticket', 'balance', 'bank', 'stell-dich-vor',
   'blackjack', 'coinflip', 'dice', 'slot', 'roulette', 'highlow', 'baccarat', 'wheel',
   'deposit', 'faction', 'factions', 'fraktionen', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info',
