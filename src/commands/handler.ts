@@ -150,7 +150,13 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
   const registerCommand = (rawCommand: Command, sourceFile: string): void => {
     const cmd = attachServerAliasAutocomplete(canonicalizeCommandName(rawCommand));
     const existing = commandSources.get(cmd.data.name);
-    if (existing && existing !== sourceFile) {
+    // Jede erneute Registrierung desselben Namens ist eine Kollision, auch wenn
+    // beide Exporte aus derselben Datei stammen (z.B. zwei Named Exports, die
+    // nach der PUBLIC_COMMAND_RENAMES-Kanonisierung auf denselben Namen fallen).
+    // nextCommands/commandSources werden pro loadCommands()-Lauf frisch angelegt,
+    // jede (dir, file) landet hier genau einmal pro Export - ein zweites Auftreten
+    // desselben Namens bedeutet also immer zwei unterschiedliche Command-Objekte.
+    if (existing) {
       collisionCount++;
       const base = `[Command-Collision] /${cmd.data.name} ist doppelt definiert: ` +
         `"${existing}" und "${sourceFile}".`;
