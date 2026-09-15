@@ -64,6 +64,38 @@ function explicitCatalogIntent(question: string): boolean {
   return hasKnownTechnicalIdentifier(q);
 }
 
+// "Wie heisst/heissen X" ist grammatikalisch eindeutig eine Namens-Frage,
+// unabhaengig vom Thema - anders als "was heisst X", das in echtem Deutsch
+// meist eine Bedeutungsfrage ist ("was heisst 'nominal'?") und deshalb
+// bewusst NICHT mit aufgenommen wird. Dieser Pfad darf den Classname-Index
+// deshalb auch OHNE jeden DayZ-Marker (kein "classname", kein "types.xml")
+// anstossen - genau die Faelle wie "Wie heisst der Feldrucksack?", die ohne
+// dieses Muster nie bis zur eigentlichen Such-Engine vordringen wuerden.
+const NAMING_QUESTION_RE = /\bwie\s+(?:heisst|heißt|heissen|heißen)\b/i;
+
+function looksLikeNamingQuestion(question: string): boolean {
+  const q = String(question || '').trim();
+  return q.length > 0 && q.length <= 200 && NAMING_QUESTION_RE.test(q);
+}
+
+/**
+ * Schwacher Zusatzpfad fuer "wie heisst X"-Fragen ohne jeden DayZ-Marker.
+ * Bewusst STRENGER als der explizite Pfad (explicitCatalogIntent): er
+ * antwortet nur bei einem einzigen eindeutigen Classname-Treffer im vollen
+ * 1.29-Index. Bei keinem oder mehreren Treffern bleibt die Antwort `null`,
+ * statt eine DayZ-spezifische "kein Classname gefunden"-Meldung zu erzwingen
+ * - sonst wuerde eine echte Allgemeinfrage wie "Wie heisst der
+ * Bundeskanzler?" faelschlich eine DayZ-Fehlantwort statt der richtigen
+ * Antwort bekommen.
+ */
+function answerNamingQuestion(question: string): DayzCatalogAnswer | null {
+  if (!looksLikeNamingQuestion(question)) return null;
+  const candidates = searchTypes(question, 2);
+  if (candidates.length !== 1) return null;
+  const name = candidates[0];
+  return { answer: `Der Classname ist **\`${name}\`**.`, topic: 'type', ids: [`dayz129:type:${name}`] };
+}
+
 function looksReferentialFollowUp(question: string): boolean {
   const q = String(question || '').normalize('NFKC').trim().toLocaleLowerCase('de-DE');
   if (!q || q.length > 160) return false;
@@ -95,6 +127,6 @@ export function enrichDayz129FollowUp(question: string, previousAssistantText?: 
  */
 export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswer | null {
   if (looksLikeLiveServerKnowledgeQuestion(question)) return null;
-  if (!explicitCatalogIntent(question)) return null;
-  return answerGeneralDayz129Question(question);
+  if (explicitCatalogIntent(question)) return answerGeneralDayz129Question(question);
+  return answerNamingQuestion(question);
 }
