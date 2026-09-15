@@ -34,9 +34,7 @@ describe('Nitrado-1C config mutation / worker serialization architecture gate', 
     expect(repository.indexOf('return withConfigMutationLock(targetId, async () => {', deleteAt)).toBeGreaterThan(deleteAt);
     expect(repository.indexOf('return withConfigMutationLock(targetId, async () => {', tokenAt)).toBeGreaterThan(tokenAt);
     expect(repository.indexOf('return withConfigMutationLock(targetId, async () => {', serviceAt)).toBeGreaterThan(serviceAt);
-
-    const aliasSection = repository.slice(aliasAt);
-    expect(aliasSection).not.toContain('withConfigMutationLock(');
+    expect(repository.indexOf('return withConfigMutationLock(targetId, async () => {', aliasAt)).toBeGreaterThan(aliasAt);
   });
 
   it('re-verifies exact connection identity after delete lock acquisition before cleanup', () => {
@@ -52,16 +50,18 @@ describe('Nitrado-1C config mutation / worker serialization architecture gate', 
     expect(deleteWriteAt).toBeGreaterThan(cleanupAt);
   });
 
-  it('maps a busy worker/config collision to explicit HTTP 409 for token, service and delete', () => {
+  it('maps a busy worker/config collision to explicit HTTP 409 for token, service, alias and delete', () => {
     expect(route).toContain('NitradoConnectionBusyError');
     expect(route).toContain("code: 'NITRADO_CONNECTION_BUSY'");
 
     const tokenAt = route.indexOf("nitradoRouter.patch('/:slot/token'");
     const serviceAt = route.indexOf("nitradoRouter.patch('/:slot/service'");
+    const aliasAt = route.indexOf("nitradoRouter.patch('/:slot/alias'");
     const deleteAt = route.indexOf("nitradoRouter.delete('/:slot'");
 
     expect(route.indexOf('if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }', tokenAt)).toBeGreaterThan(tokenAt);
     expect(route.indexOf('if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }', serviceAt)).toBeGreaterThan(serviceAt);
+    expect(route.indexOf('if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }', aliasAt)).toBeGreaterThan(aliasAt);
     expect(route.indexOf('if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }', deleteAt)).toBeGreaterThan(deleteAt);
   });
 });

@@ -149,7 +149,7 @@ test('Stage 30: real authenticated desktop routes render DB-backed state', async
   await page.setViewportSize({ width: 1280, height: 800 });
   for (const route of [
     { path: '/servers', marker: 'Deine Server' },
-    { path: `/servers/${GUILD_ID}`, marker: 'Nitrado-Slots (1/5)' },
+    { path: `/servers/${GUILD_ID}`, marker: 'Nitrado-Slots (1/4)' },
     { path: `/servers/${GUILD_ID}/server/1?tab=settings`, marker: 'Server-Toggles' },
   ] as const) {
     await page.goto(route.path);

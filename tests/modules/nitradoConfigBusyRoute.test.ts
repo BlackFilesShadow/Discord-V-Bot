@@ -27,6 +27,7 @@ jest.mock('../../src/modules/nitrado/repository', () => ({
   updateServiceId: (...args: unknown[]) => updateServiceId(...args),
   NitradoSlotVersionConflictError: class NitradoSlotVersionConflictError extends Error {},
   NitradoConnectionBusyError: busyError,
+  NitradoAliasConflictError: class NitradoAliasConflictError extends Error {},
 }));
 
 const validateTokenDetailed = jest.fn();

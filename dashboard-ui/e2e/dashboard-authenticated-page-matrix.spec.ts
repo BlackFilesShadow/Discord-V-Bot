@@ -108,7 +108,7 @@ test.describe('Dashboard authenticated page matrix', () => {
     await page.goto(`/servers/${GUILD_ID}`);
 
     await expect(page.getByRole('heading', { name: 'CHAOS' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Nitrado-Slots (1/5)' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Nitrado-Slots (1/4)' })).toBeVisible();
     await expect(page.getByText('Chernarus')).toBeVisible();
     await expect(page.getByText('Nitrado-Service: 12345')).toBeVisible();
     await expectNoHorizontalOverflow(page);
@@ -142,7 +142,7 @@ const VIEWPORTS = [
 
 const AUTHENTICATED_ROUTES = [
   { path: '/servers', marker: 'Deine Server' },
-  { path: `/servers/${GUILD_ID}`, marker: 'Nitrado-Slots (1/5)' },
+  { path: `/servers/${GUILD_ID}`, marker: 'Nitrado-Slots (1/4)' },
   { path: `/servers/${GUILD_ID}/server/${SLOT}?tab=settings`, marker: 'Server-Toggles' },
 ] as const;
 

@@ -19,8 +19,10 @@ import {
   updateServiceId,
   NitradoSlotVersionConflictError,
   NitradoConnectionBusyError,
+  NitradoAliasConflictError,
 } from '../../../modules/nitrado/repository';
 import { NitradoClient } from '../../../modules/nitrado/nitradoClient';
+import { MAX_GAME_SERVERS_PER_GUILD } from '../../../modules/nitrado/gameServerScope';
 import { asUserDiscordId, asNitradoConnId } from '../../../types/scope';
 import { logAuditDb, logger } from '../../../utils/logger';
 
@@ -49,6 +51,11 @@ async function validateTokenOrRespond(token: string, res: Response): Promise<boo
 class ServiceValidationError extends Error {
   constructor(message: string, readonly status: 400 | 502) { super(message); }
 }
+
+// Kontrollzeichen (inkl. Zeilenumbruch/Tab) wuerden Discord-Autocomplete-Eintraege,
+// Embed-Felder und Dashboard-Listen sichtbar verunstalten. Doppelt geprueft (Route +
+// Repository), analog zur bereits bestehenden Slot-/Laengenvalidierung in dieser Datei.
+const ALIAS_CONTROL_CHARS_RE = /[\x00-\x1F\x7F]/;
 
 async function validateServiceIdForToken(token: string, nitradoServerId: unknown): Promise<string | null> {
   if (nitradoServerId === undefined || nitradoServerId === null) return null;
@@ -83,6 +90,13 @@ function respondConnectionBusy(res: Response): void {
   });
 }
 
+function respondAliasConflict(res: Response): void {
+  res.status(409).json({
+    error: 'Dieser Alias wird bereits von einem anderen Slot in diesem Server verwendet.',
+    code: 'NITRADO_ALIAS_CONFLICT',
+  });
+}
+
 nitradoRouter.get('/', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const slots = await listSlots(scope.guildId);
@@ -103,9 +117,18 @@ nitradoRouter.get('/', requireGuildPermission('dashboard.access'), async (req, r
 nitradoRouter.post('/', requireGuildPermission('dashboard.access'), async (req, res) => {
   const scope = req.guildScope!;
   const { slot, alias, token, nitradoServerId } = req.body ?? {};
-  if (typeof slot !== 'number' || !Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
+  // Neue Slots sind auf MAX_GAME_SERVERS_PER_GUILD begrenzt (siehe gameServerScope.ts):
+  // Slot 5 wird von jedem servergescopten Verbraucher (Slash-Commands, Whitelist,
+  // Economy, Killfeed, Radar) fail-closed als LEGACY_SLOT abgelehnt und waere sonst
+  // eine neu angelegte, aber sofort funktionslose Verbindung. Bereits bestehende
+  // Slot-5-Legacy-Verbindungen bleiben ueber die anderen Routen (Token/Alias/Delete)
+  // weiterhin verwaltbar.
+  if (typeof slot !== 'number' || !Number.isInteger(slot) || slot < 1 || slot > MAX_GAME_SERVERS_PER_GUILD) {
+    res.status(400).json({ error: `slot 1..${MAX_GAME_SERVERS_PER_GUILD}` }); return;
+  }
   const normalizedAlias = typeof alias === 'string' ? alias.trim() : '';
   if (typeof alias !== 'string' || normalizedAlias.length < 1 || normalizedAlias.length > 40) { res.status(400).json({ error: 'alias 1..40' }); return; }
+  if (ALIAS_CONTROL_CHARS_RE.test(normalizedAlias)) { res.status(400).json({ error: 'alias darf keine Steuerzeichen/Zeilenumbrueche enthalten' }); return; }
   if (typeof token !== 'string' || token.length < 16) { res.status(400).json({ error: 'token zu kurz' }); return; }
   if (nitradoServerId !== undefined && typeof nitradoServerId !== 'string') { res.status(400).json({ error: 'nitradoServerId muss String sein.' }); return; }
 
@@ -143,6 +166,7 @@ nitradoRouter.post('/', requireGuildPermission('dashboard.access'), async (req, 
       status: created.status,
     });
   } catch (e) {
+    if (e instanceof NitradoAliasConflictError) { respondAliasConflict(res); return; }
     if ((e as { code?: string }).code === 'P2002') {
       res.status(409).json({ error: `Slot ${slot} ist bereits belegt.` }); return;
     }
@@ -204,13 +228,25 @@ nitradoRouter.patch('/:slot/alias', requireGuildPermission('dashboard.access'), 
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
   const { alias } = req.body ?? {};
-  if (typeof alias !== 'string' || alias.trim().length < 1 || alias.trim().length > 40) {
+  const normalizedAlias = typeof alias === 'string' ? alias.trim() : '';
+  if (typeof alias !== 'string' || normalizedAlias.length < 1 || normalizedAlias.length > 40) {
     res.status(400).json({ error: 'alias 1..40' }); return;
   }
+  if (ALIAS_CONTROL_CHARS_RE.test(normalizedAlias)) { res.status(400).json({ error: 'alias darf keine Steuerzeichen/Zeilenumbrueche enthalten' }); return; }
+
+  const existing = await getSlot(scope.guildId, slot);
+  if (!existing) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+
   let updated;
   try {
-    updated = await updateAlias(scope.guildId, slot, alias);
+    updated = await updateAlias(scope.guildId, slot, normalizedAlias, {
+      expectedId: existing.id,
+      expectedUpdatedAt: existing.updatedAt,
+    });
   } catch (e) {
+    if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }
+    if (e instanceof NitradoSlotVersionConflictError) { respondVersionConflict(res); return; }
+    if (e instanceof NitradoAliasConflictError) { respondAliasConflict(res); return; }
     res.status(400).json({ error: (e as Error).message }); return;
   }
   if (!updated) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
