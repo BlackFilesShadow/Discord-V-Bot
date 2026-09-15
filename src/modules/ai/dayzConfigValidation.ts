@@ -11,8 +11,6 @@ export type DayzConfigValidationCode =
   | 'NUMBER_INVALID'
   | 'NUMBER_OUT_OF_RANGE'
   | 'MIN_GT_NOMINAL'
-  | 'MIN_GT_MAX'
-  | 'NOMINAL_OUTSIDE_RANGE'
   | 'QUANTITY_RANGE_INVALID'
   | 'DUPLICATE_IDENTIFIER'
   | 'IDENTIFIER_MISSING'
@@ -222,21 +220,22 @@ function validateEventsXml(result: DayzConfigValidationResult, doc: Record<strin
       return;
     }
     requireIdentifier(result, row, path, seen);
-    const nominal = numberField(result, row, 'nominal', path, { required: true, min: 0 });
-    const min = numberField(result, row, 'min', path, { required: true, min: 0 });
-    const max = numberField(result, row, 'max', path, { required: true, min: 0 });
+    // Bewusst KEINE min/max/nominal-Ordnungsregel fuer Events (nur Pflicht-/
+    // Nicht-negativ-Pruefung ueber numberField): echte DayZ-1.29-Vanilla-
+    // Events enthalten je nach Event-Semantik nominal>max, min>max und
+    // nominal<min (siehe dieselbe, aus denselben Referenzdaten abgeleitete
+    // Feststellung in src/dashboard/services/devValidators.ts). Eine harte
+    // Fehlermarkierung wuerde echte, gueltige Live-Server-Daten faelschlich
+    // als "nicht verifizierbar" verwerfen.
+    numberField(result, row, 'nominal', path, { required: true, min: 0 });
+    numberField(result, row, 'min', path, { required: true, min: 0 });
+    numberField(result, row, 'max', path, { required: true, min: 0 });
     const lifetime = numberField(result, row, 'lifetime', path, { required: true, min: 0 });
     numberField(result, row, 'restock', path, { required: true, min: 0 });
     for (const key of ['saferadius', 'distanceradius', 'cleanupradius']) {
       numberField(result, row, key, path, { min: 0 });
     }
 
-    if (min !== null && max !== null && min > max) {
-      addIssue(result, 'ERROR', 'MIN_GT_MAX', path, 'min darf nicht groesser als max sein.');
-    }
-    if (nominal !== null && min !== null && max !== null && (nominal < min || nominal > max)) {
-      addIssue(result, 'ERROR', 'NOMINAL_OUTSIDE_RANGE', path, 'nominal muss zwischen min und max liegen.');
-    }
     if (lifetime !== null && (lifetime === 0 || lifetime > 604_800)) {
       addIssue(result, 'WARNING', 'UNUSUAL_LIFETIME', `${path}.lifetime`, 'Event-lifetime ist ungewoehnlich und sollte geprueft werden.');
     }

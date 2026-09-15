@@ -57,7 +57,10 @@ describe('AI-15 deterministic DayZ XML/JSON validation', () => {
     ]));
   });
 
-  test('blocks contradictory event ranges and invalid child references', () => {
+  test('does not invent a min/max/nominal ordering rule for events, but still blocks invalid child references', () => {
+    // Reale DayZ-1.29-Vanilla-Events enthalten je nach Semantik nominal>max,
+    // min>max und nominal<min - dieselbe, aus denselben Referenzdaten
+    // abgeleitete Feststellung wie in src/dashboard/services/devValidators.ts.
     const result = validateDayzKnowledgeFile(input('events.xml', `<events>
       <event name="TestEvent">
         <nominal>12</nominal><min>8</min><max>4</max><lifetime>180</lifetime><restock>0</restock>
@@ -65,11 +68,23 @@ describe('AI-15 deterministic DayZ XML/JSON validation', () => {
       </event>
     </events>`));
     expect(result.validForKnowledge).toBe(false);
-    expect(result.issues).toEqual(expect.arrayContaining([
+    expect(result.issues).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'MIN_GT_MAX' }),
       expect.objectContaining({ code: 'NOMINAL_OUTSIDE_RANGE' }),
+    ]));
+    expect(result.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'REFERENCE_MISSING' }),
     ]));
+  });
+
+  test('accepts real-world irregular nominal/min/max event ranges as valid knowledge', () => {
+    const result = validateDayzKnowledgeFile(input('events.xml', `<events>
+      <event name="AnimalCow"><nominal>7</nominal><min>2</min><max>3</max><lifetime>300</lifetime><restock>0</restock></event>
+      <event name="Trajectory"><nominal>0</nominal><min>2</min><max>4</max><lifetime>300</lifetime><restock>0</restock></event>
+      <event name="Variant"><nominal>5</nominal><min>4</min><max>3</max><lifetime>300</lifetime><restock>0</restock></event>
+    </events>`));
+    expect(result.validForKnowledge).toBe(true);
+    expect(result.issues.filter((issue) => issue.severity === 'ERROR')).toHaveLength(0);
   });
 
   test('reports unusual lifetime as warning without turning a syntactically valid file into false facts', () => {

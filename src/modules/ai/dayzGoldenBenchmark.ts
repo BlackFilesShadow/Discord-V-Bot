@@ -137,8 +137,12 @@ export const GOLDEN_DAYZ_VALIDATION_CASES: readonly GoldenValidationCase[] = [
     expectedCodes: ['SYNTAX_INVALID'], files: [{ path: 'types.xml', name: 'types.xml', content: '<types><type name="M4A1"></types>' }],
   },
   {
-    id: 'validation-events-range', category: 'VALIDATION', targetFile: 'events.xml', expectedValidForKnowledge: false,
-    expectedCodes: ['MIN_GT_MAX', 'NOMINAL_OUTSIDE_RANGE'], files: [{ path: 'events.xml', name: 'events.xml', content: `<events><event name="VehicleOffroadHatchback"><nominal>12</nominal><min>10</min><max>5</max><lifetime>300</lifetime><restock>0</restock></event></events>` }],
+    // Real 1.29-Vanilla-Events enthalten je nach Semantik nominal>max, min>max
+    // und nominal<min (siehe devValidators.ts, aus denselben Referenzdaten
+    // abgeleitet) - das ist kein Validierungsfehler, sonst wuerden echte
+    // Live-Server-Daten faelschlich als nicht verifizierbar verworfen.
+    id: 'validation-events-irregular-range-is-valid', category: 'VALIDATION', targetFile: 'events.xml', expectedValidForKnowledge: true,
+    expectedCodes: [], files: [{ path: 'events.xml', name: 'events.xml', content: `<events><event name="AnimalCow"><nominal>7</nominal><min>2</min><max>3</max><lifetime>300</lifetime><restock>0</restock></event></events>` }],
   },
   {
     id: 'validation-gameplay-valid', category: 'VALIDATION', targetFile: 'cfggameplay.json', expectedValidForKnowledge: true,

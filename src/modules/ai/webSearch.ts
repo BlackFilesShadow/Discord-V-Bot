@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { logger } from '../../utils/logger';
+import { wrapUntrustedContext } from './untrustedContext';
 
 /**
  * Web-Search-Modul fuer aktuelle Fakten.
@@ -389,10 +390,16 @@ export function formatSearchResultsForPrompt(results: WebSearchResult[]): string
     const head = `[Quelle ${i + 1}] ${r.source} \u2013 "${r.title}"${r.url ? `\nURL: ${r.url}` : ''}`;
     return `${head}\n${r.snippet}`;
   });
+  // Titel/Snippet/URL stammen von aussen (Wikipedia/DuckDuckGo, oeffentlich
+  // editierbar) und muessen deshalb wie jeder andere externe Kontext hinter
+  // der Untrusted-Context-Firewall stehen - eingebettete Anweisungen in einem
+  // praeparierten Suchtreffer duerfen die eigenen Systemregeln nicht ersetzen.
+  // Die Anleitung darunter ist eigener, vertrauenswuerdiger Systemtext und
+  // bleibt deshalb bewusst ausserhalb des Wrappers.
   return [
     'INTERNE RECHERCHE-DATEN (nicht erwaehnen, nur nutzen):',
     '',
-    blocks.join('\n\n---\n\n'),
+    wrapUntrustedContext(blocks.join('\n\n---\n\n'), 6000),
     '',
     'ANWEISUNGEN:',
     '- Beantworte die Nutzerfrage SELBSTBEWUSST und KONKRET auf Basis dieser Daten.',

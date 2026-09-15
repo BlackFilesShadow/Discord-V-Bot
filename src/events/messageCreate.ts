@@ -486,6 +486,7 @@ const messageCreateEvent: BotEvent = {
             channelId: msg.channel.id,
             guildId: msg.guildId,
           });
+          let chunksToSend: string[];
           if (r.success && r.result) {
             let cleaned = r.result
               .replace(/<@!?\d+>/g, '')
@@ -493,14 +494,7 @@ const messageCreateEvent: BotEvent = {
               .replace(/[ \t]{2,}/g, ' ')
               .trim();
             if (cleaned.length === 0) cleaned = '...';
-            const chunks = splitForDiscord(cleaned, 1900);
-            await msg.reply({
-              content: chunks[0],
-              allowedMentions: { repliedUser: true, parse: [] },
-            });
-            for (const c of chunks.slice(1)) {
-              await channel.send({ content: c, allowedMentions: { parse: [] } });
-            }
+            chunksToSend = splitForDiscord(cleaned, 1900);
           } else {
             const userMsg =
               r.error === 'RATE_LIMIT'
@@ -508,17 +502,47 @@ const messageCreateEvent: BotEvent = {
                     ? `⏳ Du hast gerade viele KI-Anfragen gesendet. Bitte warte noch etwa ${r.retryAfterSeconds ?? 60} Sekunden.`
                     : formatProviderRateLimitMessage(r.retryAfterSeconds))
                 : "🤔 Hmm, da hat gerade etwas nicht geklappt. Versuch's bitte gleich nochmal.";
-            await msg.reply({
-              content: userMsg,
-              allowedMentions: { repliedUser: true, parse: [] },
-            });
+            chunksToSend = [userMsg];
           }
 
-          logAudit('AI_MENTION_RESPONSE', 'AI', {
-            userId: msg.author.id,
-            channelId: msg.channelId,
-            questionLength: question.length,
-          });
+          // msg.reply() kann fehlschlagen (z.B. "Unknown Message", wenn die
+          // Ursprungsnachricht inzwischen geloescht wurde, fehlende Berechtigung,
+          // oder eine transiente Discord-API-Stoerung). Ohne den Fallback ginge
+          // eine bereits berechnete (und beim Provider bereits bezahlte) Antwort
+          // stillschweigend verloren - der Nutzer bekaeme weder Antwort noch
+          // Fehlermeldung, und der Audit-Log-Eintrag wuerde uebersprungen.
+          let delivered = false;
+          try {
+            await msg.reply({
+              content: chunksToSend[0],
+              allowedMentions: { repliedUser: true, parse: [] },
+            });
+            for (const c of chunksToSend.slice(1)) {
+              await channel.send({ content: c, allowedMentions: { parse: [] } });
+            }
+            delivered = true;
+          } catch (sendErr) {
+            logger.warn('AI-Mention-Antwort per reply() fehlgeschlagen, versuche Fallback ueber channel.send():', sendErr as Error);
+            try {
+              for (const c of chunksToSend) {
+                await channel.send({
+                  content: `<@${msg.author.id}> ${c}`.slice(0, 2000),
+                  allowedMentions: { users: [msg.author.id] },
+                });
+              }
+              delivered = true;
+            } catch (fallbackErr) {
+              logger.error('AI-Mention-Antwort konnte auch per Fallback nicht zugestellt werden - Antwort verloren:', fallbackErr as Error);
+            }
+          }
+
+          if (delivered) {
+            logAudit('AI_MENTION_RESPONSE', 'AI', {
+              userId: msg.author.id,
+              channelId: msg.channelId,
+              questionLength: question.length,
+            });
+          }
           return;
         }
       }

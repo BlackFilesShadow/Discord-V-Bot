@@ -33,12 +33,50 @@ export async function checkRateLimit(
   const windowStart = new Date(now.getTime() - config.windowMs);
 
   try {
-    const existing = await prisma.rateLimitEntry.findUnique({
-      where: { identifier_action: { identifier, action } },
-    });
+    // Bis zu zwei Versuche: der zweite faengt nur den seltenen Grenzfall ab,
+    // dass ein neues Fenster genau zwischen unserem fehlgeschlagenen
+    // Increment und dem Nachlesen von einer anderen Anfrage eroeffnet wurde.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Atomarer, bedingter Increment statt read-then-write (frueher:
+      // findUnique + separates update). Zwei nahezu gleichzeitige Anfragen
+      // konnten denselben count-Stand lesen und das Limit gemeinsam um
+      // einen Request ueberschreiten (TOCTOU-Race). Die Bedingung im WHERE
+      // (Fenster aktiv UND count < Limit) macht den Schreibvorgang selbst
+      // zur Entscheidung, nicht eine vorherige Lesung.
+      const incremented = await prisma.rateLimitEntry.updateMany({
+        where: {
+          identifier,
+          action,
+          windowStart: { gt: windowStart },
+          count: { lt: config.maxRequests },
+        },
+        data: { count: { increment: 1 } },
+      });
 
-    if (existing && existing.windowStart > windowStart) {
-      if (existing.count >= config.maxRequests) {
+      if (incremented.count === 1) {
+        const row = await prisma.rateLimitEntry.findUnique({
+          where: { identifier_action: { identifier, action } },
+        });
+        if (row) {
+          return {
+            allowed: true,
+            remaining: config.maxRequests - row.count,
+            resetAt: new Date(row.windowStart.getTime() + config.windowMs),
+          };
+        }
+      }
+
+      const existing = await prisma.rateLimitEntry.findUnique({
+        where: { identifier_action: { identifier, action } },
+      });
+
+      if (existing && existing.windowStart > windowStart) {
+        if (existing.count < config.maxRequests) {
+          // Der bedingte Increment ist an einer parallelen Aenderung
+          // vorbeigelaufen (Fenster wurde gerade erst eroeffnet) - noch ein
+          // Versuch statt faelschlich abzulehnen.
+          continue;
+        }
         logSecurity('RATE_LIMIT_EXCEEDED', 'MEDIUM', {
           identifier,
           action,
@@ -53,37 +91,36 @@ export async function checkRateLimit(
         };
       }
 
-      await prisma.rateLimitEntry.update({
+      await prisma.rateLimitEntry.upsert({
         where: { identifier_action: { identifier, action } },
-        data: { count: existing.count + 1 },
+        create: {
+          identifier,
+          action,
+          count: 1,
+          windowStart: now,
+          expiresAt: new Date(now.getTime() + config.windowMs),
+        },
+        update: {
+          count: 1,
+          windowStart: now,
+          expiresAt: new Date(now.getTime() + config.windowMs),
+        },
       });
 
       return {
         allowed: true,
-        remaining: config.maxRequests - existing.count - 1,
-        resetAt: new Date(existing.windowStart.getTime() + config.windowMs),
+        remaining: config.maxRequests - 1,
+        resetAt: new Date(now.getTime() + config.windowMs),
       };
     }
 
-    await prisma.rateLimitEntry.upsert({
-      where: { identifier_action: { identifier, action } },
-      create: {
-        identifier,
-        action,
-        count: 1,
-        windowStart: now,
-        expiresAt: new Date(now.getTime() + config.windowMs),
-      },
-      update: {
-        count: 1,
-        windowStart: now,
-        expiresAt: new Date(now.getTime() + config.windowMs),
-      },
-    });
-
+    // Nach mehreren Versuchen immer noch keine eindeutige Entscheidung
+    // moeglich (starke Gleichzeitigkeit) - fail-closed statt unbegrenzt
+    // durchzulassen.
+    logSecurity('RATE_LIMIT_CONTENTION', 'MEDIUM', { identifier, action });
     return {
-      allowed: true,
-      remaining: config.maxRequests - 1,
+      allowed: false,
+      remaining: 0,
       resetAt: new Date(now.getTime() + config.windowMs),
     };
   } catch (_error) {

@@ -279,31 +279,6 @@ export async function bootstrapGuildAwareness(client: Client): Promise<void> {
   logger.info(`GuildAwareness: ${ok}/${guilds.length} Guilds gesynct.`);
 }
 
-/**
- * Phase 6, Teil C: Schutz vor Cross-Guild-Datenlecks.
- *
- * Wirft, wenn eine Datenzeile zu einer anderen Guild gehoert als erwartet.
- * Datensaetze ohne `guildId` (Legacy) werden toleriert, weil ein hartes
- * Werfen sonst alte Records unbrauchbar macht. Solche Faelle werden geloggt.
- */
-export function assertGuildScope(
-  expectedGuildId: string | null | undefined,
-  actualGuildId: string | null | undefined,
-  resourceLabel: string,
-): void {
-  if (!expectedGuildId) return; // DM / Kontext ohne Guild: kein Check noetig
-  if (actualGuildId == null) {
-    // Legacy-Record ohne guildId – nur Warnung, nicht hart blockieren.
-    logger.warn(`assertGuildScope: ${resourceLabel} ohne guildId, erwartet ${expectedGuildId}`);
-    return;
-  }
-  if (expectedGuildId !== actualGuildId) {
-    throw new Error(
-      `Cross-Guild-Zugriff verhindert: ${resourceLabel} gehoert zu Guild ${actualGuildId}, erwartet ${expectedGuildId}`,
-    );
-  }
-}
-
 /** Nur fuer Tests / Hot-Reload. */
 export function _clearGuildAwarenessCache(): void {
   cache.clear();
@@ -329,7 +304,9 @@ function channelTypeLabel(t: ChannelType): string {
   }
 }
 
-function snapshotChannels(guild: Guild): ChannelSnapshot[] {  const out: ChannelSnapshot[] = [];
+/** @internal exportiert nur fuer gezielte Unit-Tests, kein oeffentlicher API-Vertrag. */
+export function snapshotChannels(guild: Guild): ChannelSnapshot[] {
+  const out: ChannelSnapshot[] = [];
   // Sortiere Categories zuerst, dann Kanaele in Position-Reihenfolge.
   const channels = Array.from(guild.channels.cache.values()).sort((a, b) => {
     const ap = (a as any).position ?? 0;
@@ -340,6 +317,11 @@ function snapshotChannels(guild: Guild): ChannelSnapshot[] {  const out: Channel
     if (!('name' in ch) || !ch.name) continue;
     // Threads ausblenden, das blaeht den Snapshot zu sehr auf.
     if ([ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread].includes(ch.type)) continue;
+    // Nur Kanaele, die @everyone tatsaechlich sehen kann, duerfen in den
+    // AI-Kontext einfliessen (dieselbe Regel wie bei snapshotRules) - sonst
+    // wuerden private/Admin-Kanalnamen ungefiltert in den aiBrief gelangen,
+    // der aktiv an den externen AI-Provider gesendet wird.
+    if (!isViewableByEveryone(guild, ch)) continue;
     const parent = (ch as any).parent?.name ?? null;
     out.push({
       name: ch.name.slice(0, 60),
@@ -370,7 +352,8 @@ function snapshotTopRoles(guild: Guild): RoleSnapshot[] {
 // Nur Kanaele, die @everyone tatsaechlich sehen kann, duerfen in den AI-Kontext einfliessen.
 // Sonst wuerden admin-/mod-only "Regel"-Kanaele (z.B. "mod-regeln", "staff-rules") ihren
 // Topic/Pins ungefiltert an den externen AI-Provider weitergeben.
-function isViewableByEveryone(guild: Guild, ch: GuildBasedChannel): boolean {
+/** @internal exportiert nur fuer gezielte Unit-Tests, kein oeffentlicher API-Vertrag. */
+export function isViewableByEveryone(guild: Guild, ch: GuildBasedChannel): boolean {
   try {
     const perms = (ch as any).permissionsFor?.(guild.roles.everyone);
     if (!perms) return true; // kein Overwrite-faehiger Channel-Typ -> keine Restriktion moeglich
@@ -380,7 +363,8 @@ function isViewableByEveryone(guild: Guild, ch: GuildBasedChannel): boolean {
   }
 }
 
-async function snapshotRules(guild: Guild): Promise<string | null> {
+/** @internal exportiert nur fuer gezielte Unit-Tests, kein oeffentlicher API-Vertrag. */
+export async function snapshotRules(guild: Guild): Promise<string | null> {
   const parts: string[] = [];
   const rulesChannel: GuildBasedChannel | null = guild.rulesChannel ?? null;
   const candidates: GuildBasedChannel[] = [];

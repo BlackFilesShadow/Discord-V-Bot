@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { isSensitiveKey, redactText, redactValue } from '../nitrado/mirror/redactor';
 import { LIVE_SERVER_MAX_DOC_CHARS } from './liveServerKnowledgeConstants';
+import { logger } from '../../utils/logger';
 
 export type LiveServerKnowledgeKind =
   | 'SERVER_CONFIG'
@@ -214,7 +215,12 @@ function parseGameplayJson(input: LiveServerKnowledgeFileInput): ParsedLiveServe
   let parsed: unknown;
   try {
     parsed = JSON.parse(input.content);
-  } catch {
+  } catch (e) {
+    // Diese Datei hat die vorgelagerte Syntax-Validierung passiert (sonst
+    // waere sie nie bis hierher gelangt) - ein Parse-Fehler an dieser Stelle
+    // deutet auf eine Divergenz zwischen Validierung und Parser hin und darf
+    // deshalb nicht unbemerkt zu leeren Dokumenten fuehren.
+    logger.warn('parseGameplayJson: JSON.parse fehlgeschlagen trotz Vorab-Validierung:', { path: input.path, e: String(e) });
     return [];
   }
   const lines: string[] = [];
@@ -224,7 +230,12 @@ function parseGameplayJson(input: LiveServerKnowledgeFileInput): ParsedLiveServe
 
 function parseTypesXml(input: LiveServerKnowledgeFileInput): ParsedLiveServerKnowledgeDocument[] {
   let doc: any;
-  try { doc = XML.parse(input.content); } catch { return []; }
+  try {
+    doc = XML.parse(input.content);
+  } catch (e) {
+    logger.warn('parseTypesXml: XML.parse fehlgeschlagen trotz Vorab-Validierung:', { path: input.path, e: String(e) });
+    return [];
+  }
   const types = asArray(doc?.types?.type);
   const lines: string[] = [];
   for (const entry of types) {
@@ -246,7 +257,12 @@ function parseTypesXml(input: LiveServerKnowledgeFileInput): ParsedLiveServerKno
 
 function parseEventsXml(input: LiveServerKnowledgeFileInput): ParsedLiveServerKnowledgeDocument[] {
   let doc: any;
-  try { doc = XML.parse(input.content); } catch { return []; }
+  try {
+    doc = XML.parse(input.content);
+  } catch (e) {
+    logger.warn('parseEventsXml: XML.parse fehlgeschlagen trotz Vorab-Validierung:', { path: input.path, e: String(e) });
+    return [];
+  }
   const events = asArray(doc?.events?.event);
   const lines: string[] = [];
   for (const entry of events) {
@@ -268,7 +284,12 @@ function parseEventsXml(input: LiveServerKnowledgeFileInput): ParsedLiveServerKn
 
 function parseGlobalsXml(input: LiveServerKnowledgeFileInput): ParsedLiveServerKnowledgeDocument[] {
   let doc: any;
-  try { doc = XML.parse(input.content); } catch { return []; }
+  try {
+    doc = XML.parse(input.content);
+  } catch (e) {
+    logger.warn('parseGlobalsXml: XML.parse fehlgeschlagen trotz Vorab-Validierung:', { path: input.path, e: String(e) });
+    return [];
+  }
   const vars = asArray(doc?.variables?.var ?? doc?.globals?.var);
   const lines: string[] = [];
   for (const entry of vars) {
@@ -308,7 +329,12 @@ function parseGenericSafeXml(
   display: string,
 ): ParsedLiveServerKnowledgeDocument[] {
   let doc: unknown;
-  try { doc = XML.parse(input.content); } catch { return []; }
+  try {
+    doc = XML.parse(input.content);
+  } catch (e) {
+    logger.warn(`parseGenericSafeXml(${kind}): XML.parse fehlgeschlagen trotz Vorab-Validierung:`, { path: input.path, e: String(e) });
+    return [];
+  }
   const lines: string[] = [];
   flattenXmlScalars(doc, '', lines);
   return chunkLines(kind, display, sourceKey(input.path), input.sha256, lines);

@@ -335,6 +335,14 @@ function regexEscape(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// Feste, kleine Whitelist an Konnektor-/Fuellwoertern, die zwischen Feldname
+// und Zahl stehen duerfen (z.B. "nominal liegt aktuell ungefaehr bei 12").
+// Bewusst als begrenzte Wiederholung eines geschlossenen Wort-Katalogs
+// gehalten statt eines generischen "beliebiger Text dazwischen"-Musters:
+// das faengt umschriebene Zahlen-Claims ab, ohne dass ein unbeteiligter Wert
+// an anderer Stelle der Antwort faelschlich als Claim erkannt wird.
+const NUMERIC_CLAIM_CONNECTOR = '(?:=|:|ist|liegt|betraegt|beträgt|bei|von|auf|aktuell|derzeit|momentan|gerade|zurzeit|ungefähr|ungefaehr|etwa|circa|ca\\.?|rund)';
+
 function normalizeComparable(value: string): string {
   return normalize(cleanValue(value)).replace(',', '.');
 }
@@ -357,7 +365,7 @@ export function validateLiveServerAnswer(
     const numericAllowed = fact.values.filter((value) => /^-?\d+(?:[.,]\d+)?$/.test(value));
     if (numericAllowed.length === 0) continue;
     const field = regexEscape(fact.field);
-    const claim = new RegExp(`\\b${field}\\b\\s*(?:=|:|ist|liegt\\s+bei|betraegt|beträgt)?\\s*(-?\\d+(?:[.,]\\d+)?)`, 'i').exec(answer);
+    const claim = new RegExp(`\\b${field}\\b(?:\\s*${NUMERIC_CLAIM_CONNECTOR}){0,4}\\s*(-?\\d+(?:[.,]\\d+)?)`, 'i').exec(answer);
     if (!claim) continue;
     const asserted = normalizeComparable(claim[1]);
     if (!numericAllowed.some((allowed) => normalizeComparable(allowed) === asserted)) {

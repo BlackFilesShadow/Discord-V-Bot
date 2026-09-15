@@ -135,6 +135,43 @@ describe('AI-16 DayZ hallucination guard', () => {
     expect(buildHallucinationGuardFallback(validation.violations)).toMatch(/nicht sicher belegen/i);
   });
 
+  test('post-validation blocks an invented numeric value even when paraphrased with filler words', () => {
+    // Regressionsschutz: die frühere Regex verlangte einen der festen
+    // Konnektoren unmittelbar vor der Zahl - Fuellwoerter wie "aktuell
+    // ungefaehr" dazwischen liessen den Claim unerkannt (und damit
+    // unvalidiert) durchrutschen.
+    const result = guard([snippet('type=M4A1 | nominal=7')]);
+    const validation = validateLiveServerAnswer(
+      'Was ist nominal von M4A1 auf meinem Server?',
+      'Bei M4A1 liegt nominal aktuell ungefähr bei 12.',
+      result,
+    );
+    expect(validation.valid).toBe(false);
+    expect(validation.violations).toContain('UNSUPPORTED_VALUE:M4A1.nominal=12');
+  });
+
+  test('post-validation accepts a grounded numeric value even when paraphrased with filler words', () => {
+    const result = guard([snippet('type=M4A1 | nominal=7')]);
+    expect(validateLiveServerAnswer(
+      'Was ist nominal von M4A1 auf meinem Server?',
+      'Bei M4A1 liegt nominal aktuell ungefähr bei 7.',
+      result,
+    )).toEqual({ valid: true, violations: [] });
+  });
+
+  test('does not falsely flag an unrelated distant number as a claim (bounded filler-word gap)', () => {
+    // Der geweitete Zahlen-Claim-Regex bleibt bewusst begrenzt (max. 4
+    // Konnektor-Woerter aus einer festen Liste) - ein Wert, der viele
+    // themenfremde Woerter nach dem Feldnamen entfernt vorkommt, darf
+    // deshalb weiterhin nicht als Claim fuer dieses Feld gelten.
+    const result = guard([snippet('type=M4A1 | nominal=7')]);
+    expect(validateLiveServerAnswer(
+      'Was ist nominal von M4A1 auf meinem Server?',
+      'Zum nominal Wert kann ich grundsätzlich sagen, dass DayZ-Server generell viele Einstellungen haben; übrigens hat der Server derzeit 12 Spieler online.',
+      result,
+    )).toEqual({ valid: true, violations: [] });
+  });
+
   test('post-validation accepts an exact grounded numeric value', () => {
     const result = guard([snippet('type=M4A1 | nominal=7')]);
     expect(validateLiveServerAnswer(
