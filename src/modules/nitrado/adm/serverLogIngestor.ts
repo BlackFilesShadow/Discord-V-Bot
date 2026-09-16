@@ -134,7 +134,16 @@ export interface AdmPersistClient {
   // diesen Port. Der produktive PrismaClient besitzt ihn durch das additive
   // FlagActivityEvent-Schema immer.
   flagActivityEvent?: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
-  admSourceCursor: { upsert: (args: unknown) => Promise<unknown> };
+  admSourceCursor: {
+    upsert: (args: unknown) => Promise<unknown>;
+    // Optional: der produktive PrismaClient hat diese Methode immer. Wird sie
+    // bereitgestellt, prueft persistAdmEvents vor dem Cursor-Schreiben, ob ein
+    // paralleler Sync-Lauf (z.B. eine zweite Bot-Instanz, die denselben
+    // nitradoConnId pollt) den Cursor bereits weiter vorangebracht hat, und
+    // ueberschreibt processedByteOffset dann nicht rueckwaerts. Fehlt sie
+    // (Alt-/Test-Doubles), bleibt das bisherige Verhalten unveraendert.
+    findUnique?: (args: unknown) => Promise<{ processedByteOffset: bigint } | null>;
+  };
   $transaction: <T>(fn: (tx: AdmPersistClient) => Promise<T>) => Promise<T>;
 }
 
@@ -225,6 +234,32 @@ export async function persistAdmEvents(
         throw new Error('FlagActivityEvent-Persistenz ist fuer ein erkanntes Flaggenereignis nicht verfuegbar');
       }
       await persistRowsInBatches(args => tx.flagActivityEvent!.createMany(args), flagRows);
+    }
+
+    if (tx.admSourceCursor.findUnique) {
+      // Events sind bereits idempotent eingefuegt (eventKey-Dedup). Nur der
+      // Cursor selbst ist bei zwei parallel denselben nitradoConnId pollenden
+      // Instanzen ohne diese Pruefung rueckwaerts-verwundbar: ein langsamerer
+      // Lauf koennte processedByteOffset hinter einen bereits weiter
+      // fortgeschrittenen Wert zuruecksetzen. Read-then-write statt eines
+      // einzelnen atomaren Statements, da AdmPersistClient bewusst kein
+      // $executeRaw fuer Test-Doubles exponiert - das verengt das Race-Fenster
+      // erheblich, ohne es fuer eine adversarielle Nebenlaeufigkeit zu
+      // garantieren (fuer den beschriebenen Bedrohungsfall - zwei kooperative
+      // Bot-Instanzen, keine feindliche Nebenlaeufigkeit - ausreichend).
+      const existing = await tx.admSourceCursor.findUnique({
+        where: {
+          guildId_nitradoConnId_fileIdentity: {
+            guildId: scope.guildId,
+            nitradoConnId: scope.nitradoConnId,
+            fileIdentity: meta.fileIdentity,
+          },
+        },
+        select: { processedByteOffset: true },
+      });
+      if (existing && existing.processedByteOffset >= BigInt(result.newOffset)) {
+        return { inserted };
+      }
     }
     await tx.admSourceCursor.upsert({
       where: {

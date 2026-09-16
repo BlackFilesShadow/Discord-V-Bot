@@ -18,6 +18,7 @@ import { startSnapshot, getSnapshotProgress } from '../../../modules/nitrado/mir
 import {
   listSnapshots, getSettings, listFiles, findFiles, getFile,
 } from '../../../modules/nitrado/mirror/queryApi';
+import { redactObject, redactText } from '../../../modules/nitrado/mirror/redactor';
 
 export const devNitradoMirrorRouter = Router();
 
@@ -187,9 +188,19 @@ devNitradoMirrorRouter.get('/:snapshotId/settings', async (req, res) => {
   if (rejectOutsideRestrictedGuild(req, res, guildId)) return;
   if (!await snapshotExistsInGuild(snapshotId, guildId)) return res.status(404).json({ error: 'Snapshot nicht gefunden.' });
 
-  const settings = await getSettings(snapshotId);
+  const settings = await getSettings(snapshotId, guildId);
   if (!settings) return res.status(404).json({ error: 'Snapshot nicht gefunden.' });
-  return res.json(settings);
+  // Rohe Server-Settings koennen Klartext-Secrets enthalten (Passwoerter,
+  // RCon-Zugang, Whitelist/Ban-Listen) - auch fuer DEV nie unredigiert
+  // ausliefern, analog zum bereits bestehenden KI-Prompt-Redactor.
+  return res.json({
+    serviceMeta: settings.serviceMeta && typeof settings.serviceMeta === 'object'
+      ? redactObject(settings.serviceMeta as Record<string, unknown>)
+      : settings.serviceMeta,
+    gameserver: settings.gameserver && typeof settings.gameserver === 'object'
+      ? redactObject(settings.gameserver as Record<string, unknown>)
+      : settings.gameserver,
+  });
 });
 
 devNitradoMirrorRouter.get('/:snapshotId/files', async (req, res) => {
@@ -200,7 +211,7 @@ devNitradoMirrorRouter.get('/:snapshotId/files', async (req, res) => {
   if (rejectOutsideRestrictedGuild(req, res, guildId)) return;
   if (!await snapshotExistsInGuild(snapshotId, guildId)) return res.status(404).json({ error: 'Snapshot nicht gefunden.' });
 
-  const rows = await listFiles(snapshotId, dir);
+  const rows = await listFiles(snapshotId, guildId, dir);
   return res.json({
     dir,
     entries: rows.map(r => ({ ...r, sizeBytes: r.sizeBytes.toString() })),
@@ -215,7 +226,7 @@ devNitradoMirrorRouter.get('/:snapshotId/find', async (req, res) => {
   if (rejectOutsideRestrictedGuild(req, res, guildId)) return;
   if (!await snapshotExistsInGuild(snapshotId, guildId)) return res.status(404).json({ error: 'Snapshot nicht gefunden.' });
 
-  const rows = await findFiles(snapshotId, q, 200);
+  const rows = await findFiles(snapshotId, guildId, q, 200);
   return res.json({ entries: rows.map(r => ({ ...r, sizeBytes: r.sizeBytes.toString() })) });
 });
 
@@ -228,7 +239,7 @@ devNitradoMirrorRouter.get('/:snapshotId/file', async (req, res) => {
   if (!await snapshotExistsInGuild(snapshotId, guildId)) return res.status(404).json({ error: 'Snapshot nicht gefunden.' });
 
   try {
-    const file = await getFile(snapshotId, filePath);
+    const file = await getFile(snapshotId, guildId, filePath);
     if (!file) return res.status(404).json({ error: 'Datei nicht im Snapshot.' });
     if (file.meta.oversize) {
       return res.json({
@@ -238,9 +249,11 @@ devNitradoMirrorRouter.get('/:snapshotId/file', async (req, res) => {
       });
     }
     if (file.meta.isText && file.textContent !== null) {
+      // Textdateien wie serverDZ.cfg koennen Klartext-Passwoerter/RCon-Zugang
+      // enthalten - auch fuer DEV nie unredigiert ausliefern.
       return res.json({
         meta: { ...file.meta, sizeBytes: file.meta.sizeBytes.toString() },
-        text: file.textContent,
+        text: redactText(file.textContent),
         oversize: false,
       });
     }
