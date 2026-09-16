@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const read = (relative: string): string => normalizeSourceNewlines(fs.readFileSync(path.resolve(process.cwd(), relative), 'utf8'));
 const panel = read('dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx');
+const managerPicker = read('dashboard-ui/src/components/economy/ManagerPicker.tsx');
 const route = read('src/dashboard/routes/v2/economyVirtualAccounts.ts');
 const safetyRoute = read('src/dashboard/routes/v2/economyVirtualAccountTreasurySafety.ts');
 
@@ -12,8 +13,8 @@ describe('Economy virtual account member autocomplete gate', () => {
     expect(panel).toContain("import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';");
     expect(panel).toContain("queryKey: ['economy-virtual-payout-members', guildId, slot, query]");
     expect(panel).toContain('/economy/virtual-accounts/members?slot=${encodeURIComponent(slot)}&limit=20');
-    expect(panel).toContain('/economy/virtual-accounts/control/members?slot=${encodeURIComponent(slot)}');
-    expect(panel).toContain('placeholder="Guild-Mitglied suchen…"');
+    expect(managerPicker).toContain('/economy/virtual-accounts/control/members?slot=${encodeURIComponent(slot)}');
+    expect(managerPicker).toContain('placeholder="Guild-Mitglied suchen…"');
     expect(panel).toContain('placeholder="Discord-User suchen…"');
     expect(route).toContain("economyVirtualAccountsRouter.get('/members', payoutMemberSearchLimiter, requireGuildPermission('economy.view')");
   });
@@ -48,6 +49,6 @@ describe('Economy virtual account member autocomplete gate', () => {
     expect(route).toContain('max: 30');
     expect(route).toContain('filter(member => !member.user.bot)');
     expect(route).toContain("where: { discordId: { in: discordIds }, status: 'ACTIVE' }");
-    expect(panel).toContain("queryKey: ['economy-virtual-manager-members', guildId, slot, query]");
+    expect(managerPicker).toContain("queryKey: ['economy-virtual-manager-members', guildId, slot, query]");
   });
 });

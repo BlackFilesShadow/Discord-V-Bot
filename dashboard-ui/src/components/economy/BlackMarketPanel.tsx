@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, Check, PackagePlus, RefreshCw, RotateCcw, ShoppingCart, Store, Trash2, Truck, WalletCards } from 'lucide-react';
+import { Archive, Check, PackagePlus, RefreshCw, RotateCcw, ShieldCheck, ShoppingCart, Store, Trash2, Truck, WalletCards } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -9,6 +9,7 @@ import { Combobox, type ComboboxOption } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { BlackMarketDiscordSettings } from './BlackMarketDiscordSettings';
+import { ManagerPicker } from './ManagerPicker';
 
 interface DeliveryItem {
   itemText: string;
@@ -129,6 +130,9 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   const [payoutMemberQuery, setPayoutMemberQuery] = useState('');
   const [refundReasons, setRefundReasons] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
+  const [managerEditId, setManagerEditId] = useState<string | null>(null);
+  const [managerDraft, setManagerDraft] = useState<string[]>([]);
 
   const dashboardMeta = useQuery({
     queryKey: ['dashboard-slot-meta', guildId, slot],
@@ -222,17 +226,44 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
   });
 
   const removeVendor = useMutation({
-    mutationFn: (id: string) => api.del<{ ok: boolean; removed: { id: string; name: string; mode: 'CONTROL_HIDDEN'; changed: boolean }; syncWarning?: string | null }>(
+    mutationFn: (id: string) => api.del<{ ok: boolean; removed: { id: string; name: string; mode: 'CONTROL_HIDDEN'; changed: boolean; walletForfeited: string; bankForfeited: string }; syncWarning?: string | null }>(
       `/api/v2/guilds/${guildId}/economy/black-market/vendors/${id}?${scope}`,
     ),
     onSuccess: result => {
+      setRemoveConfirmId(null);
+      const forfeited = BigInt(result.removed.walletForfeited || '0') > 0n || BigInt(result.removed.bankForfeited || '0') > 0n
+        ? ` Verbleibendes Guthaben (${money(result.removed.walletForfeited, currencyEmoji)} Wallet, ${money(result.removed.bankForfeited, currencyEmoji)} Bank) wurde verworfen.`
+        : '';
       const base = result.removed.changed
-        ? `Haendler „${result.removed.name}“ entfernt. Bestell-, Kauf- und Audit-Historie bleiben erhalten.`
+        ? `Haendler „${result.removed.name}“ entfernt. Bestell-, Kauf- und Audit-Historie bleiben erhalten.${forfeited}`
         : `Haendler „${result.removed.name}“ war bereits entfernt.`;
       setMessage({ ok: true, text: syncText(base, result.syncWarning) });
       invalidate();
     },
-    onError: (error: Error) => setMessage({ ok: false, text: `Entfernen fehlgeschlagen: ${error.message}` }),
+    onError: (error: Error) => { setRemoveConfirmId(null); setMessage({ ok: false, text: `Entfernen fehlgeschlagen: ${error.message}` }); },
+  });
+
+  const vendorManagers = useQuery({
+    queryKey: ['black-market-vendor-managers', guildId, slot, managerEditId],
+    queryFn: () => api.get<{ managers: string[] }>(`/api/v2/guilds/${guildId}/economy/black-market/vendors/${managerEditId}/managers?${scope}`),
+    enabled: managerEditId !== null,
+    retry: false,
+  });
+  useEffect(() => {
+    if (vendorManagers.data) setManagerDraft(vendorManagers.data.managers);
+  }, [vendorManagers.data]);
+
+  const saveVendorManagers = useMutation({
+    mutationFn: (vars: { id: string; managers: string[] }) => api.put<{ ok: boolean; managers: string[]; syncWarning?: string | null }>(
+      `/api/v2/guilds/${guildId}/economy/black-market/vendors/${vars.id}/managers?${scope}`,
+      { managers: vars.managers },
+    ),
+    onSuccess: result => {
+      setMessage({ ok: true, text: syncText('Kontoverwalter aktualisiert.', result.syncWarning) });
+      setManagerEditId(null);
+      void qc.invalidateQueries({ queryKey: ['black-market-vendor-managers', guildId, slot] });
+    },
+    onError: (error: Error) => setMessage({ ok: false, text: `Kontoverwalter konnten nicht gespeichert werden: ${error.message}` }),
   });
 
   const createListing = useMutation({
@@ -388,18 +419,50 @@ export function BlackMarketPanel({ guildId, slot }: { guildId: string; slot: str
                           <option value="WALLET">Wallet</option><option value="BANK">Bank</option>
                         </Select>
                         <Button size="sm" variant="ghost" disabled={!payoutValid || payoutVendor.isPending} onClick={() => payoutVendor.mutate({ id: vendor.id, draft })}><WalletCards className="h-3.5 w-3.5 mr-1" />Auszahlen</Button>
-                        <Button aria-label={`Haendler ${vendor.name} archivieren`} title="Archivieren ist erst möglich, wenn Guthaben, aktive Angebote und offene Bestellungen abgearbeitet sind." size="sm" variant="ghost" disabled={archiveVendor.isPending || removeVendor.isPending} onClick={() => archiveVendor.mutate(vendor.id)}><Archive className="h-3.5 w-3.5 mr-1" />Archivieren</Button>
+                        <Button aria-label={`Haendler ${vendor.name} archivieren`} title="Archivieren ist erst möglich, wenn Guthaben, aktive Angebote und offene Bestellungen abgearbeitet sind." size="sm" variant="ghost" disabled={archiveVendor.isPending || removeVendor.isPending} onClick={() => { setRemoveConfirmId(null); archiveVendor.mutate(vendor.id); }}><Archive className="h-3.5 w-3.5 mr-1" />Archivieren</Button>
+                        <Button
+                          aria-label={`Kontoverwalter fuer ${vendor.name} bearbeiten`}
+                          title="Legt fest, wer diesen Haendler ueber das Discord-Kontoverwalter-Panel (Auszahlung/Remove/Pay/Bestellung abschliessen) verwalten darf."
+                          size="sm"
+                          variant="ghost"
+                          disabled={saveVendorManagers.isPending}
+                          onClick={() => { setRemoveConfirmId(null); setManagerEditId(managerEditId === vendor.id ? null : vendor.id); }}
+                        ><ShieldCheck className="h-3.5 w-3.5 mr-1" />Verwalter</Button>
                         <Button
                           className="2xl:col-start-5"
                           aria-label={`Haendler ${vendor.name} entfernen`}
-                          title="Entfernen ist nur für aktive Händler ohne Wallet-/Bank-Guthaben, aktive Angebote oder offene Bestellungen möglich. Historie bleibt erhalten."
+                          title="Entfernen ist nur für aktive Händler ohne aktive Angebote oder offene Bestellungen möglich. Verbleibendes Guthaben wird dabei verworfen. Historie bleibt erhalten."
                           size="sm"
                           variant="danger"
                           disabled={removeVendor.isPending || archiveVendor.isPending}
                           onClick={() => {
-                            if (window.confirm(`Haendler „${vendor.name}“ wirklich entfernen? Bestell-, Kauf- und Audit-Historie bleiben erhalten.`)) removeVendor.mutate(vendor.id);
+                            if (removeConfirmId !== vendor.id) { setRemoveConfirmId(vendor.id); return; }
+                            removeVendor.mutate(vendor.id);
                           }}
-                        ><Trash2 className="h-3.5 w-3.5 mr-1" />Löschen</Button>
+                        ><Trash2 className="h-3.5 w-3.5 mr-1" />{removeConfirmId === vendor.id ? 'Wirklich entfernen?' : 'Löschen'}</Button>
+                      </div>
+                    )}
+                    {removeConfirmId === vendor.id && (
+                      <p className="text-[11px] text-danger">
+                        Haendler „{vendor.name}“ wird entfernt. Verbleibendes Wallet-/Bankguthaben wird dabei verworfen. Bestell-, Kauf- und Audit-Historie bleiben erhalten. Klicke „Wirklich entfernen?“ erneut zur Bestätigung.
+                      </p>
+                    )}
+                    {managerEditId === vendor.id && (
+                      <div className="space-y-2 border-t border-border/40 pt-2">
+                        <p className="text-[11px] text-muted">Kontoverwalter erhalten Zugriff auf den gemeinsamen Discord-Kontoverwalter-Kanal und koennen diesen Haendler darueber verwalten.</p>
+                        {vendorManagers.isLoading && <p className="text-[11px] text-muted">Lade Kontoverwalter…</p>}
+                        {vendorManagers.isError && <p className="text-[11px] text-danger">Kontoverwalter konnten nicht geladen werden: {(vendorManagers.error as Error).message}</p>}
+                        {!vendorManagers.isLoading && !vendorManagers.isError && (
+                          <>
+                            <ManagerPicker guildId={guildId} slot={slot} managers={managerDraft} onChange={setManagerDraft} disabled={saveVendorManagers.isPending} />
+                            <div className="flex gap-2">
+                              <Button size="sm" disabled={saveVendorManagers.isPending || managerDraft.length === 0} onClick={() => saveVendorManagers.mutate({ id: vendor.id, managers: managerDraft })}>
+                                {saveVendorManagers.isPending ? 'Speichere…' : 'Kontoverwalter speichern'}
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={saveVendorManagers.isPending} onClick={() => setManagerEditId(null)}>Abbrechen</Button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>

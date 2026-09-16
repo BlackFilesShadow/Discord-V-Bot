@@ -35,13 +35,18 @@ export async function listHiddenMarketVendorIds(args: {
  * Der erste Aufruf ist nur fuer ACTIVE-Haendler erlaubt und archiviert Konto +
  * Control-Hidden-Marker atomar. Ein zweiter Aufruf auf denselben bereits
  * versteckten/archivierten Haendler ist idempotent erfolgreich.
+ *
+ * Wallet-/Bankguthaben blockiert das Entfernen bewusst NICHT (expliziter
+ * Nutzer-Wunsch) - ein verbleibender Betrag wird als walletForfeited/
+ * bankForfeited zurueckgegeben, damit der Aufrufer ihn auditierbar macht statt
+ * ihn stillschweigend verschwinden zu lassen.
  */
 export async function removeMarketVendorFromControl(args: {
   guildId: GuildId;
   nitradoConnId: NitradoConnId;
   vendorAccountId: string;
   actorDiscordId: UserDiscordId;
-}): Promise<{ id: string; name: string; mode: 'CONTROL_HIDDEN'; changed: boolean }> {
+}): Promise<{ id: string; name: string; mode: 'CONTROL_HIDDEN'; changed: boolean; walletForfeited: string; bankForfeited: string }> {
   await assertEconomyScopeReady(args.guildId, args.nitradoConnId);
 
   return prisma.$transaction(async tx => {
@@ -63,7 +68,7 @@ export async function removeMarketVendorFromControl(args: {
     );
     if (hidden[0]) {
       if (vendor.status !== 'ARCHIVED') throw new Error('Haendler-Control-Marker ist inkonsistent; Entfernen abgebrochen.');
-      return { id: vendor.id, name: vendor.name, mode: 'CONTROL_HIDDEN' as const, changed: false };
+      return { id: vendor.id, name: vendor.name, mode: 'CONTROL_HIDDEN' as const, changed: false, walletForfeited: '0', bankForfeited: '0' };
     }
 
     if (vendor.status !== 'ACTIVE') throw new Error('Nur aktive Haendler koennen entfernt werden.');
@@ -98,9 +103,15 @@ export async function removeMarketVendorFromControl(args: {
       String(args.guildId),
       String(args.nitradoConnId),
     );
-    if (vendor.balance !== 0n || (finance[0]?.bankBalance ?? 0n) !== 0n) {
-      throw new Error('Haendler besitzt noch Guthaben in Wallet oder Bank. Zahle es vor dem Entfernen aus.');
-    }
+    // Entfernen ist auf ausdruecklichen Wunsch unabhaengig vom Kontostand
+    // moeglich. Verbleibendes Wallet-/Bankguthaben wird dabei verworfen (kein
+    // automatischer Auszahlungsschritt) - der Aufrufer muss den Betrag vorher
+    // explizit ueber "Auszahlen" abholen, wenn er erhalten bleiben soll. Damit
+    // dieser Verlust nachvollziehbar bleibt, wird er unten an den Aufrufer
+    // zurueckgegeben und von diesem ins Audit-Log geschrieben (gleiches Muster
+    // wie beim generischen CUSTOM-Konto-Hard-Delete).
+    const walletForfeited = vendor.balance;
+    const bankForfeited = finance[0]?.bankBalance ?? 0n;
 
     const archived = await raw.$executeRawUnsafe(
       'UPDATE "EconomyVirtualAccount" SET "status"=\'ARCHIVED\'::"EconomyVirtualAccountStatus", "archivedAt"=CURRENT_TIMESTAMP, "archivedByDiscordId"=$4, "updatedAt"=CURRENT_TIMESTAMP WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "kind"=\'MARKET_VENDOR\'::"EconomyVirtualAccountKind" AND "status"=\'ACTIVE\'::"EconomyVirtualAccountStatus"',
@@ -119,6 +130,13 @@ export async function removeMarketVendorFromControl(args: {
     );
     if (marker !== 1) throw new Error('Haendler konnte nicht sicher aus der Verwaltung entfernt werden.');
 
-    return { id: vendor.id, name: vendor.name, mode: 'CONTROL_HIDDEN' as const, changed: true };
+    return {
+      id: vendor.id,
+      name: vendor.name,
+      mode: 'CONTROL_HIDDEN' as const,
+      changed: true,
+      walletForfeited: walletForfeited.toString(),
+      bankForfeited: bankForfeited.toString(),
+    };
   });
 }

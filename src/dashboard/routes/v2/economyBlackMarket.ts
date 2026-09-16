@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
 import { tryGetDashboardClient } from '../../clientRegistry';
-import { asUserDiscordId } from '../../../types/scope';
+import { asUserDiscordId, type UserDiscordId } from '../../../types/scope';
 import { logAuditDb } from '../../../utils/logger';
 import {
   archiveMarketListing,
@@ -36,6 +36,8 @@ import {
   type MarketDiscordChannelConfig,
 } from '../../../modules/economy/marketDiscordChannelValidation';
 import { syncVirtualAccountProjectionLive } from '../../../modules/economy/virtualAccountLiveUpdates';
+import { listVirtualAccountManagers, replaceVirtualAccountManagers } from '../../../modules/economy/virtualAccountFinance';
+import { refreshConfiguredVirtualManagerPanelSafe } from '../../../modules/economy/virtualAccountManagerPanelSafety';
 
 export const economyBlackMarketRouter = Router({ mergeParams: true });
 type Req = Parameters<Parameters<typeof economyBlackMarketRouter.get>[1]>[0];
@@ -115,6 +117,36 @@ async function requireActiveGuildMember(guildId: string, userId: string): Promis
   if (!member || member.user.bot) throw new Error('Zielnutzer ist kein aktives menschliches Guild-Mitglied.');
 }
 
+async function validateManagers(guildId: string, raw: unknown): Promise<UserDiscordId[]> {
+  if (!Array.isArray(raw) || raw.length > 25) throw new Error('managers muss eine Liste mit maximal 25 Discord-IDs sein.');
+  const ids = [...new Set(raw.map(value => String(value).trim()))];
+  if (ids.length === 0) return [];
+  const client = tryGetDashboardClient();
+  if (!client) throw new Error('Bot nicht bereit; Kontoverwalter konnten nicht validiert werden.');
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) throw new Error('Bot nicht in Guild.');
+  const valid: UserDiscordId[] = [];
+  for (const id of ids) {
+    if (!/^\d{17,20}$/.test(id)) throw new Error('Ungueltige Discord-ID in Kontoverwaltern.');
+    const member = guild.members.cache.get(id) ?? await guild.members.fetch(id).catch(() => null);
+    if (!member || member.user.bot) throw new Error(`Kontoverwalter ${id} ist kein aktives menschliches Guild-Mitglied.`);
+    valid.push(asUserDiscordId(id));
+  }
+  return valid;
+}
+
+async function refreshVendorManagerPanel(req: Req, actorDiscordId: string): Promise<string | null> {
+  const { scope, connId } = scoped(req);
+  const client = tryGetDashboardClient();
+  if (!client) return 'Bot nicht bereit; Kontoverwalter-Kanal konnte noch nicht synchronisiert werden.';
+  try {
+    await refreshConfiguredVirtualManagerPanelSafe(client, scope.guildId, connId, asUserDiscordId(actorDiscordId));
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
 async function immediateVirtualSync(req: Req, accountId: string): Promise<string | null> {
   const { scope, connId } = scoped(req);
   const client = tryGetDashboardClient();
@@ -141,7 +173,39 @@ economyBlackMarketRouter.post('/vendors', requireGuildPermission('economy.manage
   try {
     const vendor = await createMarketVendor({ guildId: scope.guildId, nitradoConnId: connId, name: String(req.body?.name ?? ''), createdByDiscordId: asUserDiscordId(scope.actorDiscordId) });
     logAuditDb('MARKET_VENDOR_CREATED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { nitradoConnId: connId, vendorAccountId: vendor.id } });
-    res.status(201).json(vendorJson(vendor));
+    // Der Ersteller ist bereits als Kontoverwalter (EconomyVirtualAccountManager)
+    // eingetragen - ohne diesen Refresh bekaeme er aber nie den Discord-
+    // Kanalzugriff auf das gemeinsame Kontoverwalter-Panel, da MARKET_VENDOR-
+    // Erstellung anders als bei CUSTOM-Konten sonst keine Panel-Synchronisierung
+    // ausloest.
+    const syncWarning = await refreshVendorManagerPanel(req, scope.actorDiscordId);
+    res.status(201).json({ ...vendorJson(vendor), syncWarning });
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyBlackMarketRouter.get('/vendors/:vendorId/managers', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  try {
+    const managers = await listVirtualAccountManagers(scope.guildId, connId, String(req.params.vendorId));
+    res.json({ managers: managers.map(row => row.userDiscordId) });
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
+economyBlackMarketRouter.put('/vendors/:vendorId/managers', requireGuildPermission('economy.manage'), async (req, res) => {
+  const { scope, connId } = scoped(req);
+  try {
+    const managers = await validateManagers(String(scope.guildId), req.body?.managers);
+    if (managers.length === 0) throw new Error('Ein Haendler benoetigt mindestens einen Kontoverwalter.');
+    await replaceVirtualAccountManagers({
+      guildId: scope.guildId,
+      nitradoConnId: connId,
+      accountId: String(req.params.vendorId),
+      userDiscordIds: managers,
+      addedByDiscordId: asUserDiscordId(scope.actorDiscordId),
+    });
+    const syncWarning = await refreshVendorManagerPanel(req, scope.actorDiscordId);
+    logAuditDb('MARKET_VENDOR_MANAGERS_UPDATED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { nitradoConnId: connId, vendorAccountId: req.params.vendorId, managers: managers.length } });
+    res.json({ ok: true, managers, syncWarning });
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -198,6 +262,8 @@ economyBlackMarketRouter.delete('/vendors/:vendorId', requireGuildPermission('ec
         vendorName: removed.name,
         mode: removed.mode,
         changed: removed.changed,
+        walletForfeited: removed.walletForfeited,
+        bankForfeited: removed.bankForfeited,
       },
     });
     res.json({ ok: true, removed, syncWarning });
