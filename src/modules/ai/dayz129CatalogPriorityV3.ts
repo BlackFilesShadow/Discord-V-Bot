@@ -1,6 +1,6 @@
 import * as prior from './dayz129CatalogPriorityV2';
 import * as base from './dayz129CatalogBase';
-import { COLOR_SUFFIXES, COLOR_WORDS, EXACT_ALIASES, TYPE_SYNONYMS } from './dayz129CatalogBase';
+import { COLOR_SUFFIXES, COLOR_WORDS, EXACT_ALIASES, TYPE_SYNONYMS, isWordBoundaryMention } from './dayz129CatalogBase';
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 
 type Resolution = { matched: boolean; candidates: string[] };
@@ -65,10 +65,9 @@ function explicitLookupIntent(question: string): boolean {
 
 function exactIndexedMention(question: string): string | null {
   if (!explicitLookupIntent(question)) return null;
-  const q = fold(question);
   const names = [...base.getDayz129Index().allTypeNames]
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
-  return names.find((name) => q.includes(fold(name))) ?? null;
+  return names.find((name) => isWordBoundaryMention(question, name)) ?? null;
 }
 
 function isShortItemFollowUp(question: string): boolean {

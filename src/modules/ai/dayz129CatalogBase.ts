@@ -342,11 +342,64 @@ export const TYPE_SYNONYMS: Record<string, string[]> = {
   'metallplatte': ['metal', 'plate'], 'blech': ['metal', 'plate'],
   'kabeltrommel': ['cable', 'reel'], 'seekiste': ['sea', 'chest'],
   'autozelt': ['car', 'tent'], 'zelt': ['tent'], 'streichholz': ['match'], 'streichhoelzer': ['match'],
-  'messer': ['knife'], 'axt': ['axe'], 'schaufel': ['shovel'], 'seil': ['rope'], 'fass': ['barrel'],
+  'messer': ['knife'], 'axt': ['axe'], 'aexte': ['axe'], 'schaufel': ['shovel'], 'seil': ['rope'], 'fass': ['barrel'],
   'pistole': ['pistol'], 'magazin': ['mag'], 'munition': ['ammo'],
   'apfel': ['apple'], 'aepfel': ['apple'], 'birne': ['pear'], 'birnen': ['pear'],
   'pflaume': ['plum'], 'pflaumen': ['plum'], 'tomate': ['tomato'], 'tomaten': ['tomato'],
   'reis': ['rice'], 'kartoffel': ['potato'], 'kartoffeln': ['potato'],
+  // Kleidung/Ausruestung (generische Kategoriewoerter, absichtlich mehrdeutig -
+  // sie liefern eine Auswahlliste realer Classnames statt eines geratenen
+  // Einzeltreffers, siehe dayz129AliasCoverage.test.ts).
+  'jacke': ['jacket'], 'jacken': ['jacket'],
+  'hose': ['pants'], 'hosen': ['pants'],
+  'hemd': ['shirt'], 'hemden': ['shirt'],
+  'muetze': ['cap'], 'muetzen': ['cap'], 'kappe': ['cap'], 'kappen': ['cap'],
+  'hut': ['hat'], 'huete': ['hat'],
+  'handschuh': ['gloves'], 'handschuhe': ['gloves'],
+  'stiefel': ['boots'],
+  'schuh': ['shoes'], 'schuhe': ['shoes'],
+  'weste': ['vest'], 'westen': ['vest'],
+  'helm': ['helmet'], 'helme': ['helmet'],
+  'maske': ['mask'], 'masken': ['mask'],
+  'brille': ['glasses'], 'brillen': ['glasses'],
+  'guertel': ['belt'],
+  'rucksack': ['bag'], 'rucksaecke': ['bag'],
+  'tasche': ['bag'], 'taschen': ['bag'],
+  'pullover': ['sweater'],
+  'kleid': ['dress'], 'kleider': ['dress'],
+  'rock': ['skirt'], 'roecke': ['skirt'],
+  // Werkzeuge/Ausruestung.
+  'saege': ['saw'],
+  'kompass': ['compass'],
+  'machete': ['machete'],
+  'kanister': ['canister'],
+  'draht': ['wire'],
+  'schluessel': ['keys'],
+  'funkgeraet': ['radio'], 'funkgeraete': ['radio'], 'walkie': ['radio'], 'walkietalkie': ['radio'],
+  'gasmaske': ['gasmask'], 'gasmasken': ['gasmask'],
+  'zaun': ['fence'], 'zaeune': ['fence'],
+  // Nahrung.
+  'dose': ['can'], 'dosen': ['can'],
+  'fisch': ['fish'],
+  'pilz': ['mushroom'], 'pilze': ['mushroom'],
+  'beere': ['berry'], 'beeren': ['berry'],
+  'fleisch': ['meat'],
+  'steak': ['steak'],
+  'fell': ['pelt'],
+  'milch': ['milk'],
+  // Medizin.
+  'tabletten': ['tablets'],
+  'antibiotika': ['antibiotics'],
+  'schmerztabletten': ['painkiller'], 'schmerzmittel': ['painkiller'],
+  // Waffen-Zubehoer/Munition.
+  'schalldaempfer': ['suppressor'],
+  'zielfernrohr': ['optic'], 'visier': ['optic'],
+  'kugel': ['ammo'], 'kugeln': ['ammo'], 'patrone': ['ammo'], 'patronen': ['ammo'],
+  'angel': ['fishing', 'rod'], 'angelrute': ['fishing', 'rod'],
+  'falle': ['trap'],
+  'granate': ['grenade'], 'granaten': ['grenade'],
+  'rauchgranate': ['smoke', 'grenade'],
+  'blendgranate': ['flash', 'grenade'],
 };
 
 /**
@@ -384,6 +437,59 @@ export const EXACT_ALIASES: Readonly<Record<string, string>> = {
   militaerzelte: 'LargeTent',
   militarytent: 'LargeTent',
   largetent: 'LargeTent',
+  feuerzeug: 'PetrolLighter',
+  feuerzeuge: 'PetrolLighter',
+  petrollighter: 'PetrolLighter',
+  taschenlampe: 'Flashlight',
+  taschenlampen: 'Flashlight',
+  fernglas: 'Binoculars',
+  fernglaeser: 'Binoculars',
+  schraubenzieher: 'Screwdriver',
+  schraubendreher: 'Screwdriver',
+  zange: 'Pliers',
+  brecheisen: 'Crowbar',
+  beil: 'Hatchet',
+  eispickel: 'Iceaxe',
+  feldspaten: 'FieldShovel',
+  feueraxt: 'FirefighterAxe',
+  spitzhacke: 'Pickaxe',
+  holzaxt: 'WoodAxe',
+  benzinkanister: 'CanisterGasoline',
+  autobatterie: 'CarBattery',
+  lkwbatterie: 'TruckBattery',
+  zuendkerze: 'SparkPlug',
+  kuehler: 'CarRadiator',
+  dietrich: 'Lockpick',
+  wetzstein: 'Whetstone',
+  adrenalin: 'Epinephrine',
+  megafon: 'Megaphone',
+  megaphon: 'Megaphone',
+  streichholzschachtel: 'Matchbox',
+  nachtsichtgeraet: 'NVGoggles',
+  entfernungsmesser: 'Rangefinder',
+  netz: 'Netting',
+  stacheldraht: 'BarbedWire',
+  baumstamm: 'WoodenLog',
+  holzkiste: 'WoodenCrate',
+  handsaege: 'HandSaw',
+  metallsaege: 'Hacksaw',
+  feldflasche: 'Canteen',
+  glasflasche: 'GlassBottle',
+  kochplatte: 'CookingStand',
+  kochstelle: 'CookingStand',
+  kessel: 'Cauldron',
+  bratpfanne: 'FryingPan',
+  pfanne: 'FryingPan',
+  topf: 'Pot',
+  lagerfeuer: 'Bonfire',
+  feuerstelle: 'Fireplace',
+  gaskocher: 'PortableGasStove',
+  gaslampe: 'PortableGasLamp',
+  schiene: 'Splint',
+  verband: 'BandageDressing',
+  verbaende: 'BandageDressing',
+  verbandskasten: 'FirstAidKit',
+  erstehilfekasten: 'FirstAidKit',
 };
 
 /**
@@ -448,13 +554,28 @@ function candidateScore(name: string, query: string, tokens: string[]): number {
   return score;
 }
 
+/**
+ * Wortgrenzen-sicherer Teilstring-Test: ein indexierter Name gilt nur als in
+ * der Frage "enthalten", wenn er dort an einer echten Wortgrenze steht (Start/
+ * Ende oder ein Nicht-alnum-Zeichen davor/danach). Ein rohes `.includes()`
+ * matcht sonst faelschlich einen kurzen realen Classname wie "Pate" mitten in
+ * einem laengeren, voellig unrelated deutschen Wort wie "Feldspaten" - das
+ * fuehrt zu einer falschen, aber selbstsicheren Antwort statt eines
+ * "nicht gefunden". Von V3/V4 fuer denselben Zweck wiederverwendet, statt
+ * jede Ebene ihre eigene ungeschuetzte Teilstring-Pruefung pflegen zu lassen.
+ */
+export function isWordBoundaryMention(haystack: string, needle: string, caseSensitive = false): boolean {
+  const q = caseSensitive ? haystack : fold(haystack);
+  const rawNeedle = caseSensitive ? needle : fold(needle);
+  const escaped = rawNeedle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!escaped) return false;
+  return new RegExp(`(^|[^a-zA-Z0-9_])${escaped}([^a-zA-Z0-9_]|$)`, caseSensitive ? '' : 'i').test(q);
+}
+
 function findExactIndexedName(question: string, names: string[], lookup: Map<string, string>): string | null {
-  const q = fold(question);
   const sorted = [...names].sort((a, b) => b.length - a.length);
   for (const name of sorted) {
-    const lower = fold(name);
-    const escaped = lower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (new RegExp(`(^|[^a-z0-9_])${escaped}([^a-z0-9_]|$)`, 'i').test(q)) return lookup.get(name.toLocaleLowerCase('de-DE')) ?? name;
+    if (isWordBoundaryMention(question, name)) return lookup.get(name.toLocaleLowerCase('de-DE')) ?? name;
   }
   return null;
 }

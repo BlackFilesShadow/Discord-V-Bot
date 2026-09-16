@@ -188,7 +188,7 @@ export async function postWhitelistApprovalEmbed(args: {
     .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
 
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const buttons = [
     new ButtonBuilder()
       .setCustomId(`wlreq:a:${args.requestId}`)
       .setLabel('Annehmen')
@@ -199,12 +199,27 @@ export async function postWhitelistApprovalEmbed(args: {
       .setLabel('Ablehnen')
       .setEmoji('❌')
       .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId(`wlreq:u:${args.requestId}`)
-      .setLabel('Universal Whitelist')
-      .setEmoji('🌐')
-      .setStyle(ButtonStyle.Primary),
-  );
+  ];
+  // "Universal Whitelist" ergibt nur bei mehreren verbundenen Gameservern einen
+  // Sinn (Fan-out auf alle aktiven Connections). Bei nur einem verbundenen
+  // Server ist Annehmen/Ablehnen bereits die vollstaendige Aktion. Dieselbe
+  // Zaehlung (status=ACTIVE, nitradoServerId gesetzt) wie im Button-Handler
+  // selbst - dadurch verschwindet der Button automatisch (selbstheilend) bei
+  // jeder neuen Anfrage, sobald wieder nur ein Server verbunden ist, ohne dass
+  // bereits gesendete Embeds nachtraeglich editiert werden muessen.
+  const universalTargetCount = await prisma.nitradoConnection.count({
+    where: { guildId: args.guildId, status: 'ACTIVE', nitradoServerId: { not: null } },
+  });
+  if (universalTargetCount >= 2) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`wlreq:u:${args.requestId}`)
+        .setLabel('Universal Whitelist')
+        .setEmoji('🌐')
+        .setStyle(ButtonStyle.Primary),
+    );
+  }
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
 
   const sent = await ch.send({ embeds: [embed], components: [row] });
   await prisma.whitelistRequest.update({

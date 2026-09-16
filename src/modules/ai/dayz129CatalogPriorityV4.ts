@@ -1,5 +1,6 @@
 import * as v3 from './dayz129CatalogPriorityV3';
 import * as base from './dayz129CatalogBase';
+import { isWordBoundaryMention } from './dayz129CatalogBase';
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 
 function fold(text: string): string {
@@ -21,12 +22,11 @@ function hasDetailIntent(question: string): boolean {
 function exactCaseMention(question: string): string | null {
   const names = [...base.getDayz129Index().allTypeNames]
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
-  return names.find((name) => question.includes(name)) ?? null;
+  return names.find((name) => isWordBoundaryMention(question, name, true)) ?? null;
 }
 
 function uniqueCaseInsensitiveMention(question: string): string | null {
-  const q = fold(question);
-  const matches = base.getDayz129Index().allTypeNames.filter((name) => q.includes(fold(name)));
+  const matches = base.getDayz129Index().allTypeNames.filter((name) => isWordBoundaryMention(question, name));
   return matches.length === 1 ? matches[0] : null;
 }
 

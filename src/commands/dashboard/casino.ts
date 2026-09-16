@@ -38,7 +38,7 @@ import { asUserDiscordId } from '../../types/scope';
 import type { GuildScope, UserDiscordId } from '../../types/scope';
 import { logAudit, logger } from '../../utils/logger';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
-import { Colors, casinoEmbed, compactDescription } from '../../utils/embedDesign';
+import { Colors, casinoEmbed, compactDescription, compactQuote } from '../../utils/embedDesign';
 import { statusColor, statusEmoji, type EmbedStatus } from '../../utils/statusEmbed';
 import { MAX_GAME_SERVERS_PER_GUILD } from '../../modules/nitrado/gameServerScope';
 import {
@@ -203,18 +203,20 @@ function buildRoundEmbed(args: {
   const net = args.payout - args.bet;
   const netStr = (net >= 0n ? '+' : '') + fmt(net);
   const meta = args.outcome === 'WON'
-    ? { word: 'Gewonnen', color: Colors.Success }
+    ? { word: 'Gewonnen', icon: '✅', color: Colors.Success }
     : args.outcome === 'DRAW'
-      ? { word: 'Unentschieden', color: Colors.Warning }
-      : { word: 'Verloren', color: Colors.Error };
+      ? { word: 'Unentschieden', icon: '🤝', color: Colors.Warning }
+      : { word: 'Verloren', icon: '❌', color: Colors.Error };
   const auditFooter = `V-Bot Casino • Runden-Audit • Hash: ${args.serverSeedHash} • Nonce: ${args.nonce.toString()}`;
 
+  // Alle Spielresultate zusammen als ein Zitatblock, gefolgt von genau einer
+  // Zusammenfassungszeile (Ergebnis · Einsatz -> Auszahlung · Netto) statt
+  // vieler einzelner "**Label:** Wert"-Zeilen - dieselben Werte, nur ohne die
+  // vorherige Haeufung optisch gleichwertiger Zeilen.
   return casinoEmbed(meta.color, auditFooter)
     .setDescription(compactDescription(`${def.emoji} ${def.label}`, [
-      ...args.details.map(field => `**${field.name}**: ${field.value}`),
-      `**Einsatz:** ${fmt(args.bet)} ${args.coin}`,
-      `**Auszahlung:** ${fmt(args.payout)} ${args.coin}`,
-      `**Result:** ${meta.word} · **${netStr} ${args.coin}**`,
+      compactQuote(args.details.map(field => `${field.name}: **${field.value}**`)),
+      `${meta.icon} **${meta.word}**  ·  Einsatz **${fmt(args.bet)} ${args.coin}** → Auszahlung **${fmt(args.payout)} ${args.coin}**  (**${netStr} ${args.coin}**)`,
     ]));
 }
 

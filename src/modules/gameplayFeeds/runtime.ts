@@ -619,11 +619,45 @@ async function currentPlayerList(config: GameplayFeedConfig): Promise<PlayerList
   return attachCurrentPositions(online, positions);
 }
 
+async function clearPlayerListMessage(config: GameplayFeedConfig): Promise<void> {
+  if (!config.lastMessageId) return;
+  const client = tryGetDashboardClient();
+  if (!client) return;
+  const channel = await client.channels.fetch(config.channelId).catch(() => null);
+  if (!channel || !channel.isTextBased() || channel.isDMBased()) return;
+  const textChannel = channel as GuildTextBasedChannel;
+  const message = await textChannel.messages.fetch(config.lastMessageId).catch(() => null);
+  if (message) await message.delete().catch(() => undefined);
+}
+
 async function processPlayerListConfig(config: GameplayFeedConfig, serverAlias: string): Promise<void> {
   try {
     const entries = await currentPlayerList(config);
-    const stateHash = playerListStateHash(entries, config.showActorCoords);
     const now = new Date();
+
+    if (entries.length === 0) {
+      // Explizite Anforderung: bei 0 Spielern online keine Online-List-Ausgabe
+      // - weder eine neue "Keine Spieler online"-Nachricht noch ein Update der
+      // bestehenden. Eine bereits gepostete Nachricht wird entfernt, damit kein
+      // veralteter Spielerstand sichtbar bleibt. lastMessageId/lastStateHash
+      // werden zurueckgesetzt, damit der naechste Tick mit mindestens einem
+      // Spieler sofort neu postet (stateChanged greift dann unabhaengig vom
+      // periodischen Intervall-Zyklus).
+      if (config.lastMessageId) await clearPlayerListMessage(config);
+      await prisma.gameplayFeedConfig.updateMany({
+        where: { id: config.id, guildId: config.guildId, nitradoConnId: config.nitradoConnId, isActive: true },
+        data: {
+          lastMessageId: null,
+          lastStateHash: null,
+          lastPlayerCount: 0,
+          lastPolledAt: now,
+          lastErrorMsg: null,
+        },
+      });
+      return;
+    }
+
+    const stateHash = playerListStateHash(entries, config.showActorCoords);
     const intervalMinutes = config.playerListIntervalMinutes ?? 0;
     const intervalMs = intervalMinutes > 0 ? intervalMinutes * 60_000 : 0;
     const periodicDue = intervalMs > 0

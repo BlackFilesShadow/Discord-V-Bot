@@ -37,4 +37,21 @@ describe('Universal whitelist regression', () => {
     expect(handler).toContain("logAudit('WL_REQUEST_UNIVERSAL_FAILED'");
     expect(handler).toContain("logAudit('WL_REQUEST_UNIVERSAL_APPROVED'");
   });
+
+  it('shows the Universal-Whitelist button only when 2+ active Gameserver sind verbunden, mit derselben Zaehlung wie der Handler selbst', () => {
+    // Bei nur einem verbundenen Server ist Annehmen/Ablehnen bereits die
+    // vollstaendige Aktion - der Button wuerde ohne diese Pruefung immer
+    // erscheinen, auch wenn ein Fan-out auf "mehrere Server" gar nicht
+    // moeglich ist. Selbstheilend, weil jede neue Anfrage die Zaehlung frisch
+    // ausfuehrt (kein persistenter/veralteter Zustand).
+    const embedFn = channels.slice(channels.indexOf('export async function postWhitelistApprovalEmbed'));
+    expect(embedFn).toContain('const universalTargetCount = await prisma.nitradoConnection.count({');
+    expect(embedFn).toContain("where: { guildId: args.guildId, status: 'ACTIVE', nitradoServerId: { not: null } }");
+    expect(embedFn).toContain('if (universalTargetCount >= 2)');
+    // Dieselbe Zaehl-Semantik (ACTIVE + nitradoServerId gesetzt) wie im
+    // eigentlichen Fan-out-Handler, damit "Button sichtbar" und "Button
+    // funktioniert" nie auseinanderlaufen.
+    expect(handler).toContain("status: 'ACTIVE'");
+    expect(handler).toContain('nitradoServerId: { not: null }');
+  });
 });
