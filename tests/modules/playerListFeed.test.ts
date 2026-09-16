@@ -114,6 +114,52 @@ describe('Online List embed and change detection', () => {
     expect(playerListStateHash(afterDisconnects, false)).toBe(playerListStateHash([...afterDisconnects].reverse(), false));
   });
 
+  it('fits 50 players with coordinates onto a single page before starting a continuation', () => {
+    // Explizite Anforderung: bis zu 50 Spieler muessen auf einer Seite Platz
+    // finden, bevor eine 2. Seite ("Fortsetzung") entsteht. Vorher erzwang ein
+    // zu niedriges FIELD_LIMIT (900 statt nahe am echten 4096-Discord-Limit)
+    // schon ab ca. 10 Spielern eine 2. Seite.
+    const fifty = Array.from({ length: 50 }, (_, index) => ({
+      gameId: `guid-${index}`,
+      playerName: `Player_${String(index).padStart(3, '0')}`,
+      position: `${10000 + index}.0,${20000 + index}.0,${50 + index}.0`,
+    }));
+    const embeds = buildPlayerListEmbeds({
+      serverAlias: 'Die Chaoten', entries: fifty, showCoordinates: true, embedColor: '#2563eb',
+    });
+    expect(embeds).toHaveLength(1);
+    const json = embeds[0].toJSON();
+    expect(json.description).toContain('**🌐 • Online List · 50 Players**');
+    expect(json.description).not.toMatch(/Fortsetzung/);
+    expect(json.description).toContain('Player\\_000');
+    expect(json.description).toContain('Player\\_049');
+  });
+
+  it('drops iZurvive links (keeps plain coordinates) rather than splitting a 50-player roster onto a 2nd page', () => {
+    const fifty = Array.from({ length: 50 }, (_, index) => ({
+      gameId: `guid-${index}`,
+      playerName: `Player_${String(index).padStart(3, '0')}`,
+      position: `${10000 + index}.0,${20000 + index}.0,${50 + index}.0`,
+    }));
+    const json = buildPlayerListEmbeds({
+      serverAlias: 'Die Chaoten', entries: fifty, showCoordinates: true, embedColor: '#2563eb',
+    })[0].toJSON();
+    expect(json.description).not.toMatch(/izurvive/i);
+    expect(json.description).toContain('10000.0,20000.0,50.0');
+  });
+
+  it('keeps clickable izurvive links for small rosters well under the per-page budget', () => {
+    const small = Array.from({ length: 5 }, (_, index) => ({
+      gameId: `guid-${index}`,
+      playerName: `Player_${index}`,
+      position: `${100 + index},${200 + index},${5 + index}`,
+    }));
+    const json = buildPlayerListEmbeds({
+      serverAlias: 'Kleiner Server', entries: small, showCoordinates: true, embedColor: '#2563eb',
+    })[0].toJSON();
+    expect(json.description).toMatch(/izurvive\.com/i);
+  });
+
   it('keeps a 100-player coordinate list inside the aggregate Discord embed limit', () => {
     const many = Array.from({ length: 100 }, (_, index) => ({
       gameId: `guid-${index}`,

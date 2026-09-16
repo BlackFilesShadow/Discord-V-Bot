@@ -10,7 +10,14 @@ export interface PlayerListEntry {
   position: string | null;
 }
 
-const FIELD_LIMIT = 900;
+// Discord erlaubt bis zu 4096 Zeichen pro Embed-Description (bereits separat
+// ueber capCompactDescription/EMBED_DESCRIPTION_LIMIT abgesichert). Der
+// vorherige Wert von 900 war eine willkuerlich niedrige Grenze weit unter dem
+// echten Limit und erzwang schon ab ca. 10 Spielern eine neue Seite. Mit
+// Marge fuer die Kopfzeile ("Online List · N Players") lasst dieser Wert bis
+// zu 50 Spieler (das explizit geforderte Minimum) und typischerweise deutlich
+// mehr auf einer Seite zu, bevor eine Fortsetzung noetig wird.
+const FIELD_LIMIT = 4000;
 const MAX_EMBEDS = 10;
 // Discord begrenzt die Summe aller Embed-Texte einer Nachricht auf 6000 Zeichen.
 // Fuer kompakte Kopfzeilen, Serveralias und Footer bleibt bewusst Reserve.
@@ -115,11 +122,18 @@ export function buildPlayerListEmbeds(args: {
     lines = entries.map(entry => playerLine(entry, false, false));
   } else {
     const linked = entries.map(entry => playerLine(entry, true, true));
-    // iZurvive-Links sind die bevorzugte Darstellung. Falls ihre URL-Laenge
-    // die Discord-Nachricht ueber das 6000-Zeichen-Limit treiben wuerde,
-    // bleiben alle bereits bekannten Koordinaten sichtbar, aber ohne Link-Overhead.
+    // iZurvive-Links sind die bevorzugte Darstellung. Ihr URL-Overhead darf
+    // aber nicht dazu fuehren, dass schon deutlich weniger als 50 Spieler auf
+    // die erste Seite passen (explizite Anforderung: bis zu 50 Spieler vor
+    // einer 2. Seite). Deshalb wird gezielt geprueft, ob bereits die ersten
+    // 50 Eintraege MIT Link in eine einzelne Seite passen wuerden - reicht das
+    // nicht, verzichtet die gesamte Liste auf Links zugunsten der Spieleranzahl
+    // pro Seite. Das bestehende Gesamt-Budget schuetzt zusaetzlich weiterhin
+    // vor einer Ueberschreitung des 6000-Zeichen-Nachrichtenlimits.
+    const MIN_PLAYERS_PER_PAGE = 50;
+    const firstPageLinkedLength = linked.slice(0, MIN_PLAYERS_PER_PAGE).reduce((sum, line) => sum + line.length + 1, 0);
     const linkedLength = linked.reduce((sum, line) => sum + line.length + 1, 0);
-    lines = linkedLength <= PLAYER_LINES_BUDGET
+    lines = firstPageLinkedLength <= FIELD_LIMIT && linkedLength <= PLAYER_LINES_BUDGET
       ? linked
       : entries.map(entry => playerLine(entry, true, false));
   }

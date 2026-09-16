@@ -53,4 +53,37 @@ describe('Gameplay feed activation, pacing and Online List architecture gate', (
     expect(runtime).toContain('let messageId = periodicDue ? null : config.lastMessageId;');
     expect(runtime).toContain('nextPlayerListPostAt');
   });
+
+  it('stoppt die Online-List-Ausgabe exakt bei 0 Spielern und laesst sie beim naechsten Spieler sofort neu starten', () => {
+    // Explizite Anforderung: bei 'keinen Spieler' auf dem Server soll die
+    // Ausgabe gestoppt werden - exakt und lueckenlos - bis zum 1. Spieler,
+    // dann unabhaengig vom periodischen Erschein-Zyklus sofort wieder
+    // beginnen. Die bestehende Nachricht wird dabei entfernt statt stehen zu
+    // bleiben, damit kein veralteter Spielerstand sichtbar bleibt.
+    const fn = runtime.slice(
+      runtime.indexOf('async function processPlayerListConfig'),
+      runtime.indexOf('async function reserveChannelDeliverySlot'),
+    );
+    expect(fn).toContain('if (entries.length === 0) {');
+    expect(fn).toContain('if (config.lastMessageId) await clearPlayerListMessage(config);');
+    expect(fn).toContain('lastMessageId: null,');
+    expect(fn).toContain('lastStateHash: null,');
+    expect(fn).toContain('lastPlayerCount: 0,');
+    expect(fn).toContain('return;');
+    // Der 0-Spieler-Block muss vor dem stateHash/periodicDue-Zweig liegen und
+    // darf diesen nicht ausfuehren (keine neue/aktualisierte Nachricht).
+    expect(fn.indexOf('entries.length === 0')).toBeLessThan(fn.indexOf('const stateHash = playerListStateHash'));
+
+    const clearFn = runtime.slice(
+      runtime.indexOf('async function clearPlayerListMessage'),
+      runtime.indexOf('async function processPlayerListConfig'),
+    );
+    expect(clearFn).toContain('if (!config.lastMessageId) return;');
+    expect(clearFn).toContain('await message.delete().catch(() => undefined);');
+
+    // Da lastMessageId/lastStateHash zurueckgesetzt werden, erzwingt der
+    // naechste Tick mit >=1 Spieler stateChanged=true unabhaengig von
+    // periodicDue/nextPlayerListPostAt - also sofortigen Neustart.
+    expect(fn).toContain("const stateChanged = config.lastStateHash !== stateHash || !config.lastMessageId;");
+  });
 });
