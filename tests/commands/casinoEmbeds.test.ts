@@ -164,9 +164,8 @@ describe('Casino V3 command embeds', () => {
     const json = arg.embeds![0].toJSON();
     const description = json.description ?? '';
     expect(description).toMatch(/Gewonnen|Verloren|Unentschieden/);
-    expect(description).toContain('**Einsatz:**');
-    expect(description).toContain('**Auszahlung:**');
-    expect(description).toContain('**Result:**');
+    expect(description).toMatch(/Einsatz \*\*[\d.,]+ :coin:\*\*/);
+    expect(description).toMatch(/Auszahlung \*\*[\d.,]+ :coin:\*\*/);
     expect(description).not.toContain('**Server-Chance:**');
     expect(description).not.toContain('**Audit:**');
     expect(description).not.toContain('/casino-verify');
