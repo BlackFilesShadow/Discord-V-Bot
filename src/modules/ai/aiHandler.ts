@@ -503,7 +503,18 @@ export async function answerQuestion(
 
     let safeResponse = response ? redactText(response) : response;
 
-    if (dayzTechnical && safeResponse) {
+    // War frueher auf dayzTechnical (schmale "hasDayz && hasTechnical"/Datei-
+    // Frage-Teilmenge) begrenzt. Jede andere dayz-domaenige Frage, die nicht
+    // in diese schmale Klasse fiel, ging komplett ungeprueft an die KI-
+    // Antwort - genau der Pfad, ueber den Werte/Identifier entstehen konnten,
+    // die durch keine der drei 1.29-Datensaetze belegt sind. Die Pruefung
+    // selbst bleibt unveraendert: extractDayzTechnicalIdentifiers greift nur,
+    // wenn die Antwort ueberhaupt identifier-artige Tokens enthaelt (camelCase/
+    // snake_case/Dateiendungen/Backticks/key=value), und laesst jeden Treffer
+    // durch, der entweder ein echter indexierter Classname/Event/Dateiname ist
+    // oder im mitgegebenen Grounding-Text vorkommt - eine rein narrative
+    // Antwort ohne konkrete Behauptungen loest hier nie aus.
+    if (dayzDomain && safeResponse) {
       const grounding = nitradoHelpBlock ?? getDayZFileTruthBlock();
       const validation = validateDayzTechnicalAnswer(safeResponse, grounding, question);
       if (!validation.valid) {

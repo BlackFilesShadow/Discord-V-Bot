@@ -1,60 +1,14 @@
 import * as prior from './dayz129CatalogPriorityV2';
 import * as base from './dayz129CatalogBase';
-import { TYPE_SYNONYMS } from './dayz129CatalogBase';
+import { COLOR_SUFFIXES, COLOR_WORDS, EXACT_ALIASES, TYPE_SYNONYMS } from './dayz129CatalogBase';
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 
 type Resolution = { matched: boolean; candidates: string[] };
 
-const DISPLAY_ALIASES: Readonly<Record<string, string>> = {
-  m4: 'M4A1',
-  tundra: 'Winchester70',
-  winchester: 'Winchester70',
-  kampfstiefel: 'CombatBoots',
-  combatboots: 'CombatBoots',
-  kampfanzugshose: 'TTSKOPants',
-  kampfanzughose: 'TTSKOPants',
-  kampfhose: 'TTSKOPants',
-  combatpants: 'TTSKOPants',
-  bduhose: 'BDUPants',
-  bdupants: 'BDUPants',
-  feldrucksack: 'AliceBag',
-  feldrucksaecke: 'AliceBag',
-  alicebag: 'AliceBag',
-  seekiste: 'SeaChest',
-  seekisten: 'SeaChest',
-  seachest: 'SeaChest',
-  generator: 'PowerGenerator',
-  generatoren: 'PowerGenerator',
-  stromgenerator: 'PowerGenerator',
-  stromgeneratoren: 'PowerGenerator',
-  powergenerator: 'PowerGenerator',
-  militaerzelt: 'LargeTent',
-  militaerzelte: 'LargeTent',
-  militarytent: 'LargeTent',
-  largetent: 'LargeTent',
-};
-
-const COLOR_SUFFIXES = new Set([
-  'black', 'blue', 'brown', 'green', 'grey', 'gray', 'red', 'orange', 'yellow', 'pink', 'white',
-  'beige', 'olive', 'tan', 'khaki', 'camo', 'dpm', 'flecktarn', 'ttsko',
-]);
-
-const COLOR_WORDS: ReadonlyArray<{ re: RegExp; suffixes: string[] }> = [
-  { re: /\b(?:gruen|green)\b/i, suffixes: ['green'] },
-  { re: /\b(?:schwarz|black)\b/i, suffixes: ['black'] },
-  { re: /\b(?:braun|brown)\b/i, suffixes: ['brown'] },
-  { re: /\b(?:grau|grey|gray)\b/i, suffixes: ['grey', 'gray'] },
-  { re: /\b(?:blau|blue)\b/i, suffixes: ['blue'] },
-  { re: /\b(?:rot|red)\b/i, suffixes: ['red'] },
-  { re: /\b(?:orange)\b/i, suffixes: ['orange'] },
-  { re: /\b(?:gelb|yellow)\b/i, suffixes: ['yellow'] },
-  { re: /\b(?:rosa|pink)\b/i, suffixes: ['pink'] },
-  { re: /\b(?:weiss|white)\b/i, suffixes: ['white'] },
-  { re: /\bbeige\b/i, suffixes: ['beige'] },
-  { re: /\b(?:oliv|olive)\b/i, suffixes: ['olive'] },
-  { re: /\b(?:khaki|tan)\b/i, suffixes: ['khaki', 'tan'] },
-  { re: /\b(?:camo|tarn|tarnung)\b/i, suffixes: ['camo', 'dpm', 'flecktarn', 'ttsko'] },
-];
+// Alias-/Farbwort-Tabellen leben jetzt kanonisch in dayz129CatalogBase.ts
+// (DISPLAY_ALIASES -> EXACT_ALIASES, COLOR_SUFFIXES/COLOR_WORDS), damit alle
+// Ebenen der Kette dieselben Woerter kennen.
+const DISPLAY_ALIASES = EXACT_ALIASES;
 
 function fold(text: string): string {
   return text.toLocaleLowerCase('de-DE')

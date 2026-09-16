@@ -1,10 +1,6 @@
 import * as base from './dayz129CatalogBase';
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 
-const TYPE_DISPLAY_ALIASES: ReadonlyArray<{ re: RegExp; classname: string }> = [
-  { re: /\btundra\b/i, classname: 'Winchester70' },
-];
-
 function fold(text: string): string {
   return text
     .toLocaleLowerCase('de-DE')
@@ -12,9 +8,16 @@ function fold(text: string): string {
     .normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
 }
 
+/**
+ * Nutzt die kanonische Alias-Tabelle aus dayz129CatalogBase.ts statt einer
+ * eigenen, hier lokal gepflegten Kopie (frueher kannte diese Ebene nur
+ * "tundra", waehrend V3 bereits alle Aliase kannte - ein Wort konnte dadurch
+ * je nach erreichter Ebene unterschiedlich gut aufgeloest werden).
+ */
 function resolveDisplayAlias(question: string): string | null {
-  for (const entry of TYPE_DISPLAY_ALIASES) {
-    if (entry.re.test(question) && base.isKnownDayz129Identifier(entry.classname)) return entry.classname;
+  const q = fold(question);
+  for (const [word, classname] of Object.entries(base.EXACT_ALIASES)) {
+    if (new RegExp(`\\b${word}\\b`, 'i').test(q) && base.isKnownDayz129Identifier(classname)) return classname;
   }
   return null;
 }

@@ -1,5 +1,6 @@
 import * as prior from './dayz129CatalogPriority';
 import * as base from './dayz129CatalogBase';
+import { COLOR_WORDS } from './dayz129CatalogBase';
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 
 type Resolution = { matched: boolean; candidates: string[] };
@@ -10,14 +11,9 @@ const FAMILIES: readonly Family[] = [
   { re: /\b(?:feldrucksack|alice\s*bag|alicebag)\b/i, prefix: 'AliceBag_' },
 ];
 
-const COLORS: ReadonlyArray<{ re: RegExp; suffix: string }> = [
-  { re: /\b(?:gruen|green)\b/i, suffix: 'Green' },
-  { re: /\b(?:schwarz|black)\b/i, suffix: 'Black' },
-  { re: /\b(?:braun|brown)\b/i, suffix: 'Brown' },
-  { re: /\b(?:grau|grey|gray)\b/i, suffix: 'Grey' },
-  { re: /\bbeige\b/i, suffix: 'Beige' },
-  { re: /\b(?:camo|tarn|tarnung)\b/i, suffix: 'Camo' },
-];
+// Nutzt jetzt dieselbe vollstaendige Farbwort-Tabelle wie base.ts/V3 (vorher
+// kannte diese Ebene nur 6 von 14 Farbworten, u. a. fehlte "rot").
+const COLORS: ReadonlyArray<{ re: RegExp; suffix: string }> = COLOR_WORDS.map((c) => ({ re: c.re, suffix: c.suffixes[0] }));
 
 function fold(text: string): string {
   return text.toLocaleLowerCase('de-DE')

@@ -1,5 +1,7 @@
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 import {
+  answerDayz129ExtendedDataQuestion,
+  answerStructuralCountQuestion,
   enrichDayz129FollowUp as enrichDayz129FollowUpBase,
   isKnownDayz129Identifier,
 } from './dayz129CatalogBase';
@@ -127,6 +129,16 @@ export function enrichDayz129FollowUp(question: string, previousAssistantText?: 
  */
 export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswer | null {
   if (looksLikeLiveServerKnowledgeQuestion(question)) return null;
+  // Phase-B-Antworten (globals/weather/limitsDefinition/ignoreList/
+  // territories/eventGroups/randomPresets/effectAreas/spawnableTypes) laufen
+  // VOR dem expliziten Pfad: sie sind eng an reale, im Index vorhandene Namen
+  // gebunden (siehe answerDayz129ExtendedDataQuestion) und liefern bei einem
+  // Treffer eine spezifischere Antwort als die generische Datei-Erklaerung
+  // oder der nackte Classname-Datensatz, die der explizite Pfad sonst zuerst
+  // ausgeben wuerde (z.B. "was bedeutet FlagRefreshFrequency in globals.xml?"
+  // soll den echten Wert liefern, nicht nur die allgemeine Datei-Beschreibung).
+  const extended = answerDayz129ExtendedDataQuestion(question);
+  if (extended) return extended;
   if (explicitCatalogIntent(question)) return answerGeneralDayz129Question(question);
-  return answerNamingQuestion(question);
+  return answerNamingQuestion(question) ?? answerStructuralCountQuestion(question);
 }
