@@ -84,6 +84,39 @@ describe('DayZ 1.29 complete grounded catalog', () => {
       .toBe('Der Classname ist **`AliceBag_Green`**.');
   });
 
+  test('basic German food-item names resolve to their real classname', () => {
+    // Regressionsschutz: TYPE_SYNONYMS deckte bisher nur Baumaterial/Werkzeuge/
+    // Waffen ab. Ganz alltaegliche DayZ-Items wie Apfel/Birne/Pflaume/Reis
+    // existieren real im 1.29-Index (Apple/Pear/Plum/Rice), hatten aber keine
+    // deutsche Uebersetzung - "weisst du wie der Classname von den Apfel
+    // heisst?" fand deshalb nie einen Treffer, obwohl "Apple" 1:1 vorhanden ist.
+    expect(searchDayz129Types('Apfel', 5)).toEqual(['Apple']);
+    expect(searchDayz129Types('Birne', 5)).toEqual(['Pear']);
+    expect(searchDayz129Types('Pflaume', 5)).toEqual(['Plum']);
+    expect(searchDayz129Types('Reis', 5)).toEqual(['Rice']);
+    expect(answerDayz129CatalogQuestion('weißt du wie der Classname von den Apfel heißt?')?.answer)
+      .toBe('Der Classname ist **`Apple`**.');
+    expect(answerDayz129CatalogQuestion('Wie heißt die Birne?')?.answer)
+      .toBe('Der Classname ist **`Pear`**.');
+  });
+
+  test('German synonym tokens resolve precisely even against a same-family sibling classname', () => {
+    // Regressionsschutz: der strikte explizite "Classname"-Pfad
+    // (dayz129CatalogPriorityV3.fullIndexCandidates) verlangt bisher, dass
+    // JEDES Such-Token gegen die (immer englischen) Classname-Tokens matcht -
+    // ein unuebersetztes deutsches Wort wie "holzbrett" matchte dort NIE, egal
+    // wie eindeutig die Bedeutung ist. TYPE_SYNONYMS uebersetzt "holzbrett" zu
+    // ["wooden","plank"] und trifft damit exakt WoodenPlank (score 8), waehrend
+    // das andersartige LongWoodenStick (nur "wooden" trifft, "plank" nicht)
+    // durchfaellt. "Holzbrett" ist dadurch nicht mehr mehrdeutig, sondern loest
+    // praezise auf - das ist eine Verbesserung, keine Regression.
+    expect(searchDayz129Types('Holzbrett', 5)).toEqual(['WoodenPlank']);
+    expect(answerDayz129CatalogQuestion('Wie heißt das Holzbrett?')?.answer)
+      .toBe('Der Classname ist **`WoodenPlank`**.');
+    expect(answerDayz129CatalogQuestion('DayZ Classname Holzbrett')?.answer)
+      .toBe('Der Classname ist **`WoodenPlank`**.');
+  });
+
   test('naming questions stay silent (null) instead of guessing on no or ambiguous matches', () => {
     // Ein Fehltreffer darf hier NIE eine DayZ-Fehlantwort erzwingen - sonst
     // wuerde eine echte Allgemeinfrage wie "Wie heisst der Bundeskanzler?"
@@ -94,9 +127,7 @@ describe('DayZ 1.29 complete grounded catalog', () => {
     // "AK" matcht mehrere reale Classnames (AKM, AKS74U, ...) - mehrdeutig,
     // deshalb bewusst kein Treffer statt eines geratenen Namens.
     expect(answerDayz129CatalogQuestion('Wie heißt AK?')).toBeNull();
-    // "Holzbrett" matcht mehrere reale wooden-*-Classnames - ebenfalls
-    // mehrdeutig und deshalb kein Treffer ueber diesen schwachen Pfad.
-    expect(answerDayz129CatalogQuestion('Wie heißt das Holzbrett?')).toBeNull();
+    expect(answerDayz129CatalogQuestion('Classname AK')?.ids).toEqual(['dayz129:type:not-found']);
   });
 
   test('"was heisst X" (Bedeutungsfrage) triggert den Naming-Pfad nicht', () => {

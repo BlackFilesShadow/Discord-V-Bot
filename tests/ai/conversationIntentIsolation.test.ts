@@ -36,6 +36,27 @@ describe('AI conversation-domain isolation', () => {
     expect(classifyAiConversationDomain('Wie viele Mitglieder hat der Discord-Server?')).toBe('discord_server');
   });
 
+  test.each([
+    'wo bist du aktuell?',
+    'auf welchen Server bist du aktuell?',
+    'wo befindest du dich?',
+    'wo ist der Server?',
+    'auf welchem Server bist du?',
+  ])('natuerlich formulierte Frage nach der eigenen Server-Identitaet bekommt Server-Kontext: %s', (question) => {
+    // Regressionsschutz: "wo bist du"/"auf welchem Server bist du" fielen zuvor
+    // durch DISCORD_SERVER_RE durch und landeten in 'general' - der Bot bekam
+    // dadurch nie Servername/Owner/Standort-Kontext fuer diese ganz natuerliche
+    // Formulierung, obwohl "Wie viele Mitglieder hat der Discord-Server?" schon
+    // laengst funktionierte.
+    expect(classifyAiConversationDomain(question)).toBe('discord_server');
+    expect(mayUseExternalConversationContext(question)).toBe(true);
+  });
+
+  test('eine narrative "wo warst du"-Frage ohne Server-Bezug bleibt general', () => {
+    expect(classifyAiConversationDomain('wo warst du gestern Abend als das passiert ist?')).toBe('general');
+    expect(mayUseExternalConversationContext('wo warst du gestern Abend als das passiert ist?')).toBe(false);
+  });
+
   test('User-Profil bleibt separat von Server- und DayZ-Kontext', () => {
     expect(classifyAiConversationDomain('Was ist mein Level?')).toBe('user_profile');
     expect(classifyAiConversationDomain('Wann bin ich diesem Server beigetreten?')).toBe('user_profile');

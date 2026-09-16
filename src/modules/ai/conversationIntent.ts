@@ -25,7 +25,7 @@ const DAYZ_GAMEPLAY_RE = /\b(?:loot|spawn|spawns|infected|zombies?|heli(?:crash)
 const DAYZ_TECH_CONTEXT_RE = /\b(?:xml|json|cfg|config|konfig|mission|server|gameserver|datei|event|economy|ce)\b/i;
 
 const USER_PROFILE_RE = /\b(?:mein(?:e|en|em|er)?\s+(?:level|xp|rolle|rollen|nickname|beitrittsdatum|aktivitat|aktivitaet|nachrichten)|wann\s+bin\s+ich\s+(?:diesem|dem|auf\s+dem)\s+server\s+beigetreten|seit\s+wann\s+bin\s+ich\s+(?:hier|auf\s+dem\s+server))\b/i;
-const DISCORD_SERVER_RE = /\b(?:discord[- ]?server|serverregeln|regelwerk|welche\s+regeln|welche\s+kanale|welche\s+kanaele|welche\s+channels|welche\s+rollen|mitglieder(?:zahl)?|boost(?:s|[- ]?level)?|server[- ]?owner|owner\s+des\s+servers|status\s+vom\s+server|server[- ]?status)\b/i;
+const DISCORD_SERVER_RE = /\b(?:discord[- ]?server|serverregeln|regelwerk|welche\s+regeln|welche\s+kanale|welche\s+kanaele|welche\s+channels|welche\s+rollen|mitglieder(?:zahl)?|boost(?:s|[- ]?level)?|server[- ]?owner|owner\s+des\s+servers|status\s+vom\s+server|server[- ]?status|wo\s+bist\s+du(?:\s+(?:aktuell|gerade|derzeit))?|wo\s+befindest\s+du\s+dich|welche(?:n|r)?\s+(?:discord[- ]?)?server\s+(?:bist\s+du|befindest\s+du\s+dich|laeufst\s+du|laeuft(?:\s+das)?|läufst\s+du|läuft(?:\s+das)?)|auf\s+welche(?:m|n)\s+(?:discord[- ]?)?server|wo\s+(?:ist|laeuft|läuft)\s+(?:der|dieser)\s+server)\b/i;
 
 /**
  * Nur sprachlich eindeutige Folgefragen duerfen eine vorherige Domain erben.

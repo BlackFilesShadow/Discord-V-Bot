@@ -1,5 +1,6 @@
 import * as prior from './dayz129CatalogPriorityV2';
 import * as base from './dayz129CatalogBase';
+import { TYPE_SYNONYMS } from './dayz129CatalogBase';
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 
 type Resolution = { matched: boolean; candidates: string[] };
@@ -202,7 +203,14 @@ function fullIndexCandidates(cleaned: string): string[] {
     .sort((a, b) => compact(a).length - compact(b).length || a.localeCompare(b));
   if (prefixFamily.length > 0 && prefixFamily.length <= 25) return prefixFamily;
 
-  const queryTokens = fold(cleaned).split(/[^a-z0-9]+/).filter(token => token.length >= 3);
+  // Deutsche Woerter koennen niemals gegen die (immer englischen) Classname-
+  // Tokens matchen. Ohne Uebersetzung wuerde die untenstehende
+  // Alle-Tokens-muessen-treffen-Logik jeden deutschen Rohbegriff sofort mit
+  // score=-1 verwerfen, selbst wenn der reale Classname (z.B. "Apple" fuer
+  // "Apfel") laengst im Index existiert. Ein bekanntes deutsches Token wird
+  // deshalb durch sein(e) englische(s) Ziel-Token(s) ersetzt statt ergaenzt.
+  const rawTokens = fold(cleaned).split(/[^a-z0-9]+/).filter(token => token.length >= 3);
+  const queryTokens = rawTokens.flatMap((token) => TYPE_SYNONYMS[token] ?? [token]);
   if (queryTokens.length === 0) return [];
   const ranked = names.map((name) => {
     const source = name
