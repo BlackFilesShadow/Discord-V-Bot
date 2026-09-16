@@ -262,7 +262,7 @@ function formatFileAnswer(path: string): DayzCatalogAnswer {
   return { answer: lines.join('\n'), topic: 'file', ids: [`dayz129:file:${path}`] };
 }
 
-const TYPE_SYNONYMS: Record<string, string[]> = {
+export const TYPE_SYNONYMS: Record<string, string[]> = {
   'nagel': ['nail'], 'naegel': ['nail'], 'nagelbox': ['nail', 'box'], 'naegelbox': ['nail', 'box'],
   'holzbrett': ['wooden', 'plank'], 'holzbretter': ['wooden', 'plank'], 'brett': ['plank'], 'bretter': ['plank'],
   'wasserflasche': ['water', 'bottle'], 'flasche': ['bottle'],
@@ -271,6 +271,9 @@ const TYPE_SYNONYMS: Record<string, string[]> = {
   'autozelt': ['car', 'tent'], 'zelt': ['tent'], 'streichholz': ['match'], 'streichhoelzer': ['match'],
   'messer': ['knife'], 'axt': ['axe'], 'schaufel': ['shovel'], 'seil': ['rope'], 'fass': ['barrel'],
   'gewehr': ['rifle'], 'pistole': ['pistol'], 'magazin': ['mag'], 'munition': ['ammo'],
+  'apfel': ['apple'], 'aepfel': ['apple'], 'birne': ['pear'], 'birnen': ['pear'],
+  'pflaume': ['plum'], 'pflaumen': ['plum'], 'tomate': ['tomato'], 'tomaten': ['tomato'],
+  'reis': ['rice'], 'kartoffel': ['potato'], 'kartoffeln': ['potato'],
 };
 
 const TYPE_QUERY_EXCLUSIONS: Record<string, string[]> = {
