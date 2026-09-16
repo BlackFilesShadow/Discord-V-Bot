@@ -1,5 +1,6 @@
 import type { DayzCatalogAnswer } from './dayz129CatalogBase';
 import {
+  answerStructuralCountQuestion,
   enrichDayz129FollowUp as enrichDayz129FollowUpBase,
   isKnownDayz129Identifier,
 } from './dayz129CatalogBase';
@@ -128,5 +129,5 @@ export function enrichDayz129FollowUp(question: string, previousAssistantText?: 
 export function answerDayz129CatalogQuestion(question: string): DayzCatalogAnswer | null {
   if (looksLikeLiveServerKnowledgeQuestion(question)) return null;
   if (explicitCatalogIntent(question)) return answerGeneralDayz129Question(question);
-  return answerNamingQuestion(question);
+  return answerNamingQuestion(question) ?? answerStructuralCountQuestion(question);
 }

@@ -614,3 +614,97 @@ export function getDayz129CatalogStats(): { types: number; events: number; paths
   const index = getDayz129Index();
   return { types: index.allTypeNames.length, events: index.allEventNames.length, paths: index.allRelativePaths.length };
 }
+
+/**
+ * Der generierte Index speichert fuer JEDE der 42 Dateien pro Karte eine
+ * strukturelle Zusammenfassung (Element-/Attribut-Anzahlen fuer XML,
+ * Key-Pfade fuer JSON) - nicht nur fuer types.xml/events.xml. Diese Zaehlwerte
+ * lagen bisher ungenutzt im Index; "wie viele Zombie-Zonen hat Sakhal?" war
+ * damit unbeantwortbar, obwohl `env/zombie_territories.xml`s Struktur die
+ * Antwort (417) bereits exakt enthaelt. Dieser Pfad macht diese bereits
+ * indexierten, aber ungenutzten Zaehlwerte fuer ganz konkrete, eng gefasste
+ * Fragekategorien nutzbar - bewusst nur fuer Kategorien mit einem eindeutigen,
+ * belegten Element-Namen; bei fehlendem Zaehlwert wird nichts geraten.
+ */
+interface StructuralCountCategory {
+  file: string;
+  countKey: string;
+  label: string;
+  words: RegExp;
+}
+
+const TERRITORY_COUNT_CATEGORIES: readonly StructuralCountCategory[] = [
+  { file: 'env/bear_territories.xml', countKey: 'zone', label: 'Bär-Territorien (env/bear_territories.xml)', words: /\b(?:baeren?|bären?)\b/i },
+  { file: 'env/cattle_territories.xml', countKey: 'zone', label: 'Rind-Territorien (env/cattle_territories.xml)', words: /\b(?:rind(?:er)?|kuh|kuehe|kühe)\b/i },
+  { file: 'env/domestic_animals_territories.xml', countKey: 'zone', label: 'Haustier-Territorien (env/domestic_animals_territories.xml)', words: /\bhaustiere?\b/i },
+  { file: 'env/fox_territories.xml', countKey: 'zone', label: 'Fuchs-Territorien (env/fox_territories.xml)', words: /\b(?:fuchs|fuechse|füchse)\b/i },
+  { file: 'env/hare_territories.xml', countKey: 'zone', label: 'Hase-Territorien (env/hare_territories.xml)', words: /\bhasen?\b/i },
+  { file: 'env/hen_territories.xml', countKey: 'zone', label: 'Huhn-Territorien (env/hen_territories.xml)', words: /\b(?:huhn|huehner|hühner|hennen?)\b/i },
+  { file: 'env/pig_territories.xml', countKey: 'zone', label: 'Schwein-Territorien (env/pig_territories.xml)', words: /\bschweine?\b/i },
+  { file: 'env/red_deer_territories.xml', countKey: 'zone', label: 'Rothirsch-Territorien (env/red_deer_territories.xml)', words: /\b(?:rothirsche?|rotwild)\b/i },
+  { file: 'env/roe_deer_territories.xml', countKey: 'zone', label: 'Reh-Territorien (env/roe_deer_territories.xml)', words: /\brehe?\b/i },
+  { file: 'env/sheep_goat_territories.xml', countKey: 'zone', label: 'Schaf-/Ziegen-Territorien (env/sheep_goat_territories.xml)', words: /\b(?:schafe?|ziegen?)\b/i },
+  { file: 'env/wild_boar_territories.xml', countKey: 'zone', label: 'Wildschwein-Territorien (env/wild_boar_territories.xml)', words: /\bwildschweine?\b/i },
+  { file: 'env/wolf_territories.xml', countKey: 'zone', label: 'Wolf-Territorien (env/wolf_territories.xml)', words: /\b(?:woelfe|wölfe|wolfe?s?)\b/i },
+  { file: 'env/zombie_territories.xml', countKey: 'zone', label: 'Zombie-/Infizierten-Territorien (env/zombie_territories.xml)', words: /\b(?:zombies?|infizierten?)\b/i },
+];
+
+const OTHER_STRUCTURAL_COUNT_CATEGORIES: readonly StructuralCountCategory[] = [
+  { file: 'cfgeventspawns.xml', countKey: 'event', label: 'Event-Definitionen (cfgeventspawns.xml)', words: /\bevent[-\s]?definition(?:en)?\b/i },
+  { file: 'cfgeventspawns.xml', countKey: 'pos', label: 'Event-Positionen (cfgeventspawns.xml)', words: /\bevent[-\s]?position(?:en)?\b/i },
+  { file: 'cfgeventspawns.xml', countKey: 'zone', label: 'Event-Zonen (cfgeventspawns.xml)', words: /\bevent[-\s]?zonen?\b/i },
+  { file: 'mapgrouppos.xml', countKey: 'group', label: 'Mapgroups (mapgrouppos.xml)', words: /\bmapgroups?\b/i },
+  { file: 'cfgplayerspawnpoints.xml', countKey: 'pos', label: 'Spawn-Punkte (cfgplayerspawnpoints.xml)', words: /\bspawn[-\s]?punkte?\b|\bspawnpoints?\b/i },
+];
+
+const STRUCTURAL_COUNT_CATEGORIES: readonly StructuralCountCategory[] = [
+  ...TERRITORY_COUNT_CATEGORIES,
+  ...OTHER_STRUCTURAL_COUNT_CATEGORIES,
+];
+
+const COUNT_QUESTION_RE = /\b(?:wie\s+viele?|anzahl)\b/i;
+
+function detectStructuralCountCategory(question: string): StructuralCountCategory | null {
+  if (!COUNT_QUESTION_RE.test(question)) return null;
+  return STRUCTURAL_COUNT_CATEGORIES.find((cat) => cat.words.test(question)) ?? null;
+}
+
+export function answerStructuralCountQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const category = detectStructuralCountCategory(question);
+  if (!category) return null;
+
+  const index = getDayz129Index();
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+
+  const lines = [`**${category.label}**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const file = index.maps[map]?.files[category.file];
+    if (!file) {
+      lines.push(`- ${MAP_LABELS[map]}: Datei in deinem gelieferten Datensatz nicht vorhanden.`);
+      continue;
+    }
+    const count = file.structure.elementCounts?.[category.countKey];
+    if (typeof count !== 'number') {
+      lines.push(`- ${MAP_LABELS[map]}: kein auswertbarer Zaehlwert in der indexierten Dateistruktur.`);
+      continue;
+    }
+    found = true;
+    lines.push(`- ${MAP_LABELS[map]}: ${count}`);
+  }
+  // Fail-closed: ohne mindestens einen echten Zaehlwert wird keine hohle
+  // Antwort ausgegeben, die Frage bleibt unbeantwortet statt geraten.
+  if (!found) return null;
+
+  lines.push(
+    '',
+    `Quelle: Element-Anzahl \`${category.countKey}\` aus der indexierten Struktur von \`${category.file}\` deiner drei 1.29-Datensaetze (strukturell ausgewertet, kein erfundener Wert).`,
+  );
+  return {
+    answer: lines.join('\n'),
+    topic: 'file',
+    ids: maps.map((map) => `dayz129:structure:${map}:${category.file}:${category.countKey}`),
+  };
+}
