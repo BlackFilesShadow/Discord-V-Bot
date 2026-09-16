@@ -1,4 +1,3 @@
-/* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
 /**
  * Mirror Query-API — die einheitliche Lese-Schnittstelle, über die der
  * Bot, das Dashboard und die KI/RAG-Schicht Snapshot-Daten abfragen.
@@ -49,9 +48,9 @@ export async function getLatestSnapshot(guildId: string, nitradoConnId: string):
   return row;
 }
 
-export async function getSettings(snapshotId: string): Promise<{ serviceMeta: unknown; gameserver: unknown } | null> {
-  const s = await prisma.nitradoSnapshot.findUnique({
-    where: { id: snapshotId },
+export async function getSettings(snapshotId: string, guildId: string): Promise<{ serviceMeta: unknown; gameserver: unknown } | null> {
+  const s = await prisma.nitradoSnapshot.findFirst({
+    where: { id: snapshotId, guildId },
     select: { serviceMetaJson: true, settingsJson: true },
   });
   if (!s) return null;
@@ -74,9 +73,9 @@ export interface MirrorFileMeta {
   hasContent: boolean;
 }
 
-export async function listFiles(snapshotId: string, parentDir = '/'): Promise<MirrorFileMeta[]> {
+export async function listFiles(snapshotId: string, guildId: string, parentDir = '/'): Promise<MirrorFileMeta[]> {
   const rows = await prisma.nitradoSnapshotFile.findMany({
-    where: { snapshotId, parentDir },
+    where: { snapshotId, parentDir, snapshot: { guildId } },
     orderBy: [{ isDir: 'desc' }, { name: 'asc' }],
     select: {
       id: true, path: true, name: true, parentDir: true, isDir: true,
@@ -92,9 +91,9 @@ export async function listFiles(snapshotId: string, parentDir = '/'): Promise<Mi
   }));
 }
 
-export async function findFiles(snapshotId: string, nameContains: string, limit = 100): Promise<MirrorFileMeta[]> {
+export async function findFiles(snapshotId: string, guildId: string, nameContains: string, limit = 100): Promise<MirrorFileMeta[]> {
   const rows = await prisma.nitradoSnapshotFile.findMany({
-    where: { snapshotId, isDir: false, name: { contains: nameContains, mode: 'insensitive' } },
+    where: { snapshotId, isDir: false, name: { contains: nameContains, mode: 'insensitive' }, snapshot: { guildId } },
     orderBy: [{ name: 'asc' }],
     take: Math.min(limit, 500),
     select: {
@@ -117,9 +116,9 @@ export interface MirrorFileContent {
   textContent: string | null;
 }
 
-export async function getFile(snapshotId: string, path: string): Promise<MirrorFileContent | null> {
+export async function getFile(snapshotId: string, guildId: string, path: string): Promise<MirrorFileContent | null> {
   const r = await prisma.nitradoSnapshotFile.findFirst({
-    where: { snapshotId, path },
+    where: { snapshotId, path, snapshot: { guildId } },
     select: {
       id: true, path: true, name: true, parentDir: true, isDir: true,
       sizeBytes: true, modifiedAt: true, sha256: true, mimeGuess: true,
@@ -148,8 +147,8 @@ export async function getFile(snapshotId: string, path: string): Promise<MirrorF
  * Quote-Stripping inklusive. Für komplexe Strukturen besser den Inhalt
  * holen und gezielt parsen.
  */
-export async function getCfgValue(snapshotId: string, filePath: string, key: string): Promise<string | null> {
-  const f = await getFile(snapshotId, filePath);
+export async function getCfgValue(snapshotId: string, guildId: string, filePath: string, key: string): Promise<string | null> {
+  const f = await getFile(snapshotId, guildId, filePath);
   if (!f?.textContent) return null;
   const lines = f.textContent.split(/\r?\n/);
   const re = new RegExp(`^\\s*${key.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\s*=\\s*(.*?)\\s*;?\\s*(?://.*)?$`);

@@ -22,7 +22,7 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
     // WICHTIG: Event-Namen muessen 1:1 mit `src/dashboard/socket/emitter.ts`
     // (GuildEvent-Union) uebereinstimmen.
     const allKeys: readonly string[][] = [
-      ['settings', guildId], ['dashboard', guildId], ['nitrado', guildId],
+      ['settings', guildId], ['dashboard', guildId], ['dashboard-slot-meta', guildId], ['nitrado', guildId],
       ['factions', guildId], ['whitelist', guildId], ['permissions', guildId],
       ['tickets', guildId], ['economy', guildId],
       ['radar-config', guildId], ['radar-zones', guildId],
@@ -32,7 +32,14 @@ export function useGuildLiveUpdates(guildId: string | undefined): void {
       'settings.changed':     () => invalidate([['settings', guildId], ['dashboard', guildId], ['nitrado', guildId], ['economy', guildId], ['casino-games', guildId], ['casino-stats', guildId]]),
       'faction.changed':      () => invalidate([['factions', guildId]]),
       'whitelist.changed':    () => invalidate([['whitelist', guildId]]),
-      'permissions.updated':  () => invalidate([['permissions', guildId]]),
+      // ['dashboard', guildId] und ['dashboard-slot-meta', guildId] tragen die
+      // aus Permissions abgeleiteten UI-Gates (hasFullAccess, canManage* pro
+      // Slot fuer Killfeed/Radar/Black-Market/Lotterie). Ohne diese beiden
+      // Invalidierungen sieht ein Nutzer nach einem Rechte-Entzug die
+      // privilegierten Tabs/Aktionen weiter, bis er die Seite manuell neu
+      // laedt - jede Aktion wuerde serverseitig zwar korrekt mit 403
+      // abgelehnt, aber die UI zeigt bis dahin einen falschen Zustand.
+      'permissions.updated':  () => invalidate([['permissions', guildId], ['dashboard', guildId], ['dashboard-slot-meta', guildId]]),
       'nitrado.job.updated':  () => invalidate([['dashboard', guildId], ['nitrado', guildId]]),
       'tickets.changed':      () => invalidate([['tickets', guildId]]),
       'economy.tx':           () => invalidate([['economy', guildId], ['dashboard', guildId]]),

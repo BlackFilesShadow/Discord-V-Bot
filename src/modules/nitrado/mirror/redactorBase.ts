@@ -49,6 +49,11 @@ const RE_STEAM64 = /\b7656119\d{10}\b/g;
 const RE_BATTLEYE_GUID = /\b[a-f0-9]{32}\b/gi;
 const RE_DAYZ_CONSOLE_ID = /\b[A-Za-z0-9_-]{20,64}={0,2}\b/g;
 const RE_PORT_FIELD = /\b(?:port|queryport|rconport)\s*[:=]\s*"?\d{2,5}"?/gi;
+// `key = "value";`-Zuweisungen aus DayZ-/BattlEye-Konfigs (serverDZ.cfg,
+// BEServer_x64.cfg): password/passwordAdmin/RConPassword usw. duerfen nie im
+// Klartext ausgegeben werden, auch nicht in einem sonst als "nur gelesen,
+// nicht veraendert" markierten Rohdatei-Inhalt.
+const RE_CFG_PASSWORD_ASSIGNMENT = /\b(\w*password\w*)\s*=\s*"[^"]*"/gi;
 
 export interface RedactOptions {
   /** Optional: Service-/Server-Name, der zusätzlich zu maskieren ist. */
@@ -77,6 +82,7 @@ export function redactText(input: string, opts: RedactOptions = {}): string {
   out = out.replace(RE_STEAM64, PLACEHOLDER.steam64);
   out = out.replace(RE_BATTLEYE_GUID, PLACEHOLDER.guid);
   out = out.replace(RE_PORT_FIELD, (m) => m.replace(/\d{2,5}/, PLACEHOLDER.port));
+  out = out.replace(RE_CFG_PASSWORD_ASSIGNMENT, (_m, key: string) => `${key} = "${PLACEHOLDER.password}"`);
   // DayZ-Console-IDs: vorsichtig — könnte auch class-Namen treffen.
   // Nur wenn der String wie ein typischer Identifier aussieht (mit '_' oder '-' und gemischten Casings).
   out = out.replace(RE_DAYZ_CONSOLE_ID, (m) => {

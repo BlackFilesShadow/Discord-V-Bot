@@ -285,4 +285,37 @@ describe('Dashboard-2F DEV Nitrado Mirror contract', () => {
     expect(response.body.storedBytes).toBe('100');
     expect(mockGetSnapshotProgress).toHaveBeenCalledWith(SNAPSHOT_ID, RESTRICTED_GUILD);
   });
+
+  it('redigiert Klartext-Passwoerter aus rohen Settings, bevor sie den DEV-Client erreichen', async () => {
+    mockGetSettings.mockResolvedValue({
+      serviceMeta: { serviceId: 'svc1' },
+      gameserver: { hostname: 'MyServer', password: 'joinme', passwordAdmin: 'supersecret123', maxPlayers: 60 },
+    });
+
+    const response = await request(appFor())
+      .get(`/api/v2/dev/nitrado-mirror/${SNAPSHOT_ID}/settings?guildId=${RESTRICTED_GUILD}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.gameserver.password).not.toBe('joinme');
+    expect(response.body.gameserver.passwordAdmin).not.toBe('supersecret123');
+    expect(JSON.stringify(response.body)).not.toContain('joinme');
+    expect(JSON.stringify(response.body)).not.toContain('supersecret123');
+    expect(response.body.gameserver.maxPlayers).toBe(60);
+  });
+
+  it('redigiert Klartext-Passwoerter aus rohem serverDZ.cfg-Dateiinhalt, bevor er den DEV-Client erreicht', async () => {
+    mockGetFile.mockResolvedValue({
+      meta: { name: 'serverDZ.cfg', sizeBytes: BigInt(10), isText: true, oversize: false },
+      content: null,
+      textContent: 'hostname = "MyServer";\npassword = "joinme";\npasswordAdmin = "supersecret123";\nmaxPlayers = 60;\n',
+    });
+
+    const response = await request(appFor())
+      .get(`/api/v2/dev/nitrado-mirror/${SNAPSHOT_ID}/file?guildId=${RESTRICTED_GUILD}&path=%2FserverDZ.cfg`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.text).not.toContain('joinme');
+    expect(response.body.text).not.toContain('supersecret123');
+    expect(response.body.text).toContain('maxPlayers = 60');
+  });
 });

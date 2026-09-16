@@ -88,6 +88,19 @@ export default function BotAdminPage() {
     return <Shell title="Bot-Admin" back="/servers"><Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><Lock className="h-4 w-4 inline mr-1" /> Kein Zugriff</CardTitle><CardDesc>Bitte melde dich an.</CardDesc></CardHeader></Card></Shell>;
   }
 
+  // Bevor die serverseitige /bot-admin/status-Wahrheit feststeht, darf kein
+  // privilegiertes Bot-Admin-Tool gerendert werden - sonst kann ein alter
+  // sessionStorage-Hint (z.B. nach serverseitigem Session-Ablauf ohne
+  // explizites Logout) die volle Workspace kurz aufblitzen lassen, bevor die
+  // Statusabfrage zurueckkommt. Analog zu Dev.tsx's dev.loading-Gate.
+  if (ba.loading) {
+    return (
+      <Shell title="Bot-Admin" back="/servers">
+        <Card glow className="max-w-md mx-auto"><CardHeader><CardTitle><Lock className="h-4 w-4 inline mr-1" /> Bot-Admin-Status wird geprueft</CardTitle><CardDesc>Die serverseitige Bot-Admin-Session wird bestaetigt.</CardDesc></CardHeader></Card>
+      </Shell>
+    );
+  }
+
   if (!ba.active) {
     return (
       <Shell title="Bot-Admin" back="/servers">

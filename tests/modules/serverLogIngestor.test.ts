@@ -241,4 +241,59 @@ describe('serverLogIngestor — atomare Persistierung', () => {
     expect(createManyCalls).toBe(2);
     expect(cursorWrites).toBe(0);
   });
+
+  it('schreibt processedByteOffset nicht rueckwaerts, wenn ein paralleler Lauf den Cursor bereits weiter vorangebracht hat', async () => {
+    // Regressionsschutz: zwei Bot-Instanzen, die denselben nitradoConnId
+    // pollen, koennten ohne diese Pruefung race-en - ein langsamerer Lauf mit
+    // kleinerem newOffset darf den vom schnelleren Lauf bereits gesetzten
+    // groesseren Cursor nicht zurueckdrehen (fuehrt sonst zu unnoetiger
+    // Re-Verarbeitung, selbstheilend dank eventKey-Dedup, aber vermeidbar).
+    const content = fixture('vanilla_pc.ADM');
+    const res = ingestFullFile(content, 0, { fileName: 'vanilla_pc.ADM' });
+    let upsertCalls = 0;
+    const client: AdmPersistClient = {
+      admEvent: { createMany: async ({ data }) => ({ count: data.length }) },
+      admSourceCursor: {
+        findUnique: async () => ({ processedByteOffset: BigInt(res.newOffset + 1000) }),
+        upsert: async () => { upsertCalls++; return {}; },
+      },
+      $transaction: async (fn) => fn(client),
+    };
+
+    const result = await persistAdmEvents(
+      client,
+      { guildId: 'race-g', nitradoConnId: 'race-n' },
+      { fileIdentity: 'race-fid', fileName: 'vanilla_pc.ADM', lastModifiedAt: 1, fileSize: 999 },
+      res,
+      'race-fp',
+    );
+
+    expect(result.inserted).toBe(10);
+    expect(upsertCalls).toBe(0);
+  });
+
+  it('schreibt den Cursor normal, wenn dieser Lauf den bestehenden Cursor tatsaechlich voranbringt', async () => {
+    const content = fixture('vanilla_pc.ADM');
+    const res = ingestFullFile(content, 0, { fileName: 'vanilla_pc.ADM' });
+    let upsertCalls = 0;
+    const client: AdmPersistClient = {
+      admEvent: { createMany: async ({ data }) => ({ count: data.length }) },
+      admSourceCursor: {
+        findUnique: async () => ({ processedByteOffset: BigInt(Math.max(0, res.newOffset - 10)) }),
+        upsert: async () => { upsertCalls++; return {}; },
+      },
+      $transaction: async (fn) => fn(client),
+    };
+
+    const result = await persistAdmEvents(
+      client,
+      { guildId: 'race-g2', nitradoConnId: 'race-n2' },
+      { fileIdentity: 'race-fid2', fileName: 'vanilla_pc.ADM', lastModifiedAt: 1, fileSize: 999 },
+      res,
+      'race-fp2',
+    );
+
+    expect(result.inserted).toBe(10);
+    expect(upsertCalls).toBe(1);
+  });
 });
