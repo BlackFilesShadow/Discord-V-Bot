@@ -32,31 +32,30 @@ describe('Screenshot regressions', () => {
     expect(answer?.answer).not.toContain('Animal_');
   });
 
-  test('Kampfstiefel liefern die reale CombatBoots-Familie statt Fremdtreffern', () => {
+  test('Kampfstiefel liefern das reale TTSKOBoots statt Fremdtreffern', () => {
+    // Die offizielle stringtable.csv belegt "Kampfstiefel" -> TTSKOBoots
+    // (einzeln, keine Farbvarianten) - nicht CombatBoots, wie hier frueher
+    // angenommen; siehe getDayz129GermanAliases().
     const names = searchDayz129Types('Kampfstiefel', 10);
-    expect(names).toEqual([
-      'CombatBoots_Beige',
-      'CombatBoots_Black',
-      'CombatBoots_Brown',
-      'CombatBoots_Green',
-      'CombatBoots_Grey',
-    ]);
+    expect(names).toEqual(['TTSKOBoots']);
 
     const answer = answerDayz129CatalogQuestion('hast du von den Kampfstiefel den Classname?');
-    expect(answer?.answer).toContain('CombatBoots_Green');
+    expect(answer?.answer).toContain('TTSKOBoots');
     expect(answer?.answer).not.toContain('HeadlightH7');
     expect(answer?.answer).not.toContain('MP5K');
   });
 
-  test('Kampfstiefel mit Farbe löst auf genau eine Variante auf', () => {
+  test('Kampfstiefel mit erfundener Farbe bleibt fail-closed (TTSKOBoots hat keine Farbvarianten)', () => {
     const answer = answerDayz129CatalogQuestion('Classname Kampfstiefel Grün');
-    expect(answer?.answer).toBe('Der Classname ist **`CombatBoots_Green`**.');
+    expect(answer?.answer).toMatch(/keinen eindeutig passenden Classname/i);
   });
 
-  test('Kampfanzugshose aus dem Produktions-Screenshot löst auf TTSKOPants statt MP5K auf', () => {
+  test('Kampfanzugshose aus dem Produktions-Screenshot löst auf BDUPants statt MP5K auf', () => {
+    // Bohemias offizielle Uebersetzung ist "Kampfanzug-Hose" fuer BDUPants
+    // (nicht TTSKOPants, wie hier frueher angenommen).
     const answer = answerDayz129CatalogQuestion('weißt du die Classname von Der Kampfanzugshose');
-    expect(answer?.answer).toBe('Der Classname ist **`TTSKOPants`**.');
-    expect(searchDayz129Types('Kampfanzugshose', 5)).toEqual(['TTSKOPants']);
+    expect(answer?.answer).toBe('Der Classname ist **`BDUPants`**.');
+    expect(searchDayz129Types('Kampfanzugshose', 5)).toEqual(['BDUPants']);
     expect(answer?.answer).not.toContain('MP5K');
   });
 

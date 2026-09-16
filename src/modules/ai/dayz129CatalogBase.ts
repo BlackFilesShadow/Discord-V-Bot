@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { DAYZ129_INDEX_GZIP_BASE64, DAYZ129_INDEX_GZIP_BASE64_SHA256 } from './generated/dayz129IndexData';
+import {
+  DAYZ129_GERMAN_NAMES_GZIP_BASE64,
+  DAYZ129_GERMAN_NAMES_GZIP_BASE64_SHA256,
+} from './generated/dayz129GermanNamesData';
 
 export type Dayz129Map = 'chernarus' | 'livonia' | 'sakhal';
 
@@ -142,6 +146,59 @@ export function getDayz129Index(): Dayz129Index {
     eventByLower = new Map(cached.allEventNames.map((name) => [name.toLocaleLowerCase('de-DE'), name]));
   }
   return cached;
+}
+
+let germanNamesCached: Record<string, string> | null = null;
+let germanAliasesCached: Record<string, string> | null = null;
+
+/**
+ * Classname -> offizieller deutscher Anzeigename, direkt aus Bohemias eigener
+ * stringtable.csv generiert (siehe scripts/generate_dayz129_stringtable.py).
+ * Nichts hier ist geraten: jeder Eintrag stammt aus einer echten Zeile dieser
+ * Datei fuer einen bereits im 1.29-Index verifizierten Classname.
+ */
+export function getDayz129GermanNames(): Record<string, string> {
+  if (!germanNamesCached) {
+    const actualSha256 = createHash('sha256').update(DAYZ129_GERMAN_NAMES_GZIP_BASE64, 'ascii').digest('hex');
+    if (actualSha256 !== DAYZ129_GERMAN_NAMES_GZIP_BASE64_SHA256) {
+      throw new Error(
+        `DayZ-1.29-German-Names-Payload beschaedigt: SHA-256 ${actualSha256} weicht von erwartetem ${DAYZ129_GERMAN_NAMES_GZIP_BASE64_SHA256} ab.`,
+      );
+    }
+    const raw = gunzipSync(Buffer.from(DAYZ129_GERMAN_NAMES_GZIP_BASE64, 'base64')).toString('utf8');
+    germanNamesCached = JSON.parse(raw) as Record<string, string>;
+  }
+  return germanNamesCached;
+}
+
+/**
+ * Wie getDayz129GermanNames(), aber als fertige Alias-Tabelle im selben
+ * Format wie EXACT_ALIASES (compact(deutscher Name) -> Ziel). Ein
+ * Classname mit Farb-Suffix (z.B. "AliceBag_Green") wird dabei auf seine
+ * Farbfamilien-Basis ("AliceBag") abgebildet, damit derselbe bestehende
+ * familyCandidates()-Mechanismus wie bei den handgepflegten Alias-Woertern
+ * greift - keine zweite, parallele Mehrdeutigkeits-Logik noetig. Zeigen zwei
+ * verschiedene deutsche Namen zufaellig auf denselben Compact-Key mit
+ * unterschiedlichem Ziel, wird der Eintrag komplett verworfen statt zu raten,
+ * welcher gemeint ist.
+ */
+export function getDayz129GermanAliases(): Readonly<Record<string, string>> {
+  if (!germanAliasesCached) {
+    const out: Record<string, string> = {};
+    const conflicted = new Set<string>();
+    for (const [classname, german] of Object.entries(getDayz129GermanNames())) {
+      const key = compact(german);
+      if (!key) continue;
+      const parts = classname.split('_');
+      const last = parts.length > 1 ? parts[parts.length - 1].toLocaleLowerCase('de-DE') : '';
+      const target = COLOR_SUFFIXES.has(last) ? parts.slice(0, -1).join('_') : classname;
+      if (key in out && out[key] !== target) { conflicted.add(key); continue; }
+      out[key] = target;
+    }
+    for (const key of conflicted) delete out[key];
+    germanAliasesCached = out;
+  }
+  return germanAliasesCached;
 }
 
 function fold(text: string): string {
@@ -414,10 +471,15 @@ export const EXACT_ALIASES: Readonly<Record<string, string>> = {
   m4: 'M4A1',
   tundra: 'Winchester70',
   winchester: 'Winchester70',
-  kampfstiefel: 'CombatBoots',
   combatboots: 'CombatBoots',
-  kampfanzugshose: 'TTSKOPants',
-  kampfanzughose: 'TTSKOPants',
+  // "kampfanzug(s)hose" gehoert laut offizieller stringtable.csv zu BDUPants
+  // (dort steht das exakte Bohemia-Original "Kampfanzug-Hose"), nicht zu
+  // TTSKOPants - vorher hier ein falscher Eintrag, durch den Stringtable-
+  // Abgleich entdeckt und korrigiert. "kampfstiefel" (offiziell TTSKOBoots)
+  // und "lagerfeuer" (offiziell Fireplace) waren aus demselben Grund falsch
+  // und wurden ersatzlos entfernt: die generierte, verifizierte
+  // getDayz129GermanAliases()-Tabelle deckt beide Woerter jetzt korrekt ab.
+  kampfanzugshose: 'BDUPants',
   kampfhose: 'TTSKOPants',
   combatpants: 'TTSKOPants',
   bduhose: 'BDUPants',
@@ -481,7 +543,6 @@ export const EXACT_ALIASES: Readonly<Record<string, string>> = {
   bratpfanne: 'FryingPan',
   pfanne: 'FryingPan',
   topf: 'Pot',
-  lagerfeuer: 'Bonfire',
   feuerstelle: 'Fireplace',
   gaskocher: 'PortableGasStove',
   gaslampe: 'PortableGasLamp',

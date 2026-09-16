@@ -19,14 +19,15 @@ describe('strict classname examples', () => {
     expect(answerDayz129CatalogQuestion('ich meine die waffe M4')?.answer).toBe('Der Classname ist **`M4A1`**.');
   });
 
-  it('lists only CombatBoots colour variants for generic Kampfstiefel', () => {
+  it('resolves generic Kampfstiefel to the real TTSKOBoots (official stringtable.csv alias)', () => {
     const text = answerDayz129CatalogQuestion('classname von den Kampfstiefel')?.answer ?? '';
-    for (const n of ['CombatBoots_Beige','CombatBoots_Black','CombatBoots_Brown','CombatBoots_Green','CombatBoots_Grey']) expect(text).toContain(n);
+    expect(text).toContain('TTSKOBoots');
     expect(text).not.toMatch(/Headlight|MP5|nominal|restock/i);
   });
 
   it('returns only requested colours', () => {
-    expect(answerDayz129CatalogQuestion('Classname Kampfstiefel Grün')?.answer).toBe('Der Classname ist **`CombatBoots_Green`**.');
+    // TTSKOBoots hat keine Farbvarianten - eine erfundene Farbe bleibt fail-closed.
+    expect(answerDayz129CatalogQuestion('Classname Kampfstiefel Grün')?.answer).toMatch(/keinen eindeutig passenden Classname/i);
     expect(answerDayz129CatalogQuestion('Classname vom Feldrucksack Grün')?.answer).toBe('Der Classname ist **`AliceBag_Green`**.');
   });
 
@@ -51,8 +52,8 @@ describe('strict classname examples', () => {
       .toBe('Der Classname ist **`AliceBag_Green`**.');
     expect(answerDayz129CatalogQuestion('Classname Strom_Generatoren')?.answer)
       .toBe('Der Classname ist **`PowerGenerator`**.');
-    expect(answerDayz129CatalogQuestion('Classname Kampfstifel schwarz')?.answer)
-      .toBe('Der Classname ist **`CombatBoots_Black`**.');
+    expect(answerDayz129CatalogQuestion('Classname Kampfstifel')?.answer)
+      .toBe('Der Classname ist **`TTSKOBoots`**.');
   });
 
   it('does not guess short ambiguous weapon families', () => {

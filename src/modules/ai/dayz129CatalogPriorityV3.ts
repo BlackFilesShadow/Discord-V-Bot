@@ -10,6 +10,23 @@ type Resolution = { matched: boolean; candidates: string[] };
 // Ebenen der Kette dieselben Woerter kennen.
 const DISPLAY_ALIASES = EXACT_ALIASES;
 
+let mergedAliasesCached: Record<string, string> | null = null;
+
+/**
+ * EXACT_ALIASES (handgepflegt, u.a. kurze/umgangssprachliche Varianten) plus
+ * die aus Bohemias eigener stringtable.csv generierten, offiziellen
+ * deutschen Namen (siehe getDayz129GermanAliases()). Bei einem
+ * ueberschneidenden Schluessel gewinnt die offizielle Quelle - sie ist
+ * verifiziert, nicht geraten. Einmal berechnet und zwischengespeichert, da
+ * beide Quellen innerhalb eines Prozesses unveraendert bleiben.
+ */
+function mergedAliases(): Record<string, string> {
+  if (!mergedAliasesCached) {
+    mergedAliasesCached = { ...DISPLAY_ALIASES, ...base.getDayz129GermanAliases() };
+  }
+  return mergedAliasesCached;
+}
+
 function fold(text: string): string {
   return text.toLocaleLowerCase('de-DE')
     .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
@@ -103,11 +120,12 @@ function withoutColorWords(cleaned: string): string {
  * werden.
  */
 function resolveAlias(query: string): string | null {
-  const exact = DISPLAY_ALIASES[query];
+  const aliases = mergedAliases();
+  const exact = aliases[query];
   if (exact) return exact;
   if (query.length < 6) return null;
 
-  const ranked = Object.entries(DISPLAY_ALIASES)
+  const ranked = Object.entries(aliases)
     .map(([alias, target]) => ({ target, distance: editDistance(query, alias) }))
     .filter(candidate => candidate.distance <= 1)
     .sort((a, b) => a.distance - b.distance || a.target.localeCompare(b.target));
