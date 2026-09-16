@@ -96,8 +96,6 @@ const blockedCases: Array<[string, () => void, string]> = [
   ['aktive Angebote', () => { state.activeListings = 1n; }, 'aktive Angebote'],
   ['offene Sammelbestellungen', () => { state.openOrders = 1n; }, 'offene Sammelbestellungen'],
   ['offene Fulfillments', () => { state.pendingFulfillments = 1n; }, 'offene Bestellungen'],
-  ['Wallet-Guthaben', () => { state.balance = 1n; }, 'Wallet oder Bank'],
-  ['Bank-Guthaben', () => { state.bankBalance = 1n; }, 'Wallet oder Bank'],
 ];
 
 describe('safe market vendor removal', () => {
@@ -109,12 +107,27 @@ describe('safe market vendor removal', () => {
       actorDiscordId: ACTOR,
     });
 
-    expect(result).toEqual({ id: VENDOR, name: 'Nachtmarkt', mode: 'CONTROL_HIDDEN', changed: true });
+    expect(result).toEqual({ id: VENDOR, name: 'Nachtmarkt', mode: 'CONTROL_HIDDEN', changed: true, walletForfeited: '0', bankForfeited: '0' });
     expect(raw.$queryRawUnsafe.mock.calls.some(([sql]) => String(sql).includes('FOR UPDATE'))).toBe(true);
     expect(raw.$queryRawUnsafe.mock.calls.some(([sql]) => String(sql).includes('"status"=\'OPEN\''))).toBe(true);
     expect(raw.$queryRawUnsafe.mock.calls.some(([sql]) => String(sql).includes('f."status"=\'PENDING\''))).toBe(true);
     expect(raw.$executeRawUnsafe.mock.calls[0][0]).toContain("\"status\"='ARCHIVED'");
     expect(raw.$executeRawUnsafe.mock.calls[1][0]).toContain('INSERT INTO "EconomyMarketVendorControlHidden"');
+  });
+
+  test('entfernt einen aktiven Haendler trotz Wallet- und Bankguthaben und meldet den verworfenen Betrag', async () => {
+    state.balance = 6832n;
+    state.bankBalance = 1200n;
+
+    const result = await removeMarketVendorFromControl({
+      guildId: GUILD,
+      nitradoConnId: CONN,
+      vendorAccountId: VENDOR,
+      actorDiscordId: ACTOR,
+    });
+
+    expect(result).toEqual({ id: VENDOR, name: 'Nachtmarkt', mode: 'CONTROL_HIDDEN', changed: true, walletForfeited: '6832', bankForfeited: '1200' });
+    expect(raw.$executeRawUnsafe.mock.calls[0][0]).toContain("\"status\"='ARCHIVED'");
   });
 
   test('zweiter Delete ist idempotent und schreibt nichts erneut', async () => {
@@ -129,6 +142,8 @@ describe('safe market vendor removal', () => {
     });
 
     expect(result.changed).toBe(false);
+    expect(result.walletForfeited).toBe('0');
+    expect(result.bankForfeited).toBe('0');
     expect(raw.$executeRawUnsafe).not.toHaveBeenCalled();
   });
 
@@ -189,7 +204,12 @@ describe('phase 3 contract', () => {
     expect(service).toContain('EconomyMarketPurchaseFulfillment');
     expect(service).toContain('PENDING');
     expect(service).toContain('EconomyVirtualAccountFinance');
-    expect(service).toContain('vendor.balance !== 0n');
+    // Wallet-/Bankguthaben blockiert das Entfernen bewusst NICHT mehr
+    // (expliziter Nutzer-Wunsch) - stattdessen wird der verworfene Betrag
+    // zurueckgegeben und vom Aufrufer auditiert.
+    expect(service).not.toContain('vendor.balance !== 0n');
+    expect(service).toContain('walletForfeited');
+    expect(service).toContain('bankForfeited');
     expect(service).toContain('EconomyMarketVendorControlHidden');
     expect(service).not.toContain('DELETE FROM "EconomyVirtualAccount"');
     expect(service).not.toContain('DELETE FROM "EconomyMarketPurchase"');
@@ -207,5 +227,26 @@ describe('phase 3 contract', () => {
     expect(ui).toContain('/economy/black-market/vendors/${id}?${scope}');
     expect(ui).toContain('Haendler ${vendor.name} entfernen');
     expect(ui).toContain("vendor.status === 'ACTIVE'");
+  });
+
+  test('Vendor-Erstellung synchronisiert den Kontoverwalter-Kanal und eine Managers-Route erlaubt weitere Verwalter', () => {
+    // Regressionsschutz: anders als bei CUSTOM-Konten loeste MARKET_VENDOR-
+    // Erstellung frueher nie configureVirtualManagerPanelSafe aus - der
+    // Ersteller bekam zwar die DB-Zeile (EconomyVirtualAccountManager), aber
+    // nie den Discord-Kanalzugriff auf das gemeinsame Kontoverwalter-Panel.
+    // Und es gab ueberhaupt keinen Weg, einen 2./3. Verwalter zu ergaenzen.
+    const route = read('src/dashboard/routes/v2/economyBlackMarket.ts');
+    const ui = read('dashboard-ui/src/components/economy/BlackMarketPanel.tsx');
+    expect(route).toContain("import { refreshConfiguredVirtualManagerPanelSafe } from '../../../modules/economy/virtualAccountManagerPanelSafety';");
+    const postVendors = route.slice(route.indexOf("post('/vendors',"), route.indexOf("get('/vendors/:vendorId/managers'"));
+    expect(postVendors).toContain('createMarketVendor(');
+    expect(postVendors).toContain('refreshVendorManagerPanel(');
+    expect(route).toContain("get('/vendors/:vendorId/managers'");
+    expect(route).toContain("put('/vendors/:vendorId/managers'");
+    expect(route).toContain('replaceVirtualAccountManagers(');
+    expect(route).toContain('MARKET_VENDOR_MANAGERS_UPDATED');
+    expect(ui).toContain("import { ManagerPicker } from './ManagerPicker';");
+    expect(ui).toContain('const saveVendorManagers = useMutation');
+    expect(ui).toContain('/economy/black-market/vendors/${vars.id}/managers?${scope}');
   });
 });

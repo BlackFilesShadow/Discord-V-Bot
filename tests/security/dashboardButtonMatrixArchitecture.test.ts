@@ -53,6 +53,7 @@ const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/Vi
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_SYSTEM_ACCOUNTS_OVERVIEW = 'dashboard-ui/src/components/economy/SystemAccountsOverview.tsx';
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
+const CURRENT_MANAGER_PICKER = 'dashboard-ui/src/components/economy/ManagerPicker.tsx';
 const CURRENT_BLACK_MARKET_DISCORD_SETTINGS = 'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx';
 const CURRENT_NITRADO_DRIFT_BANNER = 'dashboard-ui/src/components/NitradoDriftBanner.tsx';
 const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
@@ -72,6 +73,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_VIRTUAL_ACCOUNT_PANEL,
   CURRENT_SYSTEM_ACCOUNTS_OVERVIEW,
   CURRENT_BLACK_MARKET_PANEL,
+  CURRENT_MANAGER_PICKER,
   CURRENT_BLACK_MARKET_DISCORD_SETTINGS,
   CURRENT_NITRADO_DRIFT_BANNER,
   CURRENT_KILLFEED_PANEL,
