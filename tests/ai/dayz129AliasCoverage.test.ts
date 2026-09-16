@@ -79,4 +79,28 @@ describe('DayZ 1.29 alias/synonym coverage (ausnahmslos)', () => {
       expect(answer?.answer).toBe(`Der Classname ist **\`${target}\`**.`);
     },
   );
+
+  // Regressionsschutz fuer den konkreten Nutzer-Report: "Classname von
+  // Feuerzeug?" antwortete faelschlich mit "kein Classname gefunden", weil
+  // TYPE_SYNONYMS/EXACT_ALIASES das deutsche Wort ueberhaupt nicht kannten -
+  // obwohl der reale Classname (PetrolLighter) im 1.29-Index existiert.
+  test('reproduces and fixes the reported "Feuerzeug" not-found report', () => {
+    expect(answerDayz129CatalogQuestion('Classname von Feuerzeug?')?.answer)
+      .toBe('Der Classname ist **`PetrolLighter`**.');
+    expect(answerDayz129CatalogQuestion('CLassname von  Feuerzeug?')?.answer)
+      .toBe('Der Classname ist **`PetrolLighter`**.');
+  });
+
+  // Regressionsschutz fuer einen waehrend dieser Erweiterung entdeckten,
+  // eigenstaendigen Logikfehler: ein ungeschuetzter Teilstring-Check liess
+  // einen kurzen realen Classname (z.B. "Pate") innerhalb eines laengeren,
+  // voellig unrelated deutschen Worts (z.B. "Feldspaten") anschlagen und eine
+  // falsche, aber selbstsichere Antwort liefern statt "nicht gefunden". Die
+  // Wortgrenzen-sichere Pruefung (isWordBoundaryMention) muss das verhindern.
+  test('does not let a short real classname match inside an unrelated longer German word', () => {
+    expect(answerDayz129CatalogQuestion('Classname feldspaten')?.answer)
+      .toBe('Der Classname ist **`FieldShovel`**.');
+    expect(answerDayz129CatalogQuestion('Classname feldspaten')?.answer)
+      .not.toContain('Pate');
+  });
 });
