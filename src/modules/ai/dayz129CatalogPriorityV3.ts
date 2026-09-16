@@ -36,11 +36,23 @@ function editDistance(left: string, right: string): number {
   return previous[right.length];
 }
 
+// Reine deutsche Fuellwoerter ohne jeden Informationswert fuer die
+// Classname-Suche. Fehlte hier eines (z.B. "fuer", "ist", "mich", "was"),
+// blieb es im bereinigten Text stehen und wurde von den nachgelagerten
+// Matchern (die den bereinigten Text als EINEN zusammenhaengenden Suchbegriff
+// behandeln bzw. verlangen, dass jedes Token passt) faelschlich als
+// bedeutungstragend gewertet - das liess natuersprachliche Fragen wie
+// "weisst du wie die Classname fuer AK ist?" oder "hast du fuer mich den
+// Classname von den Kampfstiefeln?" scheitern, obwohl "AK"/"Kampfstiefeln"
+// dem System bekannt sind. Da alle echten Classnames englische Tokens sind,
+// ist das Entfernen dieser deutschen Funktionswoerter risikofrei.
+const FILLER_WORDS_RE = /\b(?:kannst|koenntest|könntest|hast|weisst|weißt|weiss|weiß|sag|sagen|nenn|nennen|bitte|mir|du|ich|meine|von|vom|der|die|das|den|dem|des|einer|einem|eine|einen|ein|waffe|item|gegenstand|dayz|heisst|heißt|wie|was|welche|welcher|welches|in|fuer|ist|sind|hat|habe|haben|kann|koennte|moechte|moechtest|gibt|mich|dir|dich|es|wir|uns|euch)\b/g;
+
 function cleanLookupText(question: string): string {
   return fold(question)
     .replace(/\b(?:db\/)?types?\.xml\b/g, ' ')
     .replace(/\b(?:classname|class name|typename|type name|itemname|item name)\b/g, ' ')
-    .replace(/\b(?:kannst|koenntest|könntest|hast|weisst|weißt|weiss|weiß|sag|sagen|nenn|nennen|bitte|mir|du|ich|meine|von|vom|der|die|das|den|dem|des|einer|einem|eine|einen|waffe|item|gegenstand|dayz|heisst|heißt|wie|in)\b/g, ' ')
+    .replace(FILLER_WORDS_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
