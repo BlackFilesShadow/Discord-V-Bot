@@ -25,8 +25,10 @@ describe('DayZ 1.29 Classname-Aufloesung ist robust gegen natuerliche Satzfuellw
   });
 
   test('gemeldeter Fall: "hast du für mich den Classname von den Kampfstiefeln?" loest jetzt auf', () => {
+    // Die offizielle stringtable.csv belegt "Kampfstiefel" -> TTSKOBoots (nicht
+    // CombatBoots, wie hier frueher angenommen); siehe getDayz129GermanAliases().
     const answer = answerDayz129CatalogQuestion('hast du für mich den Classname von den Kampfstiefeln?');
-    expect(answer?.answer).toContain('CombatBoots_Black');
+    expect(answer?.answer).toContain('TTSKOBoots');
   });
 
   test('weitere natuerliche Formulierungen mit denselben Fuellwoertern loesen ebenfalls auf', () => {
