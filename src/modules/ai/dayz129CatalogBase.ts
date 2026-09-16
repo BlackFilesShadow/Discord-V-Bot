@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
-import { DAYZ129_INDEX_GZIP_BASE64 } from './generated/dayz129IndexData';
+import { DAYZ129_INDEX_GZIP_BASE64, DAYZ129_INDEX_GZIP_BASE64_SHA256 } from './generated/dayz129IndexData';
 
 export type Dayz129Map = 'chernarus' | 'livonia' | 'sakhal';
 
@@ -20,11 +21,72 @@ interface IndexedFile {
   };
 }
 
+export interface Dayz129TerritoryZone {
+  name: string;
+  count: number;
+  dminMin: number;
+  dminMax: number;
+  dmaxMin: number;
+  dmaxMax: number;
+  radiusMin: number;
+  radiusMax: number;
+}
+
+export interface Dayz129EffectArea {
+  name: string | null;
+  type: string | null;
+  triggerType: string | null;
+  radius: number | null;
+  posHeight: number | null;
+  negHeight: number | null;
+}
+
+export interface Dayz129RandomPreset {
+  kind: 'cargo' | 'attachments';
+  chance: number | null;
+  items: Array<{ name: string; chance: number | null }>;
+}
+
+export interface Dayz129SpawnableType {
+  hoarder?: true;
+  damage?: Record<string, Scalar>;
+  attachments?: Array<{ chance: number | null; items?: string[]; preset?: string }>;
+  cargo?: Array<{ chance: number | null; items?: string[]; preset?: string }>;
+}
+
 interface IndexedMap {
   mission: string;
   files: Record<string, IndexedFile>;
   types: Record<string, Record<string, RecordValue>>;
   events: Record<string, Record<string, RecordValue>>;
+  /** Rohe `<var name/type/value>`-Eintraege aus db/globals.xml. */
+  globals?: Record<string, { type: number | null; value: Scalar }>;
+  /** Init/Load/Respawn/Save-Flags je CE-Wurzelklasse aus db/economy.xml. */
+  economyClasses?: Record<string, { init: number; load: number; respawn: number; save: number }>;
+  /** Rootclasses + Default-Parameter aus cfgeconomycore.xml. */
+  economyCore?: { rootClasses: Array<Record<string, string>>; defaults: Record<string, Scalar> };
+  /** Weather-Konfiguration aus cfgweather.xml (reset/enable + je Sektion current/limits/timelimits/changelimits/thresholds). */
+  weather?: { reset: number | null; enable: number | null; sections: Record<string, Record<string, Record<string, Scalar>>> };
+  /** Die vollstaendige, verbindliche Namensliste aus cfglimitsdefinition.xml. */
+  limitsDefinition?: { categories: string[]; tags: string[]; usageflags: string[]; valueflags: string[] };
+  /** Benutzerdefinierte Sammel-Flags (z.B. "TownVillage") aus cfglimitsdefinitionuser.xml. */
+  limitsDefinitionUser?: { usageflags: Record<string, string[]>; valueflags: Record<string, string[]> };
+  /** Von der CE ignorierte Classnames aus cfgignorelist.xml. */
+  ignoreList?: string[];
+  /** Aktive (nicht auskommentierte) Server-Messages aus db/messages.xml. */
+  messages?: Array<{ delay?: number; repeat?: number; deadline?: number; shutdown?: number; onconnect?: number; text?: string }>;
+  /** Aggregierte Zonen je Tier-/Zombie-Territoriumsdatei (env/*_territories.xml), OHNE Einzelkoordinaten. */
+  territories?: Record<string, Dayz129TerritoryZone[]>;
+  /** Gruppe -> Kind-Classname -> Anzahl aus cfgeventgroups.xml, OHNE Koordinaten. */
+  eventGroups?: Record<string, Record<string, number>>;
+  /** Cargo-/Attachment-Presets aus cfgrandompresets.xml. */
+  randomPresets?: Record<string, Dayz129RandomPreset>;
+  /** Statische Kontaminationsbereiche aus cfgeffectarea.json. */
+  effectAreas?: { areas: Dayz129EffectArea[]; safePositionCount: number };
+  /** Spawn-Attachment-/Cargo-Zuordnungen aus cfgspawnabletypes.xml. */
+  spawnableTypes?: Record<string, Dayz129SpawnableType>;
+  /** Generator-/Spawn-Parameter je fresh/hop/travel aus cfgplayerspawnpoints.xml, OHNE Koordinaten. */
+  playerSpawnPoints?: Record<string, Record<string, Record<string, Scalar>>>;
 }
 
 export interface Dayz129Index {
@@ -62,6 +124,17 @@ const MAP_LABELS: Record<Dayz129Map, string> = {
 
 export function getDayz129Index(): Dayz129Index {
   if (!cached) {
+    // Der eingebettete Payload wurde in diesem Repo schon einmal spaet im
+    // komprimierten Stream beschaedigt (siehe generate_dayz129_index.py). Ein
+    // SHA-256 ueber die rohe Base64-Nutzlast erkennt eine kuenftige
+    // Beschaedigung sofort und fail-closed, statt still fehlerhafte oder
+    // teilweise Daten als Wissensbasis zu laden.
+    const actualSha256 = createHash('sha256').update(DAYZ129_INDEX_GZIP_BASE64, 'ascii').digest('hex');
+    if (actualSha256 !== DAYZ129_INDEX_GZIP_BASE64_SHA256) {
+      throw new Error(
+        `DayZ-1.29-Index-Payload beschaedigt: SHA-256 ${actualSha256} weicht von erwartetem ${DAYZ129_INDEX_GZIP_BASE64_SHA256} ab.`,
+      );
+    }
     const raw = gunzipSync(Buffer.from(DAYZ129_INDEX_GZIP_BASE64, 'base64')).toString('utf8');
     cached = JSON.parse(raw) as Dayz129Index;
     cached.sourceTag = 'USER_ZIPS_1.29.163451';
@@ -707,4 +780,314 @@ export function answerStructuralCountQuestion(question: string): DayzCatalogAnsw
     topic: 'file',
     ids: maps.map((map) => `dayz129:structure:${map}:${category.file}:${category.countKey}`),
   };
+}
+
+// ============================================================================
+// Phase B: Antworten auf Basis der jetzt vollstaendig geparsten Nicht-types/
+// events-Dateien (globals.xml, economy.xml, cfgeconomycore.xml, cfgweather.xml,
+// cfglimitsdefinition(user).xml, cfgignorelist.xml, env/*_territories.xml,
+// cfgeventgroups.xml, cfgrandompresets.xml, cfgeffectarea.json,
+// cfgspawnabletypes.xml). Jede Funktion bleibt strikt fail-closed: ohne einen
+// im Index tatsaechlich vorhandenen Namen/Bezug wird nichts geraten.
+// ============================================================================
+
+/** Laengster, tatsaechlich als eigenes Wort/Substring vorkommender bekannter Schluessel (>=5 Zeichen, um triviale Kurzwort-Kollisionen zu vermeiden). */
+function findMentionedKey(question: string, keys: Iterable<string>): string | null {
+  const q = fold(question);
+  let best: string | null = null;
+  for (const key of keys) {
+    if (key.length < 5) continue;
+    const k = fold(key);
+    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(^|[^a-z0-9_])${escaped}([^a-z0-9_]|$)`, 'i').test(q) && (!best || key.length > best.length)) {
+      best = key;
+    }
+  }
+  return best;
+}
+
+function formatScalarRecord(rec: Record<string, Scalar>): string {
+  return Object.entries(rec).map(([k, v]) => `\`${k}=${v}\``).join(', ');
+}
+
+export function answerGlobalVariableQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const index = getDayz129Index();
+  const allNames = new Set<string>();
+  for (const map of Object.keys(index.maps) as Dayz129Map[]) {
+    for (const name of Object.keys(index.maps[map].globals ?? {})) allNames.add(name);
+  }
+  const name = findMentionedKey(question, allNames);
+  if (!name) return null;
+
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+  const lines = [`**Globale CE-Variable \`${name}\` (db/globals.xml)**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const entry = index.maps[map]?.globals?.[name];
+    if (!entry) { lines.push(`- ${MAP_LABELS[map]}: nicht vorhanden.`); continue; }
+    found = true;
+    lines.push(`- ${MAP_LABELS[map]}: \`${name}=${entry.value}\``);
+  }
+  if (!found) return null;
+  lines.push('', 'Quelle: `db/globals.xml` deiner drei 1.29-Datensaetze.');
+  return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:globals:${m}:${name}`) };
+}
+
+// Die staerker DayZ-spezifischen Verbindungen ("usage-flags", "wertstufen",
+// "central economy" + kategorien/tags) loesen allein aus. Die alleinstehenden
+// generischen Woerter "kategorien"/"tags"/"categories" sind absichtlich NICHT
+// allein ausreichend (z.B. "wie viele Kategorien hat mein Kuehlschrank?")
+// und brauchen zusaetzlich einen DayZ-/CE-Kontext im selben Satz.
+const LIMITS_DEFINITION_SPECIFIC_RE = /\b(usage[-\s]?(?:flags?|zonen?)|wertstufen?|value[-\s]?flags?|tier[-\s]?flags?)\b/i;
+const LIMITS_DEFINITION_GENERIC_RE = /\b(kategorien?|categor(?:y|ies)|tags?)\b/i;
+const LIMITS_DEFINITION_CONTEXT_RE = /\b(dayz|central economy|\bce\b|cfglimitsdefinition|types?\.xml|loot|classname)\b/i;
+
+export function answerLimitsDefinitionQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const isSpecific = LIMITS_DEFINITION_SPECIFIC_RE.test(question);
+  const isGenericWithContext = LIMITS_DEFINITION_GENERIC_RE.test(question) && LIMITS_DEFINITION_CONTEXT_RE.test(question);
+  if (!isSpecific && !isGenericWithContext) return null;
+  const index = getDayz129Index();
+  const def = index.maps.chernarus?.limitsDefinition;
+  if (!def) return null;
+  const q = fold(question);
+  let key: keyof typeof def | null = null;
+  let label = '';
+  if (/\bkategorien?|categor/i.test(q)) { key = 'categories'; label = 'Kategorien (`category`)'; }
+  else if (/\btags?\b/i.test(q)) { key = 'tags'; label = 'Tags (`tag`)'; }
+  else if (/\busage/i.test(q)) { key = 'usageflags'; label = 'Usage-Zonen (`usage`)'; }
+  else if (/\bwertstufen?|value|tier/i.test(q)) { key = 'valueflags'; label = 'Wertstufen (`value`)'; }
+  if (!key) return null;
+  const names = def[key];
+  return {
+    answer: [
+      `**Central-Economy-${label} - vollstaendige Liste aus \`cfglimitsdefinition.xml\`:**`,
+      names.map((n) => `\`${n}\``).join(', '),
+      '',
+      'Diese Liste ist die verbindliche Namensmenge. Ein `usage`/`category`/`value`/`tag`-Wert in `types.xml`, der hier nicht auftaucht, ist nicht belegt.',
+    ].join('\n'),
+    topic: 'file',
+    ids: [`dayz129:limitsDefinition:${key}`],
+  };
+}
+
+// "ignore-list"/"ignorierliste" sind eigenstaendig eindeutig DayZ-CE-Fachbegriffe.
+// Das bloße Verb "ignoriert" ist dagegen normale Alltagssprache ("hat mich
+// ignoriert") und braucht deshalb zusaetzlich DayZ-/CE-Kontext oder einen
+// bereits im Satz erkannten echten Classname.
+const IGNORE_LIST_SPECIFIC_RE = /\bignore[-\s]?list|ignorierliste\b/i;
+const IGNORE_LIST_VERB_RE = /\bignoriert\b/i;
+const IGNORE_LIST_CONTEXT_RE = /\b(dayz|central economy|\bce\b|cfgignorelist|classname|types?\.xml)\b/i;
+
+export function answerIgnoreListQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const hasExactType = !!findExactIndexedName(question, getDayz129Index().allTypeNames, typeByLower!);
+  const isSpecific = IGNORE_LIST_SPECIFIC_RE.test(question);
+  const isVerbWithContext = IGNORE_LIST_VERB_RE.test(question) && (IGNORE_LIST_CONTEXT_RE.test(question) || hasExactType);
+  if (!isSpecific && !isVerbWithContext) return null;
+  const index = getDayz129Index();
+  const chernarusIgnore = index.maps.chernarus?.ignoreList;
+  if (!chernarusIgnore) return null;
+
+  const exact = findExactIndexedName(question, index.allTypeNames, typeByLower!);
+  if (exact) {
+    const requestedMaps = detectMaps(question);
+    const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+    const lines = [`**Ist \`${exact}\` auf der CE-Ignore-Liste (cfgignorelist.xml)?**`, ''];
+    for (const map of maps) {
+      const onList = index.maps[map]?.ignoreList?.includes(exact) ?? false;
+      lines.push(`- ${MAP_LABELS[map]}: ${onList ? 'ja' : 'nein'}`);
+    }
+    return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:ignoreList:${m}:${exact}`) };
+  }
+
+  return {
+    answer: [
+      '**CE-Ignore-Liste (`cfgignorelist.xml`, Chernarus):**',
+      chernarusIgnore.map((n) => `\`${n}\``).join(', '),
+      '',
+      'Diese Typen werden von der Central-Economy-Zaehlung ignoriert. Die Liste kann sich pro Karte leicht unterscheiden.',
+    ].join('\n'),
+    topic: 'file',
+    ids: ['dayz129:ignoreList:chernarus'],
+  };
+}
+
+// Zusammengesetzte/technische Begriffe sind allein eindeutig genug (kommen in
+// normaler Alltagssprache praktisch nie vor). Die einzelnen deutschen
+// Alltagswoerter dafuer ("regen", "nebel", "wolken", "schnee", "sturm",
+// "gewitter", "blitz" ...) sind dagegen ganz normale Wetter-Vokabeln und
+// brauchen zusaetzlich DayZ-Kontext, sonst wuerde z.B. "der Regen war stark"
+// faelschlich eine cfgweather.xml-Antwort ausloesen.
+const WEATHER_SECTION_WORDS_SPECIFIC: Readonly<Record<string, string>> = {
+  windmagnitude: 'windMagnitude', windstaerke: 'windMagnitude',
+  winddirection: 'windDirection', windrichtung: 'windDirection',
+  cfgweather: 'storm',
+};
+const WEATHER_SECTION_WORDS_GENERIC: Readonly<Record<string, string>> = {
+  overcast: 'overcast', bewoelkung: 'overcast', wolken: 'overcast',
+  fog: 'fog', nebel: 'fog',
+  rain: 'rain', regen: 'rain',
+  snowfall: 'snowfall', schneefall: 'snowfall', schnee: 'snowfall',
+  storm: 'storm', sturm: 'storm', gewitter: 'storm', blitz: 'storm',
+};
+const WEATHER_CONTEXT_RE = /\b(dayz|server|cfgweather|chernarus|livonia|sakhal|enoch|frostline)\b/i;
+
+export function answerWeatherQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const words = fold(question).split(/[^a-z0-9]+/).filter(Boolean);
+  let section: string | null = null;
+  for (const w of words) if (WEATHER_SECTION_WORDS_SPECIFIC[w]) { section = WEATHER_SECTION_WORDS_SPECIFIC[w]; break; }
+  if (!section && WEATHER_CONTEXT_RE.test(question)) {
+    for (const w of words) if (WEATHER_SECTION_WORDS_GENERIC[w]) { section = WEATHER_SECTION_WORDS_GENERIC[w]; break; }
+  }
+  if (!section) return null;
+
+  const index = getDayz129Index();
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+  const lines = [`**Wetter-Sektion \`${section}\` (cfgweather.xml)**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const block = index.maps[map]?.weather?.sections?.[section];
+    if (!block) { lines.push(`- ${MAP_LABELS[map]}: nicht vorhanden.`); continue; }
+    found = true;
+    if (section === 'storm') {
+      lines.push(`- ${MAP_LABELS[map]}: ${formatScalarRecord(block as unknown as Record<string, Scalar>)}`);
+    } else {
+      const parts = Object.entries(block).map(([sub, rec]) => `${sub}(${formatScalarRecord(rec)})`);
+      lines.push(`- ${MAP_LABELS[map]}: ${parts.join('; ')}`);
+    }
+  }
+  if (!found) return null;
+  lines.push('', 'Quelle: `cfgweather.xml` deiner drei 1.29-Datensaetze.');
+  return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:weather:${m}:${section}`) };
+}
+
+export function answerEffectAreaQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const index = getDayz129Index();
+  const allNames = new Set<string>();
+  for (const map of Object.keys(index.maps) as Dayz129Map[]) {
+    for (const area of index.maps[map].effectAreas?.areas ?? []) if (area.name) allNames.add(area.name);
+  }
+  const name = findMentionedKey(question, allNames);
+  if (!name) return null;
+
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+  const lines = [`**Kontaminationsbereich \`${name}\` (cfgeffectarea.json)**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const area = index.maps[map]?.effectAreas?.areas.find((a) => a.name === name);
+    if (!area) { lines.push(`- ${MAP_LABELS[map]}: nicht vorhanden.`); continue; }
+    found = true;
+    lines.push(`- ${MAP_LABELS[map]}: Typ \`${area.type}\`, Radius ${area.radius}, Trigger \`${area.triggerType}\``);
+  }
+  if (!found) return null;
+  lines.push('', 'Quelle: `cfgeffectarea.json` deiner drei 1.29-Datensaetze.');
+  return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:effectArea:${m}:${name}`) };
+}
+
+export function answerRandomPresetQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const index = getDayz129Index();
+  const allNames = new Set<string>();
+  for (const map of Object.keys(index.maps) as Dayz129Map[]) {
+    for (const name of Object.keys(index.maps[map].randomPresets ?? {})) allNames.add(name);
+  }
+  const name = findMentionedKey(question, allNames);
+  if (!name) return null;
+
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+  const lines = [`**Random-Preset \`${name}\` (cfgrandompresets.xml)**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const preset = index.maps[map]?.randomPresets?.[name];
+    if (!preset) { lines.push(`- ${MAP_LABELS[map]}: nicht vorhanden.`); continue; }
+    found = true;
+    const items = preset.items.map((i) => `\`${i.name}\`${i.chance != null ? ` (${i.chance})` : ''}`).join(', ');
+    lines.push(`- ${MAP_LABELS[map]} (${preset.kind}, chance=${preset.chance}): ${items || 'keine Items'}`);
+  }
+  if (!found) return null;
+  lines.push('', 'Quelle: `cfgrandompresets.xml` deiner drei 1.29-Datensaetze.');
+  return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:randomPreset:${m}:${name}`) };
+}
+
+export function answerEventGroupQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  const index = getDayz129Index();
+  const allNames = new Set<string>();
+  for (const map of Object.keys(index.maps) as Dayz129Map[]) {
+    for (const name of Object.keys(index.maps[map].eventGroups ?? {})) allNames.add(name);
+  }
+  const name = findMentionedKey(question, allNames);
+  if (!name) return null;
+
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+  const lines = [`**Event-Gruppe \`${name}\` (cfgeventgroups.xml)**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const group = index.maps[map]?.eventGroups?.[name];
+    if (!group) { lines.push(`- ${MAP_LABELS[map]}: nicht vorhanden.`); continue; }
+    found = true;
+    const children = Object.entries(group).map(([type, count]) => `\`${type}\`${count > 1 ? ` x${count}` : ''}`).join(', ');
+    lines.push(`- ${MAP_LABELS[map]}: ${children}`);
+  }
+  if (!found) return null;
+  lines.push('', 'Quelle: `cfgeventgroups.xml` deiner drei 1.29-Datensaetze.');
+  return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:eventGroup:${m}:${name}`) };
+}
+
+const SPAWNABLE_TYPE_CONTEXT_RE = /\b(zubehoer|zubehör|anhaenge|anhänge|attachment|cargo|spawnt|spawnable|beladung|ausstattung)\b/i;
+
+export function answerSpawnableTypeQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question || !SPAWNABLE_TYPE_CONTEXT_RE.test(question)) return null;
+  const index = getDayz129Index();
+  const exact = findExactIndexedName(question, index.allTypeNames, typeByLower!);
+  if (!exact) return null;
+
+  const requestedMaps = detectMaps(question);
+  const maps: Dayz129Map[] = requestedMaps.length ? requestedMaps : ['chernarus', 'livonia', 'sakhal'];
+  const lines = [`**Spawn-Zubehoer/Cargo fuer \`${exact}\` (cfgspawnabletypes.xml)**`, ''];
+  let found = false;
+  for (const map of maps) {
+    const entry = index.maps[map]?.spawnableTypes?.[exact];
+    if (!entry) { lines.push(`- ${MAP_LABELS[map]}: keine cfgspawnabletypes.xml-Eintraege.`); continue; }
+    found = true;
+    const parts: string[] = [];
+    if (entry.hoarder) parts.push('hoarder');
+    for (const att of entry.attachments ?? []) {
+      parts.push(`attachments(chance=${att.chance}): ${att.preset ? `preset \`${att.preset}\`` : (att.items ?? []).map((i) => `\`${i}\``).join(', ')}`);
+    }
+    for (const c of entry.cargo ?? []) {
+      parts.push(`cargo(chance=${c.chance}): ${c.preset ? `preset \`${c.preset}\`` : (c.items ?? []).map((i) => `\`${i}\``).join(', ')}`);
+    }
+    lines.push(`- ${MAP_LABELS[map]}: ${parts.join(' | ') || 'keine weiteren Angaben'}`);
+  }
+  if (!found) return null;
+  lines.push('', 'Quelle: `cfgspawnabletypes.xml` deiner drei 1.29-Datensaetze.');
+  return { answer: lines.join('\n'), topic: 'file', ids: maps.map((m) => `dayz129:spawnableType:${m}:${exact}`) };
+}
+
+/**
+ * Buendelt alle Phase-B-Antwortpfade in einer festen, kollisionsarmen
+ * Reihenfolge: name-basierte Lookups zuerst (Klassennamen-Kollisionen
+ * zwischen Kategorien sind praktisch ausgeschlossen, da jede Kategorie ihre
+ * eigene, im Index reale Namensmenge nutzt), Themen-basierte Listen danach.
+ */
+export function answerDayz129ExtendedDataQuestion(question: string): DayzCatalogAnswer | null {
+  if (!question) return null;
+  return answerGlobalVariableQuestion(question)
+    ?? answerEffectAreaQuestion(question)
+    ?? answerRandomPresetQuestion(question)
+    ?? answerEventGroupQuestion(question)
+    ?? answerSpawnableTypeQuestion(question)
+    ?? answerLimitsDefinitionQuestion(question)
+    ?? answerIgnoreListQuestion(question)
+    ?? answerWeatherQuestion(question);
 }
