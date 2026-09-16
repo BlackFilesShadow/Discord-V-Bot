@@ -270,11 +270,75 @@ export const TYPE_SYNONYMS: Record<string, string[]> = {
   'kabeltrommel': ['cable', 'reel'], 'seekiste': ['sea', 'chest'],
   'autozelt': ['car', 'tent'], 'zelt': ['tent'], 'streichholz': ['match'], 'streichhoelzer': ['match'],
   'messer': ['knife'], 'axt': ['axe'], 'schaufel': ['shovel'], 'seil': ['rope'], 'fass': ['barrel'],
-  'gewehr': ['rifle'], 'pistole': ['pistol'], 'magazin': ['mag'], 'munition': ['ammo'],
+  'pistole': ['pistol'], 'magazin': ['mag'], 'munition': ['ammo'],
   'apfel': ['apple'], 'aepfel': ['apple'], 'birne': ['pear'], 'birnen': ['pear'],
   'pflaume': ['plum'], 'pflaumen': ['plum'], 'tomate': ['tomato'], 'tomaten': ['tomato'],
   'reis': ['rice'], 'kartoffel': ['potato'], 'kartoffeln': ['potato'],
 };
+
+/**
+ * Kanonische Alias-Tabelle: ein deutsches/umgangssprachliches Wort steht fuer
+ * GENAU einen realen Classname (nicht nur einen Score-Token wie TYPE_SYNONYMS).
+ * Frueher pflegten dayz129CatalogPriority.ts (V1) und dayz129CatalogPriorityV3.ts
+ * je eine eigene, unterschiedlich vollstaendige Kopie dieser Liste - ein Wort
+ * konnte dadurch in der einen Ebene bekannt sein und in einer anderen nicht.
+ * Jetzt gibt es nur noch diese eine Quelle.
+ */
+export const EXACT_ALIASES: Readonly<Record<string, string>> = {
+  m4: 'M4A1',
+  tundra: 'Winchester70',
+  winchester: 'Winchester70',
+  kampfstiefel: 'CombatBoots',
+  combatboots: 'CombatBoots',
+  kampfanzugshose: 'TTSKOPants',
+  kampfanzughose: 'TTSKOPants',
+  kampfhose: 'TTSKOPants',
+  combatpants: 'TTSKOPants',
+  bduhose: 'BDUPants',
+  bdupants: 'BDUPants',
+  feldrucksack: 'AliceBag',
+  feldrucksaecke: 'AliceBag',
+  alicebag: 'AliceBag',
+  seekiste: 'SeaChest',
+  seekisten: 'SeaChest',
+  seachest: 'SeaChest',
+  generator: 'PowerGenerator',
+  generatoren: 'PowerGenerator',
+  stromgenerator: 'PowerGenerator',
+  stromgeneratoren: 'PowerGenerator',
+  powergenerator: 'PowerGenerator',
+  militaerzelt: 'LargeTent',
+  militaerzelte: 'LargeTent',
+  militarytent: 'LargeTent',
+  largetent: 'LargeTent',
+};
+
+/**
+ * Kanonische Farbwort-Tabelle fuer Farbvarianten-Aufloesung (z. B.
+ * "Feldrucksack in Gruen" -> AliceBag_Green). Frueher hatten V2 und V3 je eine
+ * eigene, unterschiedlich vollstaendige Kopie (V2 kannte z. B. kein "rot").
+ */
+export const COLOR_SUFFIXES = new Set([
+  'black', 'blue', 'brown', 'green', 'grey', 'gray', 'red', 'orange', 'yellow', 'pink', 'white',
+  'beige', 'olive', 'tan', 'khaki', 'camo', 'dpm', 'flecktarn', 'ttsko',
+]);
+
+export const COLOR_WORDS: ReadonlyArray<{ re: RegExp; suffixes: string[] }> = [
+  { re: /\b(?:gruen|green)\b/i, suffixes: ['green'] },
+  { re: /\b(?:schwarz|black)\b/i, suffixes: ['black'] },
+  { re: /\b(?:braun|brown)\b/i, suffixes: ['brown'] },
+  { re: /\b(?:grau|grey|gray)\b/i, suffixes: ['grey', 'gray'] },
+  { re: /\b(?:blau|blue)\b/i, suffixes: ['blue'] },
+  { re: /\b(?:rot|red)\b/i, suffixes: ['red'] },
+  { re: /\b(?:orange)\b/i, suffixes: ['orange'] },
+  { re: /\b(?:gelb|yellow)\b/i, suffixes: ['yellow'] },
+  { re: /\b(?:rosa|pink)\b/i, suffixes: ['pink'] },
+  { re: /\b(?:weiss|white)\b/i, suffixes: ['white'] },
+  { re: /\bbeige\b/i, suffixes: ['beige'] },
+  { re: /\b(?:oliv|olive)\b/i, suffixes: ['olive'] },
+  { re: /\b(?:khaki|tan)\b/i, suffixes: ['khaki', 'tan'] },
+  { re: /\b(?:camo|tarn|tarnung)\b/i, suffixes: ['camo', 'dpm', 'flecktarn', 'ttsko'] },
+];
 
 const TYPE_QUERY_EXCLUSIONS: Record<string, string[]> = {
   'holzbrett': ['PileOfWoodenPlanks'],
@@ -366,7 +430,7 @@ function formatTypeAnswer(name: string, requestedMaps: Dayz129Map[] = []): DayzC
   return { answer: lines.join('\n'), topic: 'type', ids: [`dayz129:type:${name}`] };
 }
 
-const EVENT_SYNONYMS: Record<string, string[]> = {
+export const EVENT_SYNONYMS: Record<string, string[]> = {
   'heli': ['heli', 'crash'], 'helikopter': ['heli', 'crash'], 'helikopterabsturz': ['heli', 'crash'],
   'zombie': ['infected'], 'zombies': ['infected'], 'infizierte': ['infected'],
   'wolf': ['wolf'], 'woelfe': ['wolf'], 'baer': ['bear'], 'bär': ['bear'], 'reh': ['deer'], 'rentier': ['reindeer'],
@@ -423,11 +487,27 @@ function formatEventAnswer(name: string, requestedMaps: Dayz129Map[] = []): Dayz
   return { answer: lines.join('\n'), topic: 'event', ids: [`dayz129:event:${name}`] };
 }
 
+/**
+ * Prueft, ob die Frage ein Wort enthaelt, das in der kanonischen Alias- oder
+ * Synonym-Tabelle als bekanntes Item-Wort gefuehrt wird. Dadurch bleibt dieses
+ * Gate automatisch mit TYPE_SYNONYMS/EXACT_ALIASES synchron, statt eine dritte,
+ * unabhaengig gepflegte Wortliste zu sein, die bei jeder Erweiterung der
+ * Tabellen erneut von Hand nachgezogen werden muesste (genau das hat den
+ * "Apfel"-Bug verursacht: das Wort war der Such-Engine laengst bekannt, aber
+ * nicht diesem Gate).
+ */
+function containsKnownItemWord(question: string): boolean {
+  const words = new Set(fold(question).split(/[^a-z0-9]+/).filter(Boolean));
+  for (const key of Object.keys(TYPE_SYNONYMS)) if (words.has(key)) return true;
+  for (const key of Object.keys(EXACT_ALIASES)) if (words.has(key)) return true;
+  return false;
+}
+
 function isTypeLookupIntent(question: string): boolean {
   const q = fold(question);
   return /\b(class|classname|class name|typename|type name|itemname|item name)\b/.test(q)
     || /wie\s+(heisst|heißt).*\b(item|gegenstand|class|classname)\b/.test(q)
-    || /\b(holzbretter|holzbrett|nagelbox|naegelbox|nägelbox|wasserflasche|metallplatte|kabeltrommel|seekiste|autozelt)\b/.test(q);
+    || containsKnownItemWord(question);
 }
 
 function isEventLookupIntent(question: string): boolean {
