@@ -17,13 +17,17 @@ const LIFECYCLE_SECTIONS: ReadonlyArray<SectionTabItem<LifecycleSection>> = [
 
 /**
  * Welcome, Goodbye und Leave-Cleanup bleiben fachlich eine gemeinsame
- * Member-Lifecycle-Oberflaeche. Die Unter-Navigation steuert ausschliesslich,
- * welcher bereits vorhandene Funktionsblock sichtbar ist; API-, Permission-
+ * Member-Lifecycle-Oberflaeche. Die Unter-Navigation steuert ausschliesslich
+ * die Sichtbarkeit der bereits vorhandenen Funktionsbloecke; API-, Permission-
  * und Mutationslogik bleibt in den jeweiligen Komponenten unveraendert.
  *
+ * Die drei Manager-Komponenten bleiben gleichzeitig gemountet und werden nur
+ * per `hidden` umgeschaltet. Dadurch gehen lokale, noch nicht gespeicherte
+ * Formularzustaende beim Wechsel zwischen den Unterbereichen nicht verloren.
+ *
  * `welcome.view` ist weiterhin ein echter Read-only-Vertrag. Viewer erhalten
- * deshalb unveraendert die bestehende Read-only-Oberflaeche, ohne manage-only
- * Lookups oder Mutationen auszuloesen.
+ * unveraendert die bestehende Read-only-Oberflaeche, ohne manage-only Lookups
+ * oder Mutationen auszuloesen.
  */
 export function WelcomeTab(props: WelcomeTabProps) {
   const [section, setSection] = useState<LifecycleSection>('welcome');
@@ -41,9 +45,15 @@ export function WelcomeTab(props: WelcomeTabProps) {
         ariaLabel="Willkommen-Funktionen"
       />
 
-      {section === 'welcome' && <WelcomeCoreTab {...props} />}
-      {section === 'goodbye' && <GoodbyePanel {...props} />}
-      {section === 'cleanup' && <LeaveCleanupPanel guildId={props.guildId} />}
+      <section hidden={section !== 'welcome'} aria-label="Willkommen">
+        <WelcomeCoreTab {...props} />
+      </section>
+      <section hidden={section !== 'goodbye'} aria-label="Bye Bye">
+        <GoodbyePanel {...props} />
+      </section>
+      <section hidden={section !== 'cleanup'} aria-label="Cleanup">
+        <LeaveCleanupPanel guildId={props.guildId} />
+      </section>
     </div>
   );
 }
