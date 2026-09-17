@@ -71,6 +71,8 @@ test.describe('Radar MapLibre GeoJSON rendering', () => {
     });
 
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
+    const nav = page.getByRole('navigation', { name: 'Radar-Funktionen' });
+    await nav.getByRole('button', { name: 'Zonen', exact: true }).click();
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await editor.getByRole('button', { name: 'Polygon' }).click();
@@ -95,11 +97,6 @@ test.describe('Radar MapLibre GeoJSON rendering', () => {
     const before = await editor.locator('ol li').allTextContents();
     expect(before).toHaveLength(3);
 
-    // Punkt innerhalb des Dreiecks. Der mousedown-Handler ist direkt an die
-    // MapLibre-Fill-Layer gebunden. Ist die GeoJSON-Layer unsichtbar/nicht
-    // gerendert, greift hier nur das normale Map-Panning und die Zonengeometrie
-    // bleibt unveraendert. Damit prueft dieser Test den echten Renderpfad statt
-    // nur die separat gerenderten DOM-Handles.
     await page.mouse.move(box.x + 180, box.y + 165);
     await page.mouse.down();
     await page.mouse.move(box.x + 210, box.y + 190, { steps: 5 });

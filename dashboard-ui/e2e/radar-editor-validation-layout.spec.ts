@@ -69,15 +69,18 @@ test.describe('Radar editor validation and layout', () => {
     const mutations = await stubRadar(page);
 
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
+    const nav = page.getByRole('navigation', { name: 'Radar-Funktionen' });
 
-    const zoneButton = page.getByRole('button', { name: 'Zone', exact: true });
-    const zoneButtonBox = await zoneButton.boundingBox();
-    expect(zoneButtonBox?.height ?? 0).toBeGreaterThanOrEqual(40);
-
-    const functionCards = page.getByLabel('Radar-Funktionen').locator(':scope > div');
+    await nav.getByRole('button', { name: 'Funktionen', exact: true }).click();
+    const functionCards = page.locator('div[aria-label="Radar-Funktionen"] > div');
     await expect(functionCards).toHaveCount(6);
     const widths = await functionCards.evaluateAll(elements => elements.map(element => element.getBoundingClientRect().width));
     expect(Math.min(...widths)).toBeGreaterThanOrEqual(170);
+
+    await nav.getByRole('button', { name: 'Zonen', exact: true }).click();
+    const zoneButton = page.getByRole('button', { name: 'Zone', exact: true });
+    const zoneButtonBox = await zoneButton.boundingBox();
+    expect(zoneButtonBox?.height ?? 0).toBeGreaterThanOrEqual(40);
 
     await zoneButton.click();
     const editor = page.getByLabel('Radar-Zoneneditor');

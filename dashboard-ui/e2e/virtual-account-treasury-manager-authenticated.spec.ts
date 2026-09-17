@@ -200,6 +200,8 @@ test.describe('Virtual account treasury + manager authenticated contracts', () =
     const mutations = await stubVirtualWorkspace(page, { treasuryExists: true });
     await openWorkspace(page);
 
+    const nav = page.getByRole('navigation', { name: 'Virtuelle-Konten-Funktionen' });
+    await nav.getByRole('button', { name: 'Systemkonten', exact: true }).click();
     await page.getByRole('button', { name: 'Serverbank konfigurieren', exact: true }).click();
     const editor = page.getByTestId('serverbank-configuration');
     await expect(editor).toBeVisible();

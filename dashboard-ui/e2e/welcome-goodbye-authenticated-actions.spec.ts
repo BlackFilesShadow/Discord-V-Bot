@@ -169,7 +169,7 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     await expect(nav).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Willkommen', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toHaveCount(0);
-    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toHaveCount(0);
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toBeHidden();
 
     await page.getByRole('button', { name: 'Speichern', exact: true }).click();
     await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/welcome/config`)).toBe(true);
