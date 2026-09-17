@@ -11,9 +11,7 @@
  * - decided rounds preserve historic lifetime semantics (bet=spent,
  *   payout=earned), while draw refunds stay lifetime-neutral;
  * - cooldown is serialized in PostgreSQL, not only in one Node process;
- * - Discord is acknowledged before any money mutation;
- * - V2 verification stays available for historic rounds, malformed V3 audit
- *   data fails closed instead of being mislabeled as legacy.
+ * - Discord is acknowledged before any money mutation.
  */
 import {
   SlashCommandBuilder,
@@ -23,7 +21,6 @@ import {
   type InteractionReplyOptions,
 } from 'discord.js';
 import { createHash, createHmac, randomBytes, randomUUID } from 'crypto';
-import { isDeepStrictEqual } from 'node:util';
 import type { Command } from '../../types';
 import prisma from '../../database/prisma';
 import { withGuildScope } from '../middleware/withGuildScope';
@@ -52,13 +49,11 @@ import {
   casinoDefinition,
   ensureCasinoRoundAnchor,
   getCasinoGameConfig,
-  isCasinoGameKey,
   type CasinoGameConfig,
 } from '../../modules/economy/casinoRegistry';
 
 const DISCORD_MAX_CASINO_BET = Number(MAX_CASINO_BET);
 const SIGNED_BIGINT_MASK = (1n << 63n) - 1n;
-const LEGACY_TYPES = new Set<CasinoGameKey>(['SLOT', 'COINFLIP', 'DICE', 'BLACKJACK']);
 
 function fmt(n: bigint): string { return n.toLocaleString('de-DE'); }
 
@@ -93,17 +88,6 @@ interface CasinoUserStatsRow {
   payout: bigint;
 }
 
-interface CasinoVerifyDbRow {
-  id: string;
-  bet: bigint;
-  payout: bigint;
-  result: unknown;
-  serverSeed: string;
-  clientSeed: string | null;
-  nonce: bigint;
-  createdAt: Date;
-}
-
 interface CasinoAuditSnapshot {
   algorithmVersion: string;
   type: CasinoGameKey;
@@ -114,11 +98,6 @@ interface CasinoAuditSnapshot {
   cooldownSeconds: number | null;
   serverSeedHash: string;
 }
-
-type AuditSnapshotParse =
-  | { kind: 'missing' }
-  | { kind: 'invalid' }
-  | { kind: 'valid'; snapshot: CasinoAuditSnapshot };
 
 class CasinoUserError extends Error {}
 
@@ -196,8 +175,6 @@ function buildRoundEmbed(args: {
   payout: bigint;
   coin: string;
   details: { name: string; value: string; inline?: boolean }[];
-  serverSeedHash: string;
-  nonce: bigint;
 }): EmbedBuilder {
   const def = casinoDefinition(args.type);
   const net = args.payout - args.bet;
@@ -207,13 +184,12 @@ function buildRoundEmbed(args: {
     : args.outcome === 'DRAW'
       ? { word: 'Unentschieden', icon: '🤝', color: Colors.Warning }
       : { word: 'Verloren', icon: '❌', color: Colors.Error };
-  const auditFooter = `V-Bot Casino • Runden-Audit • Hash: ${args.serverSeedHash} • Nonce: ${args.nonce.toString()}`;
 
   // Alle Spielresultate zusammen als ein Zitatblock, gefolgt von genau einer
   // Zusammenfassungszeile (Ergebnis · Einsatz -> Auszahlung · Netto) statt
   // vieler einzelner "**Label:** Wert"-Zeilen - dieselben Werte, nur ohne die
   // vorherige Haeufung optisch gleichwertiger Zeilen.
-  return casinoEmbed(meta.color, auditFooter)
+  return casinoEmbed(meta.color)
     .setDescription(compactDescription(`${def.emoji} ${def.label}`, [
       compactQuote(args.details.map(field => `${field.name}: **${field.value}**`)),
       `${meta.icon} **${meta.word}**  ·  Einsatz **${fmt(args.bet)} ${args.coin}** → Auszahlung **${fmt(args.payout)} ${args.coin}**  (**${netStr} ${args.coin}**)`,
@@ -222,10 +198,6 @@ function buildRoundEmbed(args: {
 
 function seedHashFull(seed: string): string {
   return createHash('sha256').update(seed).digest('hex');
-}
-
-function seedHash(seed: string): string {
-  return seedHashFull(seed).slice(0, 16);
 }
 
 /** Deterministic HMAC random integer with rejection sampling (no modulo bias). */
@@ -356,123 +328,6 @@ function resolveConfiguredGame(type: CasinoGameKey, bet: bigint, clientSeed: str
     } };
   }
   return { won, draw: false, payout, details: { segment: won ? `x${(game.payoutMultMilli / 1000).toFixed(3)}` : 'x0' } };
-}
-
-/** Exact V2 replay for historic four-game snapshots. */
-function blackjackScore(cards: number[]): number {
-  let total = 0;
-  let aces = 0;
-  for (const card of cards) {
-    if (card === 1) { total += 11; aces++; }
-    else total += Math.min(card, 10);
-  }
-  while (total > 21 && aces > 0) { total -= 10; aces--; }
-  return total;
-}
-
-function resolveLegacyV2Game(type: CasinoGameKey, bet: bigint, clientSeed: string, game: RuntimeGameConfig, serverSeed: string, nonce: bigint): PlayResult {
-  if (!LEGACY_TYPES.has(type)) throw new Error('V2 kennt diesen Spieltyp nicht.');
-  if (type === 'SLOT') {
-    const won = roll(serverSeed, clientSeed, nonce, 100) < game.winChancePct;
-    return { won, draw: false, payout: won ? safePayout(bet, game.payoutMultMilli) : 0n, details: { game: 'SLOT' } };
-  }
-  if (type === 'COINFLIP') {
-    if (clientSeed !== 'KOPF' && clientSeed !== 'ZAHL') throw new Error('Ungueltiger Coinflip-ClientSeed.');
-    const flip = roll(serverSeed, clientSeed, nonce, 2) === 0 ? 'KOPF' : 'ZAHL';
-    const won = flip === clientSeed;
-    return { won, draw: false, payout: won ? safePayout(bet, game.payoutMultMilli) : 0n, details: { flip, choice: clientSeed } };
-  }
-  if (type === 'DICE') {
-    const tip = Number(clientSeed);
-    if (!Number.isInteger(tip) || tip < 1 || tip > 6) throw new Error('Ungueltiger Dice-ClientSeed.');
-    const rolled = roll(serverSeed, clientSeed, nonce, 6) + 1;
-    const won = rolled === tip;
-    return { won, draw: false, payout: won ? safePayout(bet, game.payoutMultMilli) : 0n, details: { rolled, tip } };
-  }
-  const drawCard = (k: number) => roll(serverSeed, `card:${k}`, nonce, 13) + 1;
-  const player = [drawCard(0), drawCard(2)];
-  const dealer = [drawCard(1), drawCard(3)];
-  let k = 4;
-  while (blackjackScore(player) < 17 && k <= 20) player.push(drawCard(k++));
-  while (blackjackScore(dealer) < 17 && k <= 40) dealer.push(drawCard(k++));
-  const ps = blackjackScore(player);
-  const ds = blackjackScore(dealer);
-  const playerBust = ps > 21;
-  const dealerBust = ds > 21;
-  const draw = !playerBust && !dealerBust && ps === ds;
-  const won = !draw && !playerBust && (dealerBust || ps > ds);
-  const payout = draw ? bet : won ? safePayout(bet, game.payoutMultMilli) : 0n;
-  return { won, draw, payout, details: { player, dealer, ps, ds } };
-}
-
-function parseAuditSnapshot(value: unknown): AuditSnapshotParse {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'missing' };
-  const result = value as Record<string, unknown>;
-  if (!Object.prototype.hasOwnProperty.call(result, 'audit')) return { kind: 'missing' };
-  const audit = result.audit;
-  if (!audit || typeof audit !== 'object' || Array.isArray(audit)) return { kind: 'invalid' };
-  const row = audit as Record<string, unknown>;
-  if (typeof row.algorithmVersion !== 'string' || typeof row.type !== 'string' || !isCasinoGameKey(row.type)) return { kind: 'invalid' };
-  if (!Number.isInteger(row.payoutMultMilli) || (row.payoutMultMilli as number) < 1000 || (row.payoutMultMilli as number) > 100_000) return { kind: 'invalid' };
-  if (typeof row.minBet !== 'string' || typeof row.maxBet !== 'string') return { kind: 'invalid' };
-  if (typeof row.serverSeedHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.serverSeedHash)) return { kind: 'invalid' };
-  let minBet: bigint;
-  let maxBet: bigint;
-  try { minBet = BigInt(row.minBet); maxBet = BigInt(row.maxBet); }
-  catch { return { kind: 'invalid' }; }
-  if (minBet < 1n || maxBet < minBet || maxBet > MAX_CASINO_BET) return { kind: 'invalid' };
-
-  const isV3 = row.algorithmVersion === CASINO_ALGORITHM_VERSION;
-  const isV2 = row.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION;
-  if (!isV3 && !isV2) return { kind: 'invalid' };
-  if (isV3) {
-    if (!Number.isInteger(row.winChancePct) || (row.winChancePct as number) < 1 || (row.winChancePct as number) > 99) return { kind: 'invalid' };
-    if (!Number.isInteger(row.cooldownSeconds) || (row.cooldownSeconds as number) < 0 || (row.cooldownSeconds as number) > 3600) return { kind: 'invalid' };
-  } else if (row.winChancePct !== null && (!Number.isInteger(row.winChancePct) || (row.winChancePct as number) < 1 || (row.winChancePct as number) > 99)) {
-    return { kind: 'invalid' };
-  }
-
-  return { kind: 'valid', snapshot: {
-    algorithmVersion: row.algorithmVersion,
-    type: row.type,
-    winChancePct: row.winChancePct as number | null,
-    payoutMultMilli: row.payoutMultMilli as number,
-    minBet: row.minBet,
-    maxBet: row.maxBet,
-    cooldownSeconds: typeof row.cooldownSeconds === 'number' ? row.cooldownSeconds : null,
-    serverSeedHash: row.serverSeedHash,
-  } };
-}
-
-function isStoredDraw(value: unknown): boolean {
-  return !!value && typeof value === 'object' && !Array.isArray(value) && (value as Record<string, unknown>).draw === true;
-}
-
-function isStoredWin(value: unknown, payout: bigint): boolean {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const won = (value as Record<string, unknown>).won;
-    if (typeof won === 'boolean') return won;
-  }
-  return payout > 0n;
-}
-
-function storedDetails(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const details = (value as Record<string, unknown>).details;
-  return details && typeof details === 'object' && !Array.isArray(details)
-    ? details as Record<string, unknown>
-    : null;
-}
-
-function storedEmbeddedPayout(value: unknown): bigint | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const payout = (value as Record<string, unknown>).payout;
-  if (typeof payout === 'bigint') return payout;
-  if (typeof payout === 'number' && Number.isSafeInteger(payout)) return BigInt(payout);
-  if (typeof payout === 'string' && /^\d+$/.test(payout)) {
-    try { return BigInt(payout); } catch { return null; }
-  }
-  return null;
 }
 
 async function bookCasinoLedger(tx: LedgerTx, args: {
@@ -711,8 +566,6 @@ async function executeGame(i: ChatInputCommandInteraction, scope: GuildScope, ty
         payout: out.result.payout,
         coin: economyConfig.emoji,
         details: embedDetails(type, out.result),
-        serverSeedHash: seedHash(out.serverSeed),
-        nonce: out.nonce,
       })],
       allowedMentions: { parse: [] },
     });
@@ -810,139 +663,6 @@ export const casinoStatsCommand: Command = {
     logAudit('CASINO_STATS', 'CASINO', {
       guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, target: target.id,
       rounds: rounds.toString(), wins: wins.toString(), draws: draws.toString(), losses: losses.toString(),
-    });
-  }),
-};
-
-export const casinoVerifyCommand: Command = {
-  data: slotOption(new SlashCommandBuilder().setName('casino-verify')
-    .setDescription('Prueft Seed, Nonce, Regel-Snapshot und Auszahlung einer eigenen Casino-Runde.')
-    .addStringOption(o => o.setName('runde').setDescription('Runden-ID aus dem Casino-Embed').setRequired(true).setMinLength(1).setMaxLength(128)) as SlashCommandBuilder),
-  cooldown: 3,
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
-    await i.deferReply({ flags: MessageFlags.Ephemeral });
-    if (!scope.nitradoConnId) throw new Error('Kein Gameserver-Scope fuer Casino aufgeloest.');
-    await assertEconomyScopeReady(scope.guildId, scope.nitradoConnId);
-    const roundId = i.options.getString('runde', true).trim();
-    const round = await queryOne<CasinoVerifyDbRow>(
-      prisma as unknown as RawDb,
-      `SELECT "id","bet","payout","result","serverSeed","clientSeed","nonce","createdAt"
-         FROM "CasinoRound" WHERE "id"=$1 AND "guildId"=$2 AND "nitradoConnId"=$3 AND "userDiscordId"=$4 LIMIT 1`,
-      roundId, String(scope.guildId), String(scope.nitradoConnId), String(scope.actorDiscordId),
-    );
-    if (!round) {
-      await i.editReply({ embeds: [casinoStatusEmbed(
-        'ERROR',
-        'Runde nicht gefunden',
-        'Die Runde existiert in diesem Gameserver-Slot nicht oder gehoert nicht dir.',
-        [],
-        'V-Bot Casino Audit',
-      )], allowedMentions: { parse: [] } });
-      return;
-    }
-
-    const parsed = parseAuditSnapshot(round.result);
-    if (parsed.kind === 'missing') {
-      await i.editReply({ embeds: [casinoStatusEmbed(
-        'INFO',
-        'Legacy-Runde',
-        'Diese Runde besitzt noch keinen vollstaendigen Regel-Snapshot und kann deshalb nicht vollstaendig nachgerechnet werden.',
-        [{ name: 'Runde', value: `\`${round.id}\`` }, { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` }],
-        'V-Bot Casino Audit',
-      )], allowedMentions: { parse: [] } });
-      return;
-    }
-    if (parsed.kind === 'invalid') {
-      await i.editReply({ embeds: [casinoStatusEmbed(
-        'ERROR',
-        'Audit-Snapshot ungueltig',
-        'Die Runde enthaelt Audit-Daten, aber der Snapshot ist strukturell ungueltig oder wurde veraendert.',
-        [],
-        'V-Bot Casino Audit',
-      )], allowedMentions: { parse: [] } });
-      return;
-    }
-    const snapshot = parsed.snapshot;
-    // Nur SLOT haengt im Legacy-Resolver ueberhaupt von winChancePct ab (COINFLIP/DICE/BLACKJACK
-    // sind seed-deterministisch). Ein Legacy-SLOT-Snapshot ohne erfasste Gewinnchance kann daher
-    // NIE reproduzierbar gewinnen (roll(...) < 0 ist nie wahr) — ein echter historischer Sieg
-    // wuerde faelschlich als "NICHT verifiziert" (Manipulationsverdacht) angezeigt, obwohl die
-    // Runde lediglich aelter ist als die Gewinnchance-Erfassung. Dieselbe ehrliche
-    // "kann nicht geprueft werden"-Antwort wie bei fehlendem Snapshot verwenden.
-    if (snapshot.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && snapshot.type === 'SLOT' && snapshot.winChancePct === null) {
-      await i.editReply({ embeds: [casinoStatusEmbed(
-        'INFO',
-        'Legacy-Runde',
-        'Diese Slot-Runde stammt aus der Zeit vor der Gewinnchance-Erfassung und kann deshalb nicht nachgerechnet werden.',
-        [{ name: 'Runde', value: `\`${round.id}\`` }, { name: 'Seed-Hash', value: `\`${seedHashFull(round.serverSeed)}\`` }],
-        'V-Bot Casino Audit',
-      )], allowedMentions: { parse: [] } });
-      return;
-    }
-    const clientSeed = round.clientSeed ?? (snapshot.type === 'SLOT' ? 'slot' : snapshot.type === 'BLACKJACK' ? 'blackjack' : snapshot.type === 'WHEEL' ? 'wheel' : '');
-    let replay: PlayResult;
-    try {
-      const runtime = { winChancePct: snapshot.winChancePct ?? 0, payoutMultMilli: snapshot.payoutMultMilli };
-      replay = snapshot.algorithmVersion === CASINO_ALGORITHM_VERSION
-        ? resolveConfiguredGame(snapshot.type, round.bet, clientSeed, runtime, round.serverSeed, round.nonce)
-        : resolveLegacyV2Game(snapshot.type, round.bet, clientSeed, runtime, round.serverSeed, round.nonce);
-    } catch (error) {
-      logger.error('Casino verify replay failed', { guildId: scope.guildId, roundId: round.id, error: error instanceof Error ? error.message : String(error) });
-      await i.editReply({ embeds: [casinoStatusEmbed(
-        'ERROR',
-        'Audit fehlgeschlagen',
-        'Die gespeicherte Runde konnte mit ihrem Audit-Snapshot nicht reproduziert werden.',
-        [],
-        'V-Bot Casino Audit',
-      )], allowedMentions: { parse: [] } });
-      return;
-    }
-
-    const min = BigInt(snapshot.minBet);
-    const max = BigInt(snapshot.maxBet);
-    const storedDraw = isStoredDraw(round.result);
-    const storedWin = isStoredWin(round.result, round.payout);
-    const hashMatches = seedHashFull(round.serverSeed) === snapshot.serverSeedHash;
-    const payoutMatches = replay.payout === round.payout;
-    const embeddedPayoutMatches = storedEmbeddedPayout(round.result) === round.payout;
-    const outcomeMatches = replay.draw === storedDraw && replay.won === storedWin;
-    const detailsMatch = isDeepStrictEqual(storedDetails(round.result), replay.details);
-    const betBoundsMatch = round.bet >= min && round.bet <= max;
-    const verified = hashMatches
-      && payoutMatches
-      && embeddedPayoutMatches
-      && outcomeMatches
-      && detailsMatch
-      && betBoundsMatch;
-    const cfg = await getConfig(scope.guildId, scope.nitradoConnId);
-    const def = casinoDefinition(snapshot.type);
-    const embed = casinoEmbed(
-      verified ? Colors.Success : Colors.Error,
-      `V-Bot Casino Audit • Runde ${round.id}`,
-    ).setDescription(compactDescription(
-      verified ? '✅ Casino-Runde verifiziert' : '❌ Casino-Runde NICHT verifiziert',
-      [
-        verified
-          ? 'Seed, Nonce, Regel-Snapshot, Einsatzgrenzen, Outcome, Ergebnisdetails und Auszahlung sind reproduzierbar.'
-          : 'Mindestens ein gespeicherter Audit- oder Ergebniswert stimmt nicht mit der reproduzierten Runde ueberein.',
-        `**Spiel:** ${def.emoji} ${def.label}`,
-        `**Einsatz:** ${fmt(round.bet)} ${cfg.emoji}`,
-        `**Auszahlung:** ${fmt(round.payout)} ${cfg.emoji}`,
-        `**Algorithmus:** ${snapshot.algorithmVersion}`,
-        `**Gewinnchance:** ${snapshot.winChancePct === null ? 'Legacy-Regel' : `${snapshot.winChancePct}%`}`,
-        `**Server-Seed:** \`${round.serverSeed}\``,
-        `**Client-Seed:** \`${clientSeed}\``,
-        `**Nonce:** ${round.nonce.toString()}`,
-        `**SHA-256:** \`${seedHashFull(round.serverSeed)}\``,
-        `**Snapshot:** Payout x${(snapshot.payoutMultMilli / 1000).toFixed(3)} • Min ${snapshot.minBet} • Max ${snapshot.maxBet}${snapshot.cooldownSeconds !== null ? ` • Cooldown ${snapshot.cooldownSeconds}s` : ''}`,
-        `**Erstellt:** <t:${Math.floor(round.createdAt.getTime() / 1000)}:F>`,
-      ],
-    ));
-    await i.editReply({ embeds: [embed], allowedMentions: { parse: [] } });
-    logAudit('CASINO_VERIFY', 'CASINO', {
-      guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, roundId: round.id,
-      type: snapshot.type, algorithmVersion: snapshot.algorithmVersion,
-      verified, hashMatches, payoutMatches, embeddedPayoutMatches, outcomeMatches, detailsMatch, betBoundsMatch,
     });
   }),
 };
