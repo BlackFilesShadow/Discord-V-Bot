@@ -277,7 +277,7 @@ html[data-theme='ice'] .input-premium:focus-visible {
   color: currentColor !important;
 }
 
-.section-tabs button[aria-current='page'] span span:last-child:not(:only-child) {
+.section-tabs button[aria-current='page'] [data-section-badge] {
   border-color: rgb(var(--color-on-accent) / 0.30) !important;
   background: rgb(var(--color-on-accent) / 0.13) !important;
   color: currentColor !important;
