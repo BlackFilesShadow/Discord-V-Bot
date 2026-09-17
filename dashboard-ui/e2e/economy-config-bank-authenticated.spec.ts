@@ -142,6 +142,14 @@ function bankSelect(page: Page) {
   return page.getByText('Bank-Channel').locator('..').locator('select');
 }
 
+async function openEconomyConfig(page: Page): Promise<void> {
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+  const nav = page.getByRole('navigation', { name: 'Economy-Funktionen' });
+  await expect(nav).toBeVisible();
+  await nav.getByRole('button', { name: 'Währung & Start', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Economy-Konfiguration' })).toBeVisible();
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -150,7 +158,7 @@ async function noPageOverflow(page: Page): Promise<void> {
 test.describe('Economy Config + Bank authenticated contract', () => {
   test('Config-Write ist exakt gescoped und uebernimmt die kanonische Response', async ({ page }) => {
     const state = await stubEconomyConfig(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await openEconomyConfig(page);
 
     await expect(currencyInput(page)).toHaveValue('Maeuse');
 
@@ -192,7 +200,7 @@ test.describe('Economy Config + Bank authenticated contract', () => {
 
   test('Save-Fehler wird sichtbar und ungueltige Pflichtfelder blockieren den Write', async ({ page }) => {
     const state = await stubEconomyConfig(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await openEconomyConfig(page);
 
     await currencyInput(page).fill('');
     await expect(page.getByRole('button', { name: 'Economy speichern', exact: true })).toBeDisabled();
@@ -207,7 +215,7 @@ test.describe('Economy Config + Bank authenticated contract', () => {
 
   test('numerische Config-Eingaben bleiben im Backend-Contract', async ({ page }) => {
     const state = await stubEconomyConfig(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await openEconomyConfig(page);
 
     const startBalance = page.getByLabel('Startguthaben');
     const reward = page.getByLabel('Spielzeit-Belohnung je 10 Minuten');
@@ -227,9 +235,8 @@ for (const width of [320, 360, 375, 390, 430] as const) {
   test(`${width}px Economy Config + Bank bleibt ohne Seiten-Overflow`, async ({ page }) => {
     await stubEconomyConfig(page);
     await page.setViewportSize({ width, height: 900 });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=economy`);
+    await openEconomyConfig(page);
 
-    await expect(page.getByRole('heading', { name: 'Economy-Konfiguration' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Economy speichern', exact: true })).toBeVisible();
     await noPageOverflow(page);
 
