@@ -62,11 +62,13 @@ const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
 const CURRENT_SERVER_SLOT = 'dashboard-ui/src/pages/ServerSlot.tsx';
 const CURRENT_SERVER_SLOT_V3 = 'dashboard-ui/src/pages/ServerSlotV3.tsx';
 const CURRENT_FUNCTION_HELP_BUTTON = 'dashboard-ui/src/components/ui/FunctionHelpButton.tsx';
+const CURRENT_SECTION_TABS = 'dashboard-ui/src/components/ui/SectionTabs.tsx';
 const CURRENT_RADAR_TAB = 'dashboard-ui/src/components/radar/ZoneRadarTab.tsx';
 const CURRENT_RADAR_EDITOR = 'dashboard-ui/src/components/radar/ZoneEditor.tsx';
 const CURRENT_BOT_ADMIN_OWNER_TICKETS = 'dashboard-ui/src/components/BotAdminOwnerTickets.tsx';
 const CURRENT_BOT_ADMIN_TAB = 'dashboard-ui/src/components/BotAdminTab.tsx';
 const CURRENT_BOT_ADMIN_PAGE = 'dashboard-ui/src/pages/BotAdmin.tsx';
+const CURRENT_SLOT_PAGE_ARCHITECTURE = 'dashboard-ui/src/slot-page-architecture.css';
 
 const REVIEWED_POST_STAGE_FILES = new Set([
   HISTORICAL_VIRTUAL_ACCOUNT_PANEL,
@@ -82,6 +84,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_SERVER_SLOT,
   CURRENT_SERVER_SLOT_V3,
   CURRENT_FUNCTION_HELP_BUTTON,
+  CURRENT_SECTION_TABS,
   CURRENT_RADAR_TAB,
   CURRENT_RADAR_EDITOR,
   CURRENT_BOT_ADMIN_OWNER_TICKETS,
@@ -245,6 +248,7 @@ describe('stage 24 dashboard button matrix architecture', () => {
       || button.file === CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       || button.file === CURRENT_RADAR_TAB
       || button.file === CURRENT_RADAR_EDITOR
+      || button.file === CURRENT_SECTION_TABS
       || button.file === CURRENT_SERVER_SLOT_V3
       || (button.file === CURRENT_SERVER_SLOT && button.component === 'ServerSlot')
     ));
@@ -276,16 +280,23 @@ describe('stage 24 dashboard button matrix architecture', () => {
     expect(source).toContain('V-Bot-Zustand wiederherstellen');
   });
 
-  test('Page 1 stays unchanged while Page 2 contains only the requested separated surfaces plus Killfeed', () => {
+  test('slot actions stay unchanged while the complete desktop slot navigation is presented as Page 2', () => {
     const source = read(CURRENT_SERVER_SLOT);
-    const pageOne = source.indexOf("['settings', 'Settings', Settings]");
-    expect(pageOne).toBeGreaterThanOrEqual(0);
-    expect(source.indexOf("['whitelist', 'Whitelist', Shield]", pageOne)).toBeGreaterThan(pageOne);
-    expect(source.indexOf("['economy', 'Economy', Coins]", pageOne)).toBeGreaterThan(pageOne);
-    expect(source.indexOf("['links', 'Economy-Links', LinkIcon]", pageOne)).toBeGreaterThan(pageOne);
-    expect(source).toContain("['virtual-accounts', 'Virtuelle Konten', Banknote]");
-    expect(source).toContain("['bank-casino', 'Bank und Casino Funktionen', Dice5]");
-    expect(source).toContain("['killfeed', 'Killfeed & ADM', Crosshair]");
+    const architecture = read(CURRENT_SLOT_PAGE_ARCHITECTURE);
+    const entries = [
+      "['settings', 'Settings', Settings]",
+      "['whitelist', 'Whitelist', Shield]",
+      "['economy', 'Economy', Coins]",
+      "['links', 'Economy-Links', LinkIcon]",
+      "['virtual-accounts', 'Virtuelle Konten', Banknote]",
+      "['bank-casino', 'Bank und Casino Funktionen', Dice5]",
+      "['killfeed', 'Killfeed & ADM', Crosshair]",
+      "['radar', 'Zonenradar', MapPinned]",
+    ];
+    for (const entry of entries) expect(source).toContain(entry);
+    expect(architecture).toContain("content: 'PAGE 2';");
+    expect(architecture).not.toContain("content: 'PAGE 1';");
+    expect(architecture).toContain("nav[aria-label='Slot-Funktionen']");
     expect(source).toContain("tab === 'virtual-accounts'");
     expect((source.match(/<VirtualAccountsPanel /g) ?? []).length).toBe(1);
     expect(source).not.toContain('<LotteryPanel ');

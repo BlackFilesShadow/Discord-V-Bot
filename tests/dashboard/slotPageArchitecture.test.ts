@@ -8,39 +8,50 @@ const v3Source = read('dashboard-ui/src/pages/ServerSlotV3.tsx');
 const mainSource = read('dashboard-ui/src/main.tsx');
 const architectureCss = read('dashboard-ui/src/slot-page-architecture.css');
 
-const SLOT_KEYS = [
-  'settings',
-  'whitelist',
-  'economy',
-  'links',
-  'virtual-accounts',
-  'bank-casino',
-  'killfeed',
-  'radar',
+const SLOT_ENTRIES = [
+  "['settings', 'Settings', Settings]",
+  "['whitelist', 'Whitelist', Shield]",
+  "['economy', 'Economy', Coins]",
+  "['links', 'Economy-Links', LinkIcon]",
+  "['virtual-accounts', 'Virtuelle Konten', Banknote]",
+  "['bank-casino', 'Bank und Casino Funktionen', Dice5]",
+  "['killfeed', 'Killfeed & ADM', Crosshair]",
+  "['radar', 'Zonenradar', MapPinned]",
 ] as const;
 
-function expectOrder(source: string, keys: readonly string[]): void {
+function expectOrder(source: string, entries: readonly string[]): void {
   let previous = -1;
-  for (const key of keys) {
-    const index = source.indexOf(`['${key}',`);
+  for (const entry of entries) {
+    const index = source.indexOf(entry);
     expect(index).toBeGreaterThan(previous);
     previous = index;
   }
 }
 
+function between(source: string, start: string, end: string): string {
+  const startAt = source.indexOf(start);
+  const endAt = source.indexOf(end, startAt + start.length);
+  expect(startAt).toBeGreaterThanOrEqual(0);
+  expect(endAt).toBeGreaterThan(startAt);
+  return source.slice(startAt, endAt);
+}
+
 describe('slot dashboard page architecture', () => {
-  it('keeps all eight slot functions in the established order in legacy and V3', () => {
-    expectOrder(legacySource, SLOT_KEYS);
-    expectOrder(v3Source, SLOT_KEYS);
+  it('keeps all eight slot functions in the established order in legacy and V3 navigation definitions', () => {
+    const legacyNavigation = between(legacySource, 'const pageOneTabs = [', 'const sidebarButton =');
+    const v3Navigation = between(v3Source, 'const NAV:', 'const ECONOMY_SECTIONS');
+    expectOrder(legacyNavigation, SLOT_ENTRIES);
+    expectOrder(v3Navigation, SLOT_ENTRIES);
   });
 
   it('does not change slot route keys or function assignments', () => {
-    for (const key of SLOT_KEYS) {
-      expect(legacySource).toContain(`'${key}'`);
-      expect(v3Source).toContain(`'${key}'`);
+    const tabType = "type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';";
+    expect(legacySource).toContain(tabType);
+    expect(v3Source).toContain(tabType);
+    for (const entry of SLOT_ENTRIES) {
+      expect(legacySource).toContain(entry);
+      expect(v3Source).toContain(entry);
     }
-    expect(legacySource).toContain("type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';");
-    expect(v3Source).toContain("type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';");
   });
 
   it('loads the page architecture layer after the base and vivid themes', () => {
@@ -50,7 +61,7 @@ describe('slot dashboard page architecture', () => {
     expect(pageArchitecture).toBeGreaterThan(vivid);
   });
 
-  it('shows the complete slot sidebar as PAGE 2 and removes only the historical internal divider', () => {
+  it('shows the complete desktop slot sidebar as PAGE 2 and removes only the historical internal divider', () => {
     expect(architectureCss).toContain("content: 'PAGE 2';");
     expect(architectureCss).not.toContain("content: 'PAGE 1';");
     expect(architectureCss).toContain(".dashboard-sidebar nav[aria-label='Slot-Funktionen'] > p");

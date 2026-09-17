@@ -70,7 +70,10 @@ describe('Economy account capability workspace', () => {
   test('virtual accounts workspace composes custom, system, lottery and market surfaces', () => {
     expect(wrapper).toContain('<VirtualAccountsControlPanel');
     expect(wrapper).toContain('openTreasuryConfiguration={openTreasuryConfiguration}');
-    expect(wrapper).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} onConfigureServerBank={() => setOpenTreasuryConfiguration(true)} />');
+    expect(wrapper).toContain('<SystemAccountsOverview');
+    expect(wrapper).toContain('onConfigureServerBank={() => {');
+    expect(wrapper).toContain('setOpenTreasuryConfiguration(true);');
+    expect(wrapper).toContain("setSection('accounts');");
     expect(wrapper).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
     expect(wrapper).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
   });
