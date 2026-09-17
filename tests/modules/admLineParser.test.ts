@@ -165,3 +165,13 @@ it('verknuepft vollstaendige ADM-PvP-Treffer mit Opfer, Taeter und exakten Detai
   expect(event).toMatchObject({ eventType: 'PLAYER_HIT', actorGameId: 'victim', targetGameId: 'killer', toolOrWeapon: 'M4-A1' });
   expect(parsePvpHitDetails(line)).toEqual({ bodyPart: 'Head', damage: 12.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' });
 });
+
+it('strippt den Distanz-Anhang aus dem Waffennamen einer Fernkampf-Treffer-Zeile (wie extractWeapon)', () => {
+  // Regression: PVP_HIT_DETAILS_RE gab vorher "LAR from 245.3 meters" statt
+  // "LAR" zurueck, weil die lazy Waffen-Erfassung den "from <N> meters"-Anhang
+  // mitgefressen hat. embedBuilder.ts bevorzugt genau diesen Hit-Detail-Wert
+  // gegenueber dem bereits korrekt geparsten Kill-Zeilen-Wert, wodurch der
+  // korrupte Text im Killfeed-Embed als Waffenname angezeigt wurde.
+  const line = '18:11:05 | Player "Echo" (id=victim pos=<8,9,10>)[HP: 0] hit by Player "Alpha" (id=killer pos=<1,2,3>) into Head(0) for 142 damage (Projectile_762x51) with LAR from 245.3 meters';
+  expect(parsePvpHitDetails(line)).toEqual({ bodyPart: 'Head', damage: 142, damageType: 'Projectile_762x51', weapon: 'LAR' });
+});

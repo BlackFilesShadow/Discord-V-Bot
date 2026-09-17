@@ -60,6 +60,15 @@ export interface RedactOptions {
   serverName?: string | null;
   /** Optional: Service-ID, die zusätzlich zu maskieren ist. */
   serviceId?: string | null;
+  /**
+   * Optional: bereits vom Aufrufer verifizierte Identifier (z.B. Subjects/
+   * Identifier aus einem scope-geprueften Hallucination-Guard-Bundle), die
+   * unabhaengig vom Vanilla-Katalog vor der GUID-/Console-ID-Heuristik
+   * geschuetzt werden sollen (siehe redactorProtected.ts). Von redactText()
+   * selbst nicht ausgewertet - die geschuetzte Ersetzung passiert bereits in
+   * der aufrufenden Schutzschicht, bevor dieser Basis-Redactor laeuft.
+   */
+  protectedIdentifiers?: readonly string[];
 }
 
 /**

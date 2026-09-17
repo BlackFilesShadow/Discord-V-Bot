@@ -499,7 +499,11 @@ export async function answerQuestion(
       ...clampHistory(memoryTurns).map((t) => ({ role: t.role, content: t.content })),
       ...(nitradoHelpBlock ? [{ role: 'system' as const, content: clampBlock('nitradoContext', nitradoHelpBlock)! }] : []),
       { role: 'user', content: question },
-    ]);
+    ], {
+      protectedIdentifiers: hallucinationGuard
+        ? [...hallucinationGuard.identifiers, ...hallucinationGuard.facts.map((fact) => fact.subject)]
+        : undefined,
+    });
 
     let safeResponse = response ? redactText(response) : response;
 
@@ -827,6 +831,16 @@ export interface Stage48AiLabOptions {
 
 export interface CallAiOptions {
   stage48Lab?: Stage48AiLabOptions;
+  /**
+   * Bereits verifizierte Identifier (z.B. aus einem Hallucination-Guard-
+   * Bundle), die die Outbound-Redaction unabhaengig vom Vanilla-Katalog vor
+   * GUID-/Console-ID-Fehlklassifizierung schuetzen soll - siehe
+   * redactorProtected.ts. Ohne das koennte ein modifizierter/nicht-vanilla
+   * Classname im an das Modell gesendeten Prompt zu "[GUID]" maskiert werden,
+   * waehrend die spaetere Guard-Pruefung weiter gegen den echten,
+   * ungeschwaerzten Namen prueft.
+   */
+  protectedIdentifiers?: readonly string[];
 }
 
 function normalizeStage48AiLab(options: Stage48AiLabOptions): Stage48AiLabOptions {
@@ -895,7 +909,10 @@ export async function callAI(
 
   let redactedMessages: { role: string; content: string }[];
   try {
-    redactedMessages = messages.map(m => ({ role: m.role, content: redactText(m.content) }));
+    redactedMessages = messages.map(m => ({
+      role: m.role,
+      content: redactText(m.content, { protectedIdentifiers: options.protectedIdentifiers }),
+    }));
   } catch (e) {
     logger.error('callAI: Outbound-Redaction fehlgeschlagen – Provider-Call abgebrochen (fail-closed).', e as Error);
     throw new Error('AI_REDACTION_FAILED');
