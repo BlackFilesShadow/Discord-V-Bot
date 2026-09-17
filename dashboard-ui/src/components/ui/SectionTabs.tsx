@@ -20,7 +20,7 @@ export function SectionTabs<T extends string>({
 }) {
   return (
     <nav
-      className="flex max-w-full gap-1.5 overflow-x-auto rounded-2xl border border-border/70 bg-bg-card/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm"
+      className="section-tabs flex max-w-full gap-1.5 overflow-x-auto rounded-2xl border border-border/70 bg-bg-card/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-sm"
       aria-label={ariaLabel}
     >
       {items.map(item => {
