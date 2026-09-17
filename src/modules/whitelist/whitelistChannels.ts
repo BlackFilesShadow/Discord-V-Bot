@@ -261,7 +261,14 @@ export async function notifyRequesterDecision(args: {
       .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
     if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
-    if (args.approved) embed.setDescription(args.description ?? 'Du wurdest auf die Whitelist gesetzt. Viel Spass!');
+    // Die eigentliche Nitrado-Synchronisierung laeuft asynchron ueber die
+    // Job-Queue (bis zu ~10s Poll-Intervall) und kann danach noch dauerhaft
+    // fehlschlagen. Diese DM darf deshalb niemals einen bereits abgeschlossenen
+    // Fakt behaupten ("du wurdest gesetzt") - sonst glaubt der Nutzer
+    // faelschlich, bereits whitelisted zu sein, obwohl der Sync noch aussteht
+    // oder spaeter permanent scheitert. Dieselbe ehrliche "eingereiht"-Sprache
+    // wie ueberall sonst in diesem Modul (z.B. Universal-Whitelist-Fanout).
+    if (args.approved) embed.setDescription(args.description ?? 'Deine Whitelist-Anfrage wurde angenommen und zur Synchronisierung mit dem Gameserver eingereiht. Du wirst automatisch freigeschaltet, sobald der Sync abgeschlossen ist.');
     else embed.setDescription(args.description ?? 'Dein Antrag wurde abgelehnt.');
     await user.send({ embeds: [embed] });
   } catch (e) {

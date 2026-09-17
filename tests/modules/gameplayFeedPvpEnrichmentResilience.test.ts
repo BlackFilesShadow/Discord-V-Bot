@@ -232,4 +232,29 @@ describe('PvP-Killfeed Zusatzinformationen', () => {
     ]));
     expect(loggerWarn).not.toHaveBeenCalledWith(expect.stringContaining('optionale PvP-Trefferdetails uebersprungen'));
   });
+
+  it('sortiert die PLAYER_HIT-Korrelationsabfrage deterministisch per sourceByteStart, nicht nur per Sekunden-Zeitstempel', async () => {
+    // ADM-Zeitstempel haben nur 1-Sekunden-Aufloesung. Ohne einen zweiten,
+    // deterministischen Sortierschluessel koennten bei mehreren Treffern in
+    // derselben Sekunde (z.B. Automatikfeuer) Ergebnisse instabil bzw. in
+    // falscher Schreibreihenfolge zurueckgegeben werden. Dieser Test pinnt
+    // fest, dass die Query sich nicht mehr ausschliesslich auf
+    // "occurredAt: desc" verlaesst.
+    const event = killEvent();
+    const send = jest.fn().mockResolvedValue({ id: 'discord-message-3' });
+    wireCommonRuntime(event, send);
+
+    eventFindFirst
+      .mockResolvedValueOnce(event)
+      .mockResolvedValueOnce(null);
+
+    await runGameplayFeedsOnce();
+
+    const hitLookupCall = eventFindFirst.mock.calls.find(call => call[0]?.select?.rawLine === true);
+    expect(hitLookupCall).toBeDefined();
+    expect(hitLookupCall?.[0]?.orderBy).toEqual([
+      { occurredAt: 'desc' },
+      { sourceByteStart: 'desc' },
+    ]);
+  });
 });
