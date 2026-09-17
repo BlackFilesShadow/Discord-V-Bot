@@ -84,7 +84,7 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(rewardSource).toContain('assertNoOpenLeaveCleanupRequest(scope.guildId, userDiscordId)');
   });
 
-  it('renders the destructive toggle only for Owner or dashboard.access and embeds it in Goodbye responsively', () => {
+  it('renders the destructive toggle only for Owner or dashboard.access and composes it in the lifecycle Cleanup subtab responsively', () => {
     expect(panelSource).toContain("const isOwner = ownerQ.data?.isOwner === true;");
     expect(panelSource).toContain("const hasFullAccess = isOwner || ownerQ.data?.permissions?.includes('dashboard.access') === true;");
     expect(panelSource).toContain('if (!hasFullAccess)');
@@ -92,7 +92,9 @@ describe('Leave-1E productive orchestration + toggle wiring', () => {
     expect(panelSource).toContain('confirm(');
     expect(panelSource).toContain('grid grid-cols-1 sm:grid-cols-2');
     expect(panelSource).toContain('w-full sm:w-auto');
-    expect(goodbyeSource).toContain('<LeaveCleanupPanel guildId={guildId} embedded />');
+    expect(goodbyeSource).not.toContain('<LeaveCleanupPanel guildId={guildId} embedded />');
+    expect(welcomeSource).toContain("{ key: 'cleanup', label: 'Cleanup'");
+    expect(welcomeSource).toContain('<LeaveCleanupPanel guildId={props.guildId} embedded />');
     expect(welcomeSource).not.toContain('<LeaveCleanupPanel guildId={props.guildId} />');
   });
 });

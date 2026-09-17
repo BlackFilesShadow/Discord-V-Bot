@@ -22,7 +22,10 @@ describe('virtuelle Konten — Surface-Sicherheit', () => {
     expect(workspace).toContain('<VirtualAccountsControlPanel');
     expect(workspace).toContain('guildId={guildId}');
     expect(workspace).toContain('slot={slot}');
-    expect(workspace).toContain('<SystemAccountsOverview guildId={guildId} slot={slot} onConfigureServerBank={() => setOpenTreasuryConfiguration(true)} />');
+    expect(workspace).toContain('<SystemAccountsOverview');
+    expect(workspace).toContain('onConfigureServerBank={() => {');
+    expect(workspace).toContain('setOpenTreasuryConfiguration(true);');
+    expect(workspace).toContain("setSection('accounts');");
     expect(workspace).toContain('<LotteryPanel guildId={guildId} slot={slot} />');
     expect(workspace).toContain('<BlackMarketPanel guildId={guildId} slot={slot} />');
     expect(panel).toContain('walletBalance');

@@ -217,8 +217,8 @@ test.describe('Economy Config + Bank authenticated contract', () => {
     const state = await stubEconomyConfig(page);
     await openEconomyConfig(page);
 
-    const startBalance = page.getByLabel('Startguthaben');
-    const reward = page.getByLabel('Spielzeit-Belohnung je 10 Minuten');
+    const startBalance = page.getByRole('spinbutton', { name: 'Startguthaben', exact: true });
+    const reward = page.getByRole('spinbutton', { name: /^Spielzeit-Belohnung je 10 Minuten/ });
     await startBalance.fill('1000000001');
     await reward.fill('12.9');
     await page.getByRole('button', { name: 'Economy speichern', exact: true }).click();

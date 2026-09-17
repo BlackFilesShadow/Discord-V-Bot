@@ -48,9 +48,10 @@ describe('dashboard vivid color architecture', () => {
   });
 
   it('remains presentation-only and does not introduce runtime API behaviour', () => {
-    expect(vivid).not.toContain('/api/');
-    expect(vivid).not.toContain('fetch(');
-    expect(vivid).not.toContain('mutation');
-    expect(vivid).not.toContain('permission');
+    const vividRuntime = vivid.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(vividRuntime).not.toContain('/api/');
+    expect(vividRuntime).not.toContain('fetch(');
+    expect(vividRuntime).not.toContain('mutation');
+    expect(vividRuntime).not.toContain('permission');
   });
 });
