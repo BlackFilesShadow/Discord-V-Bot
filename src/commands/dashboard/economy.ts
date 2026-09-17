@@ -184,9 +184,21 @@ export const adminPayCommand: Command = {
 
 export const depositCommand: Command = {
   data: slotOption(new SlashCommandBuilder().setName('deposit').setDescription('Bringt Coins von Wallet auf die Bank.')
-    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
+    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag (leer = komplettes Wallet)').setRequired(false).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
-    const connId = scope.nitradoConnId!; const amount = BigInt(i.options.getInteger('betrag', true));
+    const connId = scope.nitradoConnId!;
+    const requestedAmount = i.options.getInteger('betrag');
+    const before = requestedAmount === null
+      ? await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId)
+      : null;
+    const amount = requestedAmount === null ? before!.walletBalance : BigInt(requestedAmount);
+    if (amount <= 0n) {
+      await statusReply(i, 'INFO', 'Keine Einzahlung möglich', {
+        footerText: 'V-Bot Bank',
+        description: 'Dein Wallet ist leer.',
+      });
+      return;
+    }
     try { await deposit(scope.guildId, connId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Einzahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Einzahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     const cfg = await getConfig(scope.guildId, connId); const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);
@@ -199,9 +211,21 @@ export const depositCommand: Command = {
 
 export const withdrawCommand: Command = {
   data: slotOption(new SlashCommandBuilder().setName('withdraw').setDescription('Hebt Coins von der Bank auf die Wallet ab.')
-    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag').setRequired(true).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
+    .addIntegerOption(o => o.setName('betrag').setDescription('Betrag (leer = komplette Bank)').setRequired(false).setMinValue(1).setMaxValue(1_000_000_000)) as SlashCommandBuilder),
   execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
-    const connId = scope.nitradoConnId!; const amount = BigInt(i.options.getInteger('betrag', true));
+    const connId = scope.nitradoConnId!;
+    const requestedAmount = i.options.getInteger('betrag');
+    const before = requestedAmount === null
+      ? await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId)
+      : null;
+    const amount = requestedAmount === null ? before!.bankBalance : BigInt(requestedAmount);
+    if (amount <= 0n) {
+      await statusReply(i, 'INFO', 'Keine Auszahlung möglich', {
+        footerText: 'V-Bot Bank',
+        description: 'Dein Bankkonto ist leer.',
+      });
+      return;
+    }
     try { await withdraw(scope.guildId, connId, scope.actorDiscordId, amount); }
     catch (e) { await statusReply(i, 'ERROR', 'Auszahlung fehlgeschlagen', { footerText: 'V-Bot Bank', description: 'Die Auszahlung konnte nicht durchgeführt werden.', fields: [{ name: '📝 Grund', value: (e as Error).message }] }); return; }
     const cfg = await getConfig(scope.guildId, connId); const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId);

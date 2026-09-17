@@ -10,22 +10,22 @@ describe('Admin ForceLink/ForceUnlink override safety', () => {
   const command = read('src/commands/dashboard/privileged.ts');
   const cron = read('src/modules/nitrado/adm/admPostProcessCron.ts');
 
-  it('allows the admin command to bypass missing ADM/session evidence without inventing a GUID', () => {
+  it('bypasses only the five-minute rule and requires a real unambiguous session identity', () => {
     expect(command).toContain('forceAdminLinkByPlayerName');
-    expect(command).toContain('normale ADM-/Session-Anwesenheits- und Spielzeitregel umgangen');
-    expect(service).toContain('gameId: identity?.gameId ?? null');
-    expect(service).toContain('pendingIdentityResolution: !hash');
-    expect(service).not.toContain("identityHash(args.playerName");
-    expect(service).not.toContain("identityHash(playerName");
+    expect(service).toContain('resolvePlayerIdentityByName');
+    expect(service).toContain("if (!resolved || resolved === 'AMBIGUOUS')");
+    expect(service).toContain('gameId: resolved.gameId');
+    expect(service).not.toContain('gameId: identity?.gameId ?? null');
+    expect(service).not.toContain('const identity = resolved');
   });
 
-  it('persists only the provisional exact player name until a real session resolves the GUID', () => {
+  it('keeps legacy provisional persistence only for reconciliation and no longer creates new name-only force-links', () => {
     expect(migration).toContain('ADD COLUMN IF NOT EXISTS "forcedPlayerName" VARCHAR(64)');
     expect(migration).toContain('GameIdentityLink_forced_player_name_printable');
     expect(migration).toContain('GameIdentityLink_scope_forced_player_name_verified_key');
-    expect(service).toContain('resolvePlayerIdentityByName');
     expect(service).toContain('reconcileAdminForcedLinks');
     expect(cron).toContain('reconcileAdminForcedLinks');
+    expect(service).toContain('Neue Force-Links werden nicht mehr provisional erzeugt');
   });
 
   it('keeps identity ownership, leave cleanup and race fences active for admin overrides', () => {

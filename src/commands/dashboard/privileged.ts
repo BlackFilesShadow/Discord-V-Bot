@@ -87,7 +87,7 @@ function payloadString(payload: Record<string, unknown>, key: string): string {
 function forceLinkFailure(result: Extract<AdminForceLinkResult, { ok: false }>): string {
   switch (result.reason) {
     case 'INVALID_PLAYER_NAME':
-      return 'Der Spielername ist ungueltig. Erwartet werden 1–64 Zeichen ohne Zeilenumbrueche.';
+      return 'Der Spielername ist ungueltig oder aktuell nicht eindeutig in den ADM-/Session-Daten dieses Gameservers aufloesbar.';
     case 'PLAYER_NAME_TAKEN':
     case 'IDENTITY_TAKEN':
       return 'Dieser Spielername bzw. die dazugehörige DayZ-GUID ist bereits mit einem anderen Discord-Account verknuepft.';
@@ -161,7 +161,7 @@ export const forceLinkCommand: Command = {
       scope,
       ACTIONS.FORCE_LINK,
       { targetUserId: target.id, playerName },
-      `Force-Link von <@${target.id}> mit **${playerName}** ist vorbereitet. Als Admin-Aktion wird die normale ADM-/Session-Anwesenheits- und Spielzeitregel umgangen.`,
+      `Force-Link von <@${target.id}> mit **${playerName}** ist vorbereitet. Als Admin-Aktion wird nur die 5-Minuten-Spielzeitregel umgangen; der Spielername muss weiterhin eindeutig in den ADM-/Session-Daten erkannt sein.`,
     );
   }),
 };
@@ -283,17 +283,18 @@ export const confirmActionCommand: Command = {
           await finish(forceLinkFailure(result));
           return;
         }
-
-        let startBalance = { granted: false, amount: 0n };
-        if (result.gameId) {
-          startBalance = await applySuccessfulLinkEconomyEffects({
-            scope: linkScope,
-            userDiscordId: targetUserId,
-            gameId: result.gameId,
-            secret: config.security.encryptionKey,
-            newLink: result.newIdentityBinding,
-          });
+        if (!result.gameId) {
+          await finish('Force-Link wurde nicht ausgefuehrt, weil keine eindeutige DayZ-GUID aus den ADM-/Session-Daten aufgeloest werden konnte.');
+          return;
         }
+
+        const startBalance = await applySuccessfulLinkEconomyEffects({
+          scope: linkScope,
+          userDiscordId: targetUserId,
+          gameId: result.gameId,
+          secret: config.security.encryptionKey,
+          newLink: result.newIdentityBinding,
+        });
         logAudit('LINK_FORCE_CREATED', 'LINKING', {
           guildId: scope.guildId,
           nitradoConnId,
@@ -301,16 +302,13 @@ export const confirmActionCommand: Command = {
           target: targetUserId,
           playerName: result.playerName,
           actionId: id,
-          identityResolved: Boolean(result.gameId),
-          pendingIdentityResolution: result.pendingIdentityResolution,
+          identityResolved: true,
+          pendingIdentityResolution: false,
           startBalanceGranted: startBalance.granted,
           startBalanceAmount: startBalance.amount.toString(),
           idempotentReplay: result.alreadyLinked,
         });
-        const pending = result.pendingIdentityResolution
-          ? ' Die Admin-Verknuepfung ist sofort aktiv; die echte DayZ-GUID und GUID-basierte Rewards werden beim ersten eindeutigen ADM-/Session-Treffer automatisch nachgezogen.'
-          : '';
-        await finish(`Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}${pending}`);
+        await finish(`Force-Link wurde ausgefuehrt: <@${targetUserId}> ↔ **${result.playerName}**.${startBalance.granted ? ` Startguthaben: +${startBalance.amount.toLocaleString('de-DE')}.` : ''}`);
         return;
       }
 

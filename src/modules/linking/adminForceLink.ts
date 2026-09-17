@@ -203,10 +203,10 @@ async function persistAdminForcedLink(args: {
 }
 
 /**
- * Admin-Force-Link umgeht bewusst die normale ADM-/Session-Anwesenheitsregel und
- * die 5-Minuten-Sperre. Falls noch keine eindeutige GUID bekannt ist, wird der
- * exakte Spielername sofort verknuepft; die GUID wird spaeter automatisch und
- * ohne erfundene Identitaet nachgezogen.
+ * Admin-Force-Link folgt derselben eindeutigen ADM-/Session-Aufloesung wie der
+ * normale Link. Der einzige Override ist die 5-Minuten-Spielzeitsperre. Dadurch
+ * wird kein neuer name-only Link mehr erzeugt; bestehende historische
+ * Provisional-Links werden bei einem eindeutigen Session-Treffer normalisiert.
  */
 export async function forceAdminLinkByPlayerName(args: {
   scope: LinkScope;
@@ -225,24 +225,26 @@ export async function forceAdminLinkByPlayerName(args: {
     playerName,
     now,
   );
-  const identity = resolved && resolved !== 'AMBIGUOUS' ? resolved : null;
+  if (!resolved || resolved === 'AMBIGUOUS') {
+    return { ok: false, reason: 'INVALID_PLAYER_NAME', playerName };
+  }
   const result = await persistAdminForcedLink({
     scope: args.scope,
     userDiscordId: args.userDiscordId,
     playerName,
-    gameId: identity?.gameId ?? null,
+    gameId: resolved.gameId,
     secret: args.secret,
     now,
   });
-  if (result.ok && identity) result.playedSeconds = identity.playedSeconds;
+  if (result.ok) result.playedSeconds = resolved.playedSeconds;
   return result;
 }
 
 /**
- * Wiederholt sichere Aufloesung fuer alle Admin-Force-Links eines Servers.
+ * Wiederholt sichere Aufloesung fuer historische Admin-Force-Links eines Servers.
  * Bereits gebundene Links werden ebenfalls zurueckgegeben, damit ein nach dem
  * GUID-Commit fehlgeschlagener Economy-Hook im naechsten Cronlauf idempotent
- * repariert werden kann.
+ * repariert werden kann. Neue Force-Links werden nicht mehr provisional erzeugt.
  */
 export async function reconcileAdminForcedLinks(args: {
   scope: LinkScope;
