@@ -232,6 +232,14 @@ function mutationOf(state: Awaited<ReturnType<typeof stubBlackMarket>>, kind: Mu
   return state.mutations.find(row => row.kind === kind);
 }
 
+async function openBlackMarket(page: Page): Promise<void> {
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+  const nav = page.getByRole('navigation', { name: 'Virtuelle-Konten-Funktionen' });
+  await expect(nav).toBeVisible();
+  await nav.getByRole('button', { name: 'Schwarzmarkt', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Schwarzmarkt', exact: true, level: 3 })).toBeVisible();
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -240,9 +248,8 @@ async function noPageOverflow(page: Page): Promise<void> {
 test.describe('Black Market authenticated action contract', () => {
   test('economy.view kauft limitfrei im exakten Slot-Scope ueber den zentralen Idempotency-Key', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: false });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openBlackMarket(page);
 
-    await expect(page.getByText('Schwarzmarkt', { exact: true })).toBeVisible();
     await expect(page.getByText('M4 Kit')).toBeVisible();
     await expect(page.getByText('Altes Kit')).toHaveCount(0);
     await expect(page.getByText('Haendler anlegen')).toHaveCount(0);
@@ -267,7 +274,7 @@ test.describe('Black Market authenticated action contract', () => {
 
   test('economy.manage erstellt Angebote ohne stock/max und kann aktive sowie archivierte Angebote entfernen', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openBlackMarket(page);
 
     await expect(page.getByText('Haendler anlegen')).toBeVisible();
     await expect(page.getByText('Angebot anlegen')).toBeVisible();
@@ -303,7 +310,7 @@ test.describe('Black Market authenticated action contract', () => {
 
   test('zeigt Kauf-Fehler sichtbar statt False-Success', async ({ page }) => {
     await stubBlackMarket(page, { canManage: false, purchaseError: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openBlackMarket(page);
     await page.getByRole('button', { name: 'Kaufen', exact: true }).click();
     await expect(page.getByText(/Kauf fehlgeschlagen: Nicht genug Guthaben/)).toBeVisible();
     await expect(page.getByText(/Bestellung .* gebucht:/)).toHaveCount(0);
@@ -311,7 +318,7 @@ test.describe('Black Market authenticated action contract', () => {
 
   test('Händler-Auszahlung wählt den Empfänger aus Guild-Mitgliedern statt einer freien Discord-ID', async ({ page }) => {
     const state = await stubBlackMarket(page, { canManage: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openBlackMarket(page);
 
     const vendorRow = page.getByText('Nachtmarkt', { exact: true }).locator('xpath=ancestor::div[contains(@class,"border-border/40")][1]');
     await vendorRow.getByRole('button', { name: 'Discord-Mitglied auswählen…' }).click();
@@ -331,7 +338,7 @@ test.describe('Black Market authenticated action contract', () => {
     test(`Buyer-UI bleibt bei ${width}px ohne Seiten-Overflow`, async ({ page }) => {
       await stubBlackMarket(page, { canManage: false });
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+      await openBlackMarket(page);
       await expect(page.getByText('M4 Kit')).toBeVisible();
       await expect(page.getByRole('button', { name: 'Kaufen', exact: true })).toBeVisible();
       await noPageOverflow(page);
