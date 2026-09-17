@@ -1,0 +1,39 @@
+/*
+ * Slot navigation architecture
+ *
+ * The guild/server dashboard is PAGE 1. A selected Nitrado slot is PAGE 2.
+ * All eight existing slot functions belong to PAGE 2; there is no nested
+ * PAGE 1/PAGE 2 split inside the slot sidebar.
+ *
+ * Presentation only: routes, tab keys, order, components and behaviour remain
+ * untouched in ServerSlot.tsx and ServerSlotV3.tsx.
+ */
+
+@media (min-width: 768px) {
+  .dashboard-sidebar nav[aria-label='Slot-Funktionen']::before {
+    content: 'PAGE 2';
+    display: block;
+    padding: 0 0.75rem 0.25rem;
+    color: rgb(var(--color-muted) / 0.60);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* Legacy slot navigation still contains the historical PAGE 1 / PAGE 2
+     labels in its DOM. Hide only those presentation labels. */
+  .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > p,
+  .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t > p {
+    display: none;
+  }
+
+  /* Legacy groups the last four items in a wrapper; V3 marks the fifth item
+     with the same divider classes. Flatten only that historical page divider
+     so all eight functions are shown as one PAGE 2 navigation. */
+  .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+    border-top-width: 0 !important;
+  }
+}
