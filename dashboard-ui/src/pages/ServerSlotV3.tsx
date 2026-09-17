@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/Input';
 import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
 import { EmojiPicker } from '@/components/ui/EmojiPicker';
+import { SectionTabs, type SectionTabItem } from '@/components/ui/SectionTabs';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
 import { useToast } from '@/lib/toast';
@@ -28,6 +29,8 @@ import {
 type CasinoGameType = 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK' | 'ROULETTE' | 'HIGHLOW' | 'BACCARAT' | 'WHEEL';
 type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
 type RewardTarget = 'WALLET' | 'BANK';
+type EconomySection = 'overview' | 'config' | 'rewards' | 'scope';
+type BankCasinoSection = 'bank' | 'casino';
 
 interface EconomyConfigState {
   enabled: boolean;
@@ -121,6 +124,18 @@ const NAV: ReadonlyArray<[Tab, string, typeof Settings]> = [
   ['radar', 'Zonenradar', MapPinned],
 ];
 
+const ECONOMY_SECTIONS: ReadonlyArray<SectionTabItem<EconomySection>> = [
+  { key: 'overview', label: 'Übersicht', icon: Coins },
+  { key: 'config', label: 'Währung & Start', icon: Settings },
+  { key: 'rewards', label: 'DayZ-Rewards', icon: Banknote },
+  { key: 'scope', label: 'Scope', icon: Shield },
+];
+
+const BANK_CASINO_SECTIONS: ReadonlyArray<SectionTabItem<BankCasinoSection>> = [
+  { key: 'bank', label: 'Bank', icon: Banknote },
+  { key: 'casino', label: 'Casino', icon: Dice5, badge: '8 Spiele' },
+];
+
 function fmtBig(value: string): string {
   try { return BigInt(value).toLocaleString('de-DE'); } catch { return value; }
 }
@@ -181,6 +196,7 @@ function SlotV3Shell({ tab, children }: { tab: Tab; children: React.ReactNode })
 }
 
 function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
+  const [section, setSection] = useState<EconomySection>('overview');
   const qc = useQueryClient();
   const toast = useToast();
   const config = useQuery({
@@ -239,30 +255,46 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
           'Der ADM-Rewards-Master bleibt ein eigenes Sicherheits-Gate und muss für automatische Auszahlungen aktiv sein.',
         ]} />
       </div>
-      <EconomyScopePanel guildId={guildId} slot={slot} />
-      {overview.data && (
-        <Card>
-          <CardHeader><CardTitle>Wirtschaft-Status</CardTitle></CardHeader>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-sm">
-            <Metric label="Konten" value={String(overview.data.economy.accounts)} />
-            <Metric label="Verknüpfungen" value={String(overview.data.economy.links)} />
-            <Metric label="Wallet gesamt" value={fmtBig(overview.data.bank.totalWallet)} />
-            <Metric label="Bank gesamt" value={fmtBig(overview.data.bank.totalBank)} />
-          </div>
-        </Card>
-      )}
-      {config.isLoading && <Card><p className="text-muted">Lade Economy-Konfiguration…</p></Card>}
-      {config.isError && <Card><p className="text-danger">Economy-Konfiguration konnte nicht geladen werden.</p></Card>}
-      {config.data && <EconomyConfigCard value={config.data} onSave={patch => update.mutate(patch)} pending={update.isPending} />}
-      {rewards.isLoading && <Card><p className="text-muted">Lade DayZ-Rewards…</p></Card>}
-      {rewards.isError && <Card><p className="text-danger">DayZ-Rewards konnten nicht geladen werden.</p></Card>}
-      {rewards.data && (
-        <AdmRewardsCard
-          value={rewards.data}
-          pending={updateRewards.isPending}
-          onSave={patch => updateRewards.mutate(patch)}
-        />
-      )}
+
+      <SectionTabs value={section} items={ECONOMY_SECTIONS} onChange={setSection} ariaLabel="Economy-Funktionen" />
+
+      <section hidden={section !== 'overview'} aria-label="Economy Übersicht">
+        {overview.isLoading && <Card><p className="text-muted">Lade Wirtschaft-Status…</p></Card>}
+        {overview.isError && <Card><p className="text-danger">Wirtschaft-Status konnte nicht geladen werden.</p></Card>}
+        {overview.data && (
+          <Card>
+            <CardHeader><CardTitle>Wirtschaft-Status</CardTitle></CardHeader>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 text-sm">
+              <Metric label="Konten" value={String(overview.data.economy.accounts)} />
+              <Metric label="Verknüpfungen" value={String(overview.data.economy.links)} />
+              <Metric label="Wallet gesamt" value={fmtBig(overview.data.bank.totalWallet)} />
+              <Metric label="Bank gesamt" value={fmtBig(overview.data.bank.totalBank)} />
+            </div>
+          </Card>
+        )}
+      </section>
+
+      <section hidden={section !== 'config'} aria-label="Währung und Startguthaben">
+        {config.isLoading && <Card><p className="text-muted">Lade Economy-Konfiguration…</p></Card>}
+        {config.isError && <Card><p className="text-danger">Economy-Konfiguration konnte nicht geladen werden.</p></Card>}
+        {config.data && <EconomyConfigCard value={config.data} onSave={patch => update.mutate(patch)} pending={update.isPending} />}
+      </section>
+
+      <section hidden={section !== 'rewards'} aria-label="DayZ-Rewards">
+        {rewards.isLoading && <Card><p className="text-muted">Lade DayZ-Rewards…</p></Card>}
+        {rewards.isError && <Card><p className="text-danger">DayZ-Rewards konnten nicht geladen werden.</p></Card>}
+        {rewards.data && (
+          <AdmRewardsCard
+            value={rewards.data}
+            pending={updateRewards.isPending}
+            onSave={patch => updateRewards.mutate(patch)}
+          />
+        )}
+      </section>
+
+      <section hidden={section !== 'scope'} aria-label="Economy Scope">
+        <EconomyScopePanel guildId={guildId} slot={slot} />
+      </section>
     </>
   );
 }
@@ -415,6 +447,7 @@ function AdmRewardsCard({ value, pending, onSave }: {
 }
 
 function BankCasinoV3Page({ guildId, slot }: { guildId: string; slot: string }) {
+  const [section, setSection] = useState<BankCasinoSection>('bank');
   const config = useQuery({
     queryKey: ['economy', guildId, slot],
     queryFn: () => api.get<EconomyConfigState>(`/api/v2/guilds/${guildId}/economy/config?slot=${encodeURIComponent(slot)}`),
@@ -452,16 +485,26 @@ function BankCasinoV3Page({ guildId, slot }: { guildId: string; slot: string }) 
           'RTP über 100 % wird serverseitig blockiert; Draw-Anteile von Blackjack/Baccarat sind im RTP enthalten.',
         ]} />
       </div>
-      {config.data && (
-        <BankCard
-          value={config.data}
-          channels={channels.data?.channels ?? []}
-          channelsForbidden={channels.isError}
-          pending={updateEconomy.isPending}
-          onSave={patch => updateEconomy.mutate(patch)}
-        />
-      )}
-      <CasinoCards guildId={guildId} slot={slot} economyEnabled={config.data?.enabled === true} />
+
+      <SectionTabs value={section} items={BANK_CASINO_SECTIONS} onChange={setSection} ariaLabel="Bank-und-Casino-Funktionen" />
+
+      <section hidden={section !== 'bank'} aria-label="Bank">
+        {config.isLoading && <Card><p className="text-muted">Lade Bank-Konfiguration…</p></Card>}
+        {config.isError && <Card><p className="text-danger">Bank-Konfiguration konnte nicht geladen werden.</p></Card>}
+        {config.data && (
+          <BankCard
+            value={config.data}
+            channels={channels.data?.channels ?? []}
+            channelsForbidden={channels.isError}
+            pending={updateEconomy.isPending}
+            onSave={patch => updateEconomy.mutate(patch)}
+          />
+        )}
+      </section>
+
+      <section hidden={section !== 'casino'} aria-label="Casino">
+        <CasinoCards guildId={guildId} slot={slot} economyEnabled={config.data?.enabled === true} />
+      </section>
     </>
   );
 }
