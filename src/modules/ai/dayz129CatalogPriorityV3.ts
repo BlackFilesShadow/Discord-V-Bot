@@ -63,7 +63,16 @@ function editDistance(left: string, right: string): number {
 // Classname von den Kampfstiefeln?" scheitern, obwohl "AK"/"Kampfstiefeln"
 // dem System bekannt sind. Da alle echten Classnames englische Tokens sind,
 // ist das Entfernen dieser deutschen Funktionswoerter risikofrei.
-const FILLER_WORDS_RE = /\b(?:kannst|koenntest|könntest|hast|weisst|weißt|weiss|weiß|sag|sagen|nenn|nennen|bitte|mir|du|ich|meine|von|vom|der|die|das|den|dem|des|einer|einem|eine|einen|ein|waffe|item|gegenstand|dayz|heisst|heißt|wie|was|welche|welcher|welches|in|fuer|ist|sind|hat|habe|haben|kann|koennte|moechte|moechtest|gibt|mich|dir|dich|es|wir|uns|euch)\b/g;
+//
+// "gibt" (3. Person, z.B. "es gibt") war bereits gelistet, aber der
+// Infinitiv "geben" - der genau in der Modalverb-Konstruktion "kannst du
+// mir ... geben?" ans Satzende rutscht - sowie die Imperativformen
+// "gib"/"gebt" fehlten. Dadurch blieb bei Fragen wie "kannst du mir den
+// Classname von dem Fass geben?" das Token "geben" nach der Bereinigung
+// uebrig und verhinderte in der All-Tokens-muessen-treffen-Logik von
+// fullIndexCandidates() jeden Treffer - obwohl "Fass" ueber TYPE_SYNONYMS
+// laengst eindeutig auf "barrel" abbildet.
+const FILLER_WORDS_RE = /\b(?:kannst|koenntest|könntest|hast|weisst|weißt|weiss|weiß|sag|sagen|nenn|nennen|geben|gebt|gib|bitte|mir|du|ich|meine|von|vom|der|die|das|den|dem|des|einer|einem|eine|einen|ein|waffe|item|gegenstand|dayz|heisst|heißt|wie|was|welche|welcher|welches|in|fuer|ist|sind|hat|habe|haben|kann|koennte|moechte|moechtest|gibt|mich|dir|dich|es|wir|uns|euch)\b/g;
 
 function cleanLookupText(question: string): string {
   return fold(question)
@@ -178,7 +187,14 @@ function strongPrefixCandidate(cleaned: string): string | null {
  */
 function fullIndexCandidates(cleaned: string): string[] {
   const query = compact(cleaned);
-  if (query.length < 4) return [];
+  const rawTokens = fold(cleaned).split(/[^a-z0-9]+/).filter(token => token.length >= 3);
+  // Die 4-Zeichen-Untergrenze schuetzt vor geratenen Kurzfragmenten (z.B. "AK"
+  // ist bewusst zu kurz/mehrdeutig, siehe Klassenkommentar). Sie darf aber
+  // keine tatsaechlich bekannten, vollstaendigen deutschen Kurzwoerter wie
+  // "Axt" oder "Hut" (3 Zeichen) blockieren, die ueber TYPE_SYNONYMS bereits
+  // kuratiert und eindeutig auf ein englisches Ziel-Token abgebildet sind.
+  const hasKnownSynonymToken = rawTokens.some((token) => TYPE_SYNONYMS[token]);
+  if (query.length < 4 && !hasKnownSynonymToken) return [];
   const names = base.getDayz129Index().allTypeNames;
 
   const prefixFamily = names
@@ -192,7 +208,6 @@ function fullIndexCandidates(cleaned: string): string[] {
   // score=-1 verwerfen, selbst wenn der reale Classname (z.B. "Apple" fuer
   // "Apfel") laengst im Index existiert. Ein bekanntes deutsches Token wird
   // deshalb durch sein(e) englische(s) Ziel-Token(s) ersetzt statt ergaenzt.
-  const rawTokens = fold(cleaned).split(/[^a-z0-9]+/).filter(token => token.length >= 3);
   const queryTokens = rawTokens.flatMap((token) => TYPE_SYNONYMS[token] ?? [token]);
   if (queryTokens.length === 0) return [];
   const ranked = names.map((name) => {

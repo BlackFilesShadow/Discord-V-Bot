@@ -47,4 +47,41 @@ describe('DayZ 1.29 Classname-Aufloesung ist robust gegen natuerliche Satzfuellw
     // die generelle Watsche gegen zu breite Wortgrenzen-Treffer).
     expect(answerDayz129CatalogQuestion('Classname Feldrucksack')?.answer).toContain('AliceBag_Black');
   });
+
+  test('gemeldeter Fall: "kannst du mir den classname von dem fass geben?" loest jetzt auf', () => {
+    // Konkret gemeldeter Bug: "gibt" (3. Person) war bereits ein Fuellwort,
+    // der am Satzende stehende Infinitiv "geben" - wie er in genau dieser
+    // Modalverb-Konstruktion ("kannst du ... geben?") auftritt - jedoch nicht.
+    // Das liegen gebliebene Token "geben" reichte in der
+    // Alle-Tokens-muessen-treffen-Logik von fullIndexCandidates() aus, um den
+    // an sich eindeutigen "fass" -> "barrel"-Treffer zu verwerfen.
+    const answer = answerDayz129CatalogQuestion('kannst du mir den classname von dem fass geben?');
+    expect(answer?.answer).toContain('Barrel_Blue');
+    expect(answer?.answer).toContain('Barrel_Green');
+    expect(answer?.answer).toContain('Barrel_Red');
+    expect(answer?.answer).toContain('Barrel_Yellow');
+  });
+
+  test('weitere Formulierungen mit dem Verb "geben" (Infinitiv/Imperativ) loesen ebenfalls auf', () => {
+    expect(answerDayz129CatalogQuestion('gib mir den classname von dem fass')?.answer)
+      .toContain('Barrel_Blue');
+    expect(answerDayz129CatalogQuestion('kannst du mir den classname von dem messer geben?')?.answer)
+      .toContain('CombatKnife');
+  });
+
+  test('kurze, aber vollstaendig bekannte deutsche Kategoriewoerter (<4 Zeichen) loesen ebenfalls auf', () => {
+    // Zweiter, waehrend derselben Untersuchung gefundener Bug: die
+    // Kurzfragment-Untergrenze (< 4 Zeichen) in fullIndexCandidates() blockte
+    // auch vollstaendige, in TYPE_SYNONYMS kuratierte deutsche Woerter wie
+    // "Axt" (3 Zeichen), bevor deren Uebersetzung ("axe") ueberhaupt gegen den
+    // Index gepruft wurde - unabhaengig von jedem Fuellwort-Problem.
+    const answer = answerDayz129CatalogQuestion('classname axt');
+    expect(answer?.answer).toContain('WoodAxe');
+    expect(answer?.answer).toContain('FirefighterAxe');
+  });
+
+  test('die neuen "geben"-Fuellwoerter aendern das bewusste Fail-Closed-Verhalten fuer AK nicht', () => {
+    const answer = answerDayz129CatalogQuestion('kannst du mir den classname für AK geben?');
+    expect(answer?.answer).toContain('keinen eindeutig passenden Classname');
+  });
 });
