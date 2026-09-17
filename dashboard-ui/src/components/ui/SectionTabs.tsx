@@ -42,7 +42,10 @@ export function SectionTabs<T extends string>({
               {Icon && <Icon className={`h-4 w-4 ${active ? 'text-accent' : 'text-muted group-hover:text-white'}`} />}
               <span>{item.label}</span>
               {item.badge && (
-                <span className={`rounded-md border px-1.5 py-0.5 text-[10px] ${active ? 'border-accent/25 bg-accent/10 text-accent' : 'border-border/60 text-muted'}`}>
+                <span
+                  data-section-badge
+                  className={`rounded-md border px-1.5 py-0.5 text-[10px] ${active ? 'border-accent/25 bg-accent/10 text-accent' : 'border-border/60 text-muted'}`}
+                >
                   {item.badge}
                 </span>
               )}
