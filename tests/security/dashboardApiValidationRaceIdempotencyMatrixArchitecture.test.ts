@@ -20,13 +20,15 @@ describe('Stage 38 API validation / race / idempotency matrix', () => {
     expect(matrix.cases.length).toBeGreaterThanOrEqual(8);
   });
 
-  it('mounts idempotency after auth and fail-closes store lookup', () => {
+  it('mounts idempotency after auth and fail-closes unverified or ambiguous claims', () => {
     expect(v2).toContain('v2Router.use(requireAuth)');
     expect(v2).toContain('v2Router.use(idempotency)');
     expect(v2.indexOf('v2Router.use(idempotency)')).toBeGreaterThan(v2.indexOf('v2Router.use(requireAuth)'));
     expect(mw).toContain('X-Idempotency-Key 8..128');
     expect(mw).toContain('hashBody');
-    expect(mw).toContain('STALE_PROCESSING_MS');
+    expect(mw).not.toContain('STALE_PROCESSING_MS');
+    expect(mw).toContain("if (existing.status === 'PROCESSING')");
+    expect(mw).toContain("code: 'IDEMPOTENCY_OUTCOME_UNKNOWN'");
     expect(mw).toContain('updateMany');
     expect(mw).toContain('IDEMPOTENCY_STORE_UNAVAILABLE');
     expect(mw).toContain("res.status(503)");
