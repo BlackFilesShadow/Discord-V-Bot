@@ -26,14 +26,14 @@ export interface CommandClassification {
  * nur eine oberflaechliche Namensaehnlichkeit zur jeweiligen Dashboard-Sektion.
  * `ticket` verwechselte zusaetzlich zwei unterschiedliche Datenmodelle
  * (Owner-Kontakt-`Ticket` des Slash-Commands vs. `TicketTemplate`/`TicketInstance`
- * im Dashboard). Verifiziert und hier belassen: `factions`/`balance`/`bank`
+ * im Dashboard). Verifiziert und hier belassen: `factions`/`balance`
  * (identische Lesefunktion auf beiden Seiten) und `black-market` (beide Seiten
  * rufen dieselbe `buyInventorylessMarketListing()` auf). `casino-stats` bleibt,
  * weil eine eigene (wenn auch separat geschriebene) Aggregat-Statistik-Ansicht
  * im Dashboard existiert.
  */
 export const DASHBOARD_EXTRA = new Set<string>([
-  'factions', 'balance', 'bank', 'black-market', 'casino-stats',
+  'factions', 'balance', 'black-market', 'casino-stats',
 ]);
 
 const ADMIN_EXTRA_NAMES = new Set<string>([
@@ -68,7 +68,7 @@ export const MOVED_TO_DASHBOARD = new Set<string>([
 export const SPEC_KEEP_COMMANDS = new Set<string>([
   'ai', 'appeal', 'ban', 'kick', 'mute', 'warn', 'case', 'download',
   'register', 'giveaway', 'help', 'leaderboard', 'level', 'poll', 'feedback', 'erinnerung',
-  'search', 'ticket', 'balance', 'bank', 'stell-dich-vor',
+  'search', 'ticket', 'balance', 'stell-dich-vor',
   'blackjack', 'coinflip', 'dice', 'slot', 'roulette', 'highlow', 'baccarat', 'wheel',
   'deposit', 'faction', 'factions', 'fraktionen', 'join', 'leave',
   'link', 'unlink', 'links', 'link-info',
