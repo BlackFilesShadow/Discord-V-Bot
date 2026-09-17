@@ -232,19 +232,3 @@ export const transferCommand: Command = {
     });
   }),
 };
-
-export const bankCommand: Command = {
-  data: slotOption(new SlashCommandBuilder().setName('bank').setDescription('Zeigt Wallet, Bank und Gesamtguthaben.') as SlashCommandBuilder),
-  execute: withGuildScope({ requireSlotToggle: 'economyActive', acceptSlotOption: true }, async (i, scope) => {
-    const connId = scope.nitradoConnId!; const acc = await getAccountOrZero(scope.guildId, connId, scope.actorDiscordId); const cfg = await getConfig(scope.guildId, connId); const total = acc.walletBalance + acc.bankBalance;
-    const e = economyEmbed(Colors.Primary, await guildFooter(scope.guildId, connId))
-      .setDescription(compactDescription(`▣ Bank · <@${i.user.id}>`, [
-        compactQuote([
-          `Cash: **${fmt(acc.walletBalance)} ${cfg.emoji}**`,
-          `Bank: **${fmt(acc.bankBalance)} ${cfg.emoji}**`,
-          `Total: **${fmt(total)} ${cfg.emoji}**`,
-        ]),
-      ]));
-    await embedReply(i, e, false);
-  }),
-};
