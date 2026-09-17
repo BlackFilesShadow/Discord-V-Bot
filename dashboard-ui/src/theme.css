@@ -335,3 +335,43 @@ html[data-theme='obsidian'] .theme-toggle-control:active,
 html[data-theme='ice'] .theme-toggle-control:active {
   transform: scale(.98);
 }
+
+/* Nexus Motion: theme-aware chrome for the server hub. These selectors are
+   intentionally presentation-only and override the generic premium surfaces. */
+html[data-theme='obsidian'] .nexus-header {
+  background:
+    radial-gradient(52% 160% at 18% -30%, rgba(210,43,58,.15), transparent 70%),
+    linear-gradient(90deg, rgba(15,19,25,.97), rgba(11,14,19,.91));
+}
+
+html[data-theme='ice'] .nexus-header {
+  background:
+    radial-gradient(52% 160% at 18% -30%, rgba(125,211,252,.18), transparent 70%),
+    linear-gradient(90deg, rgba(18,43,68,.98), rgba(10,31,53,.93));
+}
+
+html[data-theme='obsidian'] .nexus-server-card,
+html[data-theme='ice'] .nexus-server-card {
+  border-radius: 22px;
+  background:
+    radial-gradient(120% 90% at 50% -24%, rgb(var(--color-accent-dim) / .20), transparent 58%),
+    linear-gradient(145deg, rgba(255,255,255,.05), transparent 35%),
+    rgb(var(--color-bg-card) / .92);
+  border-color: rgb(var(--color-border) / .68);
+  box-shadow:
+    inset 0 1px rgba(255,255,255,.07),
+    0 30px 64px -44px rgba(0,0,0,.92),
+    0 18px 52px -42px rgb(var(--color-accent) / .32);
+}
+
+html[data-theme='obsidian'] .nexus-server-card::before,
+html[data-theme='ice'] .nexus-server-card::before {
+  background: linear-gradient(120deg, rgb(var(--color-accent-hover) / .48), rgb(var(--color-accent-dim) / .18) 28%, rgba(255,255,255,.04) 54%, transparent 78%);
+}
+
+@media (max-width: 639px) {
+  html[data-theme='obsidian'] .nexus-server-card,
+  html[data-theme='ice'] .nexus-server-card {
+    border-radius: 18px;
+  }
+}

@@ -89,7 +89,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
 
   return (
     <div className="dashboard-shell min-h-full flex flex-col" data-dashboard-theme={theme}>
-      <header className="sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-3 sm:px-6">
+      <header className="nexus-header sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-3 sm:px-6">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {sidebar && (
             <button
@@ -110,18 +110,15 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
               <span className="text-sm hidden sm:inline">Zurueck</span>
             </Link>
           )}
-          <Link to="/servers" className="flex min-h-11 md:min-h-0 items-center gap-2 focus-ring rounded-md px-1 group shrink-0" aria-label="V-Bot">
-            <span className="relative inline-flex h-2.5 w-2.5">
-              <span
-                className="absolute inline-flex h-full w-full rounded-full bg-accent opacity-60 group-hover:opacity-100"
-                style={{ animation: 'pulse-ring 2s cubic-bezier(0,0,0.2,1) infinite' }}
-              />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent shadow-[0_0_10px_rgba(var(--color-accent),0.65)]" />
+          <Link to="/servers" className="nexus-brand flex min-h-11 md:min-h-0 items-center gap-2.5 focus-ring rounded-xl px-1 group shrink-0" aria-label="V-Bot">
+            <span className="nexus-brand-mark" aria-hidden="true">VB</span>
+            <span className="nexus-brand-copy">
+              <span className="text-white font-semibold tracking-tight">V-Bot</span>
+              <small className="hidden lg:block">Discord Control</small>
             </span>
-            <span className="v-logo font-extrabold text-xl tracking-tight">V-Bot</span>
           </Link>
           <span className="text-white/15 hidden sm:inline">•</span>
-          <span className="text-white/85 text-sm font-medium truncate hidden sm:inline">{title}</span>
+          <span className="nexus-shell-title text-white/85 text-sm font-medium truncate hidden sm:inline">{title}</span>
         </div>
 
         <div className="flex items-center gap-0.5 sm:gap-2 text-sm shrink-0">
@@ -172,8 +169,9 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
           </Tooltip>
 
           {user && (
-            <span className="text-muted hidden lg:inline truncate max-w-[140px]" title={user.username}>
-              {user.username}
+            <span className="nexus-user-chip hidden lg:inline-flex" title={user.username}>
+              <span aria-hidden="true">{user.username.charAt(0).toUpperCase()}</span>
+              <span className="truncate max-w-[120px]">{user.username}</span>
             </span>
           )}
           <Tooltip content="Logout">
