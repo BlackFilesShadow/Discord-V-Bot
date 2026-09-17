@@ -294,8 +294,8 @@ describe('stage 24 dashboard button matrix architecture', () => {
       "['radar', 'Zonenradar', MapPinned]",
     ];
     for (const entry of entries) expect(source).toContain(entry);
-    expect(architecture).toContain("content: 'PAGE 2';");
-    expect(architecture).not.toContain("content: 'PAGE 1';");
+    expect(architecture).toContain("content: 'PAGE 2 · NITRADO-SLOT-EBENE';");
+    expect(architecture).toContain("content: 'PAGE 1 · SERVER-/GUILD-EBENE';");
     expect(architecture).toContain("nav[aria-label='Slot-Funktionen']");
     expect(source).toContain("tab === 'virtual-accounts'");
     expect((source.match(/<VirtualAccountsPanel /g) ?? []).length).toBe(1);
