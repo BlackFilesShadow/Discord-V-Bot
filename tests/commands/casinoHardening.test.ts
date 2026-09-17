@@ -89,37 +89,24 @@ describe('casino V3 hardening contracts', () => {
     expect(casino).toContain('await i.editReply({');
   });
 
-  it('stores immutable V3 rules and verifies the complete stored round rather than payout alone', () => {
+  it('keeps immutable V3 audit data internal while removing the public verifier and audit footer', () => {
     const casino = read('src/commands/dashboard/casino.ts');
+    const help = read('src/commands/user/help.ts');
+    const inventory = read('src/commands/inventory.ts');
     expect(casino).not.toContain('SELECT COUNT(*)::bigint AS "count" FROM "CasinoRound"');
     expect(casino).toContain('randomNonce()');
     expect(casino).toContain('CASINO_ALGORITHM_VERSION');
     expect(casino).toContain('payoutMultMilli');
-    expect(casino).toContain(".setName('casino-verify')");
-    expect(casino).toContain("kind: 'invalid'");
-    expect(casino).toContain('Audit-Snapshot ungueltig');
-    expect(casino).toContain('betBoundsMatch');
-    expect(casino).toContain('storedEmbeddedPayout');
-    expect(casino).toContain('storedDetails');
-    expect(casino).toContain('embeddedPayoutMatches');
-    expect(casino).toContain('detailsMatch = isDeepStrictEqual');
-    expect(casino).toContain('verified, hashMatches, payoutMatches, embeddedPayoutMatches, outcomeMatches, detailsMatch, betBoundsMatch');
-  });
-
-  it('reports legacy SLOT rounds without a captured win chance as unverifiable instead of falsely failed', () => {
-    // resolveLegacyV2Game's SLOT branch is the only legacy game type whose outcome depends on
-    // winChancePct (COINFLIP/DICE/BLACKJACK are seed-deterministic); a legacy SLOT round with no
-    // captured winChancePct can never replay-verify a real historical win, so it must be routed
-    // to the same honest "cannot verify" response as a missing snapshot instead of a false
-    // "NICHT verifiziert" (tampering-looking) failure.
-    const casino = read('src/commands/dashboard/casino.ts');
-    const legacyCheckIndex = casino.indexOf(
-      "snapshot.algorithmVersion === LEGACY_CASINO_ALGORITHM_VERSION && snapshot.type === 'SLOT' && snapshot.winChancePct === null",
-    );
-    const replayIndex = casino.indexOf('let replay: PlayResult;');
-    expect(legacyCheckIndex).toBeGreaterThan(-1);
-    expect(replayIndex).toBeGreaterThan(legacyCheckIndex);
-    expect(casino).toContain('stammt aus der Zeit vor der Gewinnchance-Erfassung');
+    expect(casino).toContain('serverSeedHash: seedHashFull(serverSeed)');
+    expect(casino).toContain('serverSeed, args.clientSeed, nonce');
+    expect(casino).not.toContain(".setName('casino-verify')");
+    expect(casino).not.toContain('casinoVerifyCommand');
+    expect(casino).not.toContain('Runden-Audit');
+    expect(casino).not.toContain('serverSeedHash: seedHash(out.serverSeed)');
+    expect(casino).not.toContain('nonce: out.nonce');
+    expect(help).not.toContain("'casino-verify'");
+    expect(inventory).not.toContain("'casino-stats', 'casino-verify'");
+    expect(inventory).toContain("'autorole', 'casino-verify'");
   });
 
   it('rounds the displayed win-rate to the nearest hundredth instead of truncating', () => {
