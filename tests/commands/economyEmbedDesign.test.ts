@@ -34,7 +34,7 @@ describe('Economy embed presentation contract', () => {
     const pay = block('export const payCommand', 'export const adminPayCommand');
     const deposit = block('export const depositCommand', 'export const withdrawCommand');
     const withdraw = block('export const withdrawCommand', 'export const transferCommand');
-    const transfer = block('export const transferCommand', 'export const bankCommand');
+    const transfer = source.slice(source.indexOf('export const transferCommand'));
 
     expect(pay).toContain('fromUserId: scope.actorDiscordId');
     expect(pay).toContain('toUserId: asUserDiscordId(target.id)');
@@ -48,10 +48,9 @@ describe('Economy embed presentation contract', () => {
     expect(transfer).toContain('amount });');
   });
 
-  it('uses the configured currency and the compact bank/reference structure', () => {
+  it('uses the configured currency and keeps /bank removed', () => {
     const deposit = block('export const depositCommand', 'export const withdrawCommand');
     const withdraw = block('export const withdrawCommand', 'export const transferCommand');
-    const bank = source.slice(source.indexOf('export const bankCommand'));
 
     expect(source).not.toContain('`${fmt(amount)} $`');
     expect(deposit).toContain('Eingezahlt: **${fmt(amount)} ${cfg.emoji}**');
@@ -60,6 +59,7 @@ describe('Economy embed presentation contract', () => {
     expect(withdraw).toContain('Abgehoben: **${fmt(amount)} ${cfg.emoji}**');
     expect(withdraw).toContain('Cash: **${fmt(acc.walletBalance)} ${cfg.emoji}**');
     expect(withdraw).toContain('Bank: **${fmt(acc.bankBalance)} ${cfg.emoji}**');
-    expect(bank).toContain('compactDescription(`▣ Bank · <@${i.user.id}>`');
+    expect(source).not.toContain("setName('bank')");
+    expect(source).not.toContain('export const bankCommand');
   });
 });

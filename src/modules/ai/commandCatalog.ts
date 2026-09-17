@@ -74,7 +74,6 @@ export const PUBLIC_COMMAND_CATALOG: PublicCommandDoc[] = [
   { name: '/link', short: 'Verknuepft die DayZ-Spielidentitaet.', details: 'Bei mehreren Gameservern wird ein Slot ausgewaehlt.' },
   { name: '/unlink', short: 'Entfernt die eigene DayZ-Verknuepfung.', details: 'Servergescopet.' },
   { name: '/balance', short: 'Zeigt Wallet, Bank und Transaktionen.', details: 'Economy-Daten sind Guild- und Gameserver-Slot-getrennt.' },
-  { name: '/bank', short: 'Zeigt Wallet, Bank und Gesamtguthaben.', details: 'Aktiver Gameserver-Slot.' },
   { name: '/pay', short: 'Sendet Coins aus der Wallet.', details: 'Bleibt im selben Gameserver-Scope.' },
   { name: '/deposit', short: 'Verschiebt Wallet-Coins auf die Bank.', details: 'Servergescopet.' },
   { name: '/withdraw', short: 'Verschiebt Bank-Coins in die Wallet.', details: 'Servergescopet.' },
