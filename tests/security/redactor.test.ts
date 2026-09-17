@@ -49,6 +49,40 @@ describe('redactor.redactText', () => {
     expect(out).not.toContain('Phoenix-Server');
     expect(out).toContain(PLACEHOLDER.server);
   });
+
+  // Regression: ein Mod-Server-Classname (nicht im Vanilla-1.29-Katalog,
+  // >=20 Zeichen, enthaelt "_") wurde bisher wie eine GUID/Console-ID
+  // maskiert, obwohl er ein bereits vom Aufrufer verifizierter, sicherer
+  // Identifier ist (z.B. Subject aus einem Hallucination-Guard-Bundle). Ohne
+  // Schutz saehe das Modell im Prompt nur "[GUID]" statt des echten Namens,
+  // waehrend die spaetere Guard-Pruefung weiter gegen den echten Namen prueft.
+  test('maskiert einen langen, nicht-vanilla Mod-Classname standardmaessig als GUID', () => {
+    const modClassname = 'MyCustomModItem_LongVariant';
+    const out = redactText(`Der Nominal-Wert von ${modClassname} liegt bei 50.`);
+    expect(out).not.toContain(modClassname);
+    expect(out).toContain(PLACEHOLDER.guid);
+  });
+
+  test('schuetzt einen verifizierten Mod-Classname via protectedIdentifiers vor GUID-Maskierung', () => {
+    const modClassname = 'MyCustomModItem_LongVariant';
+    const out = redactText(`Der Nominal-Wert von ${modClassname} liegt bei 50.`, {
+      protectedIdentifiers: [modClassname],
+    });
+    expect(out).toContain(modClassname);
+    expect(out).not.toContain(PLACEHOLDER.guid);
+  });
+
+  test('protectedIdentifiers schuetzt alle Vorkommen und laesst echte Geheimnisse weiter maskiert', () => {
+    const modClassname = 'AnotherCustomModItem_Variant';
+    const guid = 'a'.repeat(32);
+    const out = redactText(
+      `${modClassname} und ${modClassname} nochmal. GUID: ${guid}`,
+      { protectedIdentifiers: [modClassname] },
+    );
+    expect(out.match(new RegExp(modClassname, 'g'))).toHaveLength(2);
+    expect(out).not.toContain(guid);
+    expect(out).toContain(PLACEHOLDER.guid);
+  });
 });
 
 describe('redactor.isSensitiveKey', () => {

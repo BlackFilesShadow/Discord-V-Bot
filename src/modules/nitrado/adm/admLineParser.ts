@@ -323,7 +323,13 @@ export function parsePvpHitDetails(rawLine: string): PvpHitDetails | null {
   if (!match) return null;
   const damage = Number(match[3]);
   if (!Number.isFinite(damage)) return null;
-  const weapon = match[5]?.trim().replace(/[.\s]+$/, '') || null;
+  // Wie bei extractWeapon(): eine "hit by"-Zeile fuer Fernkampfwaffen endet mit
+  // "with <WAFFE> from <DISTANZ> meters" - ohne dieses Stripping haengt der
+  // Distanz-Teil am Waffennamen (z.B. "LAR from 245.3 meters" statt "LAR").
+  const weapon = match[5]
+    ?.replace(/\s+from\s+[\d.]+\s*m(?:eters?)?\s*$/i, '')
+    .trim()
+    .replace(/[.\s]+$/, '') || null;
   return {
     bodyPart: match[2],
     damage,

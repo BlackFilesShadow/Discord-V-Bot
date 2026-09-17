@@ -48,7 +48,24 @@ export function redactText(input: string, opts: RedactOptions = {}): string {
     return `§DZ${index}§`;
   };
 
-  const withProtectedCfgKeys = input.replace(CFG_ASSIGNMENT_KEY_RE, (value) => {
+  // Vom Aufrufer bereits verifizierte Identifier (z.B. Subjects/Identifier
+  // aus einem scope-geprueften Hallucination-Guard-Bundle) zuerst schuetzen -
+  // unabhaengig vom Vanilla-Katalog. Sonst maskiert die GUID-/Console-ID-
+  // Heuristik unten jeden modifizierten/nicht-vanilla Classname (>=20 Zeichen,
+  // enthaelt "_"/"-") zu "[GUID]", obwohl der Guard selbst spaeter noch gegen
+  // den echten, ungeschwaerzten Wert prueft - das Modell saehe dann nie den
+  // echten Namen. Laengste zuerst, damit ein kuerzerer Identifier keinen
+  // laengeren, ihn enthaltenden Identifier vorzeitig zerschneidet.
+  let withProtectedIdentifiers = input;
+  const sortedProtected = [...(opts.protectedIdentifiers ?? [])]
+    .filter((id) => id && id.length >= 3)
+    .sort((a, b) => b.length - a.length);
+  for (const id of sortedProtected) {
+    if (!withProtectedIdentifiers.includes(id)) continue;
+    withProtectedIdentifiers = withProtectedIdentifiers.split(id).join(protect(id));
+  }
+
+  const withProtectedCfgKeys = withProtectedIdentifiers.replace(CFG_ASSIGNMENT_KEY_RE, (value) => {
     if (!SAFE_DAYZ_CFG_ASSIGNMENT_KEYS.has(value.toLowerCase())) return value;
     return protect(value);
   });
