@@ -103,6 +103,41 @@ describe('Gameplay-Feed Embed', () => {
   });
 });
 
+function flagView(): GameplayFeedView {
+  return {
+    eventId: 'flag-event-id',
+    kind: 'FLAG',
+    category: 'RAISED',
+    eventType: 'FLAG_RAISED',
+    occurredAt: new Date('2026-08-16T04:00:00.000Z'),
+    actorName: 'Flagger',
+    targetName: null,
+    objectType: 'TerritoryFlag',
+    toolOrWeapon: null,
+    distanceMeters: null,
+    // Innerhalb ein und derselben FLAG_RAISED/FLAG_LOWERED-ADM-Zeile
+    // (PluginAdminLog-Territory-Aktion) verwenden sowohl die eigene
+    // "pos=<...>" des Spielers als auch das Flaggen-Ziel "at <...>"
+    // dieselbe Reihenfolge X, Hoehe, Z - bestaetigt durch reale Rohzeilen
+    // in tests/gameplay/flagActivityFeeds.test.ts und
+    // tests/modules/radarCatalog.test.ts. Das unterscheidet sich von der
+    // generischen Spieler-Position in Kill/Death/Hit-Zeilen (X, Z, Hoehe),
+    // ist aber fuer Flag-Zeilen selbst korrekt - beide Felder hier bewusst
+    // gleich, damit eine faelschliche Vereinheitlichung auf die generische
+    // Reihenfolge sofort auffaellt.
+    actorPosition: '10, 20, 30',
+    targetPosition: '10, 20, 30',
+  };
+}
+
+it('wendet fuer Spieler-Position und Flaggen-Ziel innerhalb einer FLAG-Zeile dieselbe ADM-Vektor-Reihenfolge X,Hoehe,Z an', () => {
+  const embed = buildGameplayFeedEmbed(flagView(), '#2563eb', 'Flag Server').toJSON();
+  const description = embed.description ?? '';
+
+  expect(description).toContain('**Spieler-Position**\nX: 10 • Z: 30\nHöhe: 20');
+  expect(description).toContain('**Flaggen-Position**\nX: 10 • Z: 30\nHöhe: 20');
+});
+
 it('zeigt nur durch ADM belegte Fernkampf-Trefferdetails auf Deutsch', () => {
   const view = pvpView();
   view.pvpHit = { bodyPart: 'Head', damage: 48.5, damageType: 'FirearmHit_Rifle', weapon: 'M4-A1' };

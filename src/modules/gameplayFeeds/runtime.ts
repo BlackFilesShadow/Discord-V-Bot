@@ -392,7 +392,14 @@ async function loadPvpHitDetails(config: GameplayFeedConfig, event: GameplayAdmE
       occurredAt: { gte: new Date(event.occurredAt.getTime() - 5_000), lte: event.occurredAt },
     },
     select: { rawLine: true },
-    orderBy: { occurredAt: 'desc' },
+    // ADM-Zeitstempel haben nur 1-Sekunden-Aufloesung: bei mehreren Treffern
+    // innerhalb derselben Sekunde (z.B. automatisches Feuer) war die
+    // Auswahl per "occurredAt: desc" allein nicht deterministisch, sodass
+    // gelegentlich ein falscher (nicht-toedlicher) Treffer mit falschem
+    // Koerperteil/Schaden/Waffe dem Kill zugeordnet werden konnte.
+    // sourceByteStart spiegelt die exakte Schreibreihenfolge innerhalb der
+    // ADM-Datei wider und macht die Auswahl deterministisch.
+    orderBy: [{ occurredAt: 'desc' }, { sourceByteStart: 'desc' }],
   });
   return hit ? parsePvpHitDetails(hit.rawLine) : null;
 }
