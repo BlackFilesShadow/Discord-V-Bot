@@ -38,13 +38,16 @@ describe('Economy-1L dashboard mutation idempotency retry architecture', () => {
     expect(clientSource).toContain("'X-Idempotency-Key': createIdempotencyKey()");
   });
 
-  it('reclaims stale or expired server claims with compare-and-swap instead of unconditional update', () => {
+  it('reclaims only expired final results with compare-and-swap and never replays PROCESSING claims', () => {
     expect(middlewareSource).toContain('const takeover = await prisma.idempotencyKey.updateMany({');
     expect(middlewareSource).toContain('status: existing.status');
     expect(middlewareSource).toContain('createdAt: existing.createdAt');
     expect(middlewareSource).toContain('if (takeover.count !== 1)');
+    expect(middlewareSource).toContain("if (existing.status === 'PROCESSING')");
+    expect(middlewareSource).toContain("code: 'IDEMPOTENCY_OUTCOME_UNKNOWN'");
+    expect(middlewareSource).not.toContain('STALE_PROCESSING_MS');
 
-    const recoveryComment = middlewareSource.indexOf('Compare-and-Swap uebernehmen');
+    const recoveryComment = middlewareSource.indexOf('Ein abgelaufener, bereits finaler DONE-Eintrag');
     const unconditionalUpdate = middlewareSource.indexOf('await prisma.idempotencyKey.update({', recoveryComment);
     const responseFinalize = middlewareSource.indexOf('// Antwort erfassen und den Claim beim Response-Ende finalisieren.');
     expect(recoveryComment).toBeGreaterThanOrEqual(0);

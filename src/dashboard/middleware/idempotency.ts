@@ -13,14 +13,16 @@
  *  -> verhindert dass derselbe Key fuer verschiedene Routen / Bodies kollidiert.
  */
 import type { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
 import crypto from 'crypto';
 import prisma from '../../database/prisma';
 import { logger } from '../../utils/logger';
 
 const TTL_MS = 60 * 60 * 1000;
-// Ein PROCESSING-Claim aelter als dies gilt als verwaist (Crash) und darf
-// von einem neuen Request uebernommen werden.
-const STALE_PROCESSING_MS = 2 * 60 * 1000;
+
+function isUniqueClaimCollision(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 'P2002';
+}
 
 function hashBody(body: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(body ?? '')).digest('hex');
@@ -46,9 +48,18 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
       data: { hash, status: 'PROCESSING', expiresAt: new Date(now + TTL_MS) },
     });
     owns = true;
-  } catch {
-    // Claim existiert bereits -> gecachtes Ergebnis, laufende Verarbeitung
-    // oder verwaister Claim.
+  } catch (error) {
+    // Nur eine echte Unique-Kollision beweist einen bereits vorhandenen Claim.
+    // Bei jedem anderen Store-Fehler duerfen wir den Handler nicht ohne Claim
+    // ausfuehren: sein Ergebnis koennte sonst eine Doppelaktion sein.
+    if (!isUniqueClaimCollision(error)) {
+      logger.warn('Idempotency-Claim-Fehler:', error instanceof Error ? error.message : String(error));
+      res.status(503).json({ error: 'Idempotency-Store nicht erreichbar.', code: 'IDEMPOTENCY_STORE_UNAVAILABLE' });
+      return;
+    }
+
+    // Claim existiert bereits -> gecachtes Ergebnis oder laufende/unklare
+    // Verarbeitung.
     let existing: {
       status: 'PROCESSING' | 'DONE';
       responseStatus: number | null;
@@ -66,21 +77,35 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
       res.status(503).json({ error: 'Idempotency-Store nicht erreichbar.', code: 'IDEMPOTENCY_STORE_UNAVAILABLE' });
       return;
     }
-    if (!existing) { next(); return; }
-    if (existing.status === 'DONE' && existing.responseStatus != null && existing.expiresAt > new Date()) {
-      res.status(existing.responseStatus).json(existing.responseBody);
+    if (!existing) {
+      // P2002 ohne lesbaren Claim ist kein sicherer Freigabebeweis.
+      res.status(503).json({ error: 'Idempotency-Claim konnte nicht verifiziert werden.', code: 'IDEMPOTENCY_STORE_UNAVAILABLE' });
       return;
     }
-    const stale = existing.status === 'PROCESSING' && existing.createdAt.getTime() < now - STALE_PROCESSING_MS;
-    if (existing.status === 'PROCESSING' && !stale) {
-      res.status(409).json({ error: 'Anfrage wird bereits verarbeitet.' });
+    if (existing.status === 'DONE' && existing.responseStatus != null && existing.expiresAt > new Date()) {
+      if (existing.responseBody === null) {
+        res.status(existing.responseStatus).end();
+      } else {
+        res.status(existing.responseStatus).json(existing.responseBody);
+      }
       return;
     }
 
-    // Verwaister PROCESSING-Claim oder abgelaufener DONE-Eintrag -> atomar per
-    // Compare-and-Swap uebernehmen. Status + createdAt bilden die beobachtete
-    // Version. Hat ein paralleler Recovery-Request sie bereits geaendert,
-    // bekommt nur dieser erste Request Besitz; alle weiteren erhalten 409.
+    // Ein PROCESSING-Claim kann nach einem Prozessabbruch bereits eine externe
+    // Aktion ausgefuehrt haben, deren DONE-Finalisierung nicht mehr gelang.
+    // Ohne transaktionales Outbox-Protokoll ist das Ergebnis nicht beweisbar;
+    // deshalb niemals automatisch erneut ausfuehren.
+    if (existing.status === 'PROCESSING') {
+      res.status(409).json({
+        error: 'Anfrage wird bereits verarbeitet oder ihr Ergebnis ist unklar.',
+        code: 'IDEMPOTENCY_OUTCOME_UNKNOWN',
+      });
+      return;
+    }
+
+    // Ein abgelaufener, bereits finaler DONE-Eintrag darf atomar erneuert
+    // werden. Status + createdAt bilden die beobachtete Version. Hat ein
+    // paralleler Request ihn bereits erneuert, bekommt nur dieser Besitz.
     try {
       // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
       const takeover = await prisma.idempotencyKey.updateMany({
@@ -110,7 +135,9 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
 
   if (!owns) { next(); return; }
 
-  // Antwort erfassen und den Claim beim Response-Ende finalisieren.
+  // Antwort erfassen und den Claim beim Response-Ende finalisieren. Auch 204,
+  // res.end() und Stream-/Attachment-Antworten werden als abgeschlossener
+  // Erfolg gespeichert (mit leerem Replay-Body), nie als Retry freigegeben.
   let capturedBody: unknown;
   let captured = false;
   const originalJson = res.json.bind(res);
@@ -121,12 +148,21 @@ export async function idempotency(req: Request, res: Response, next: NextFunctio
   };
   res.on('finish', () => {
     const status = res.statusCode;
-    if (captured && status >= 200 && status < 300) {
+    if (status >= 200 && status < 300) {
       // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben
       prisma.idempotencyKey.update({
         where: { hash },
-        data: { status: 'DONE', responseBody: (capturedBody ?? null) as object, responseStatus: status, expiresAt: new Date(Date.now() + TTL_MS) },
-      }).catch((err: unknown) => logger.warn('Idempotency-Persist-Fehler:', err instanceof Error ? err.message : String(err)));
+        data: {
+          status: 'DONE',
+          // Prisma unterscheidet bei Nullable-JSON explizit Datenbank-NULL
+          // von JSON-NULL. Fuer Antworten ohne JSON-Body speichern wir NULL.
+          responseBody: captured && capturedBody !== undefined
+            ? capturedBody as Prisma.InputJsonValue
+            : Prisma.DbNull,
+          responseStatus: status,
+          expiresAt: new Date(Date.now() + TTL_MS),
+        },
+      }).catch((err: unknown) => logger.error('Idempotency-Finalisierung fehlgeschlagen; Claim bleibt fail-closed:', err instanceof Error ? err.message : String(err)));
     } else {
       // Nicht-2xx oder keine JSON-Antwort -> Claim freigeben (Retry moeglich).
       // eslint-disable-next-line local/no-unscoped-prisma-query -- global, siehe oben

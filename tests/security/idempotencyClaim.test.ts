@@ -88,6 +88,10 @@ function makeApp() {
     handlerCalls += 1;
     res.status(500).json({ error: 'boom' });
   });
+  app.delete('/empty', idempotency, (_req, res) => {
+    handlerCalls += 1;
+    res.status(204).end();
+  });
   return app;
 }
 
@@ -164,6 +168,19 @@ describe('F-004 — atomare Idempotenz', () => {
     expect(handlerCalls).toBe(0);
   });
 
+  it('fail-closes when claim creation fails for a reason other than a unique collision', async () => {
+    const app = makeApp();
+    const unavailable = Object.assign(new Error('connection refused'), { code: 'P1001' });
+    prismaMock.idempotencyKey.create.mockRejectedValueOnce(unavailable);
+
+    const res = await request(app).post('/action').set('X-Idempotency-Key', KEY).send({ x: 1 });
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('IDEMPOTENCY_STORE_UNAVAILABLE');
+    expect(handlerCalls).toBe(0);
+    expect(prismaMock.idempotencyKey.findUnique).not.toHaveBeenCalled();
+  });
+
   it('passes through without key and never touches claim store', async () => {
     const app = makeApp();
     const res = await request(app).post('/action').send({ x: 1 });
@@ -206,7 +223,7 @@ describe('F-004 — atomare Idempotenz', () => {
     expect(handlerCalls).toBe(2);
   });
 
-  it('laesst bei zwei parallelen Recovery-Requests fuer einen stale PROCESSING-Claim nur einen Handler laufen', async () => {
+  it('laesst einen alten PROCESSING-Claim fail-closed statt die Aktion erneut auszufuehren', async () => {
     const body = { x: 1 };
     const hash = requestHash('/action', body);
     store.set(hash, {
@@ -219,15 +236,11 @@ describe('F-004 — atomare Idempotenz', () => {
     });
 
     const app = makeApp();
-    const [a, b] = await Promise.all([
-      request(app).post('/action').set('X-Idempotency-Key', KEY).send(body),
-      request(app).post('/action').set('X-Idempotency-Key', KEY).send(body),
-    ]);
+    const replay = await request(app).post('/action').set('X-Idempotency-Key', KEY).send(body);
 
-    expect(handlerCalls).toBe(1);
-    expect([200, 409]).toContain(a.status);
-    expect([200, 409]).toContain(b.status);
-    expect(a.status === 200 || b.status === 200).toBe(true);
+    expect(replay.status).toBe(409);
+    expect(replay.body.code).toBe('IDEMPOTENCY_OUTCOME_UNKNOWN');
+    expect(handlerCalls).toBe(0);
   });
 
   it('laesst bei zwei parallelen Recovery-Requests fuer einen abgelaufenen DONE-Claim nur einen Handler laufen', async () => {
@@ -252,5 +265,34 @@ describe('F-004 — atomare Idempotenz', () => {
     expect([200, 409]).toContain(a.status);
     expect([200, 409]).toContain(b.status);
     expect(a.status === 200 || b.status === 200).toBe(true);
+  });
+
+  it('speichert einen erfolgreichen 204-Response und fuehrt denselben Delete nicht erneut aus', async () => {
+    const app = makeApp();
+    const first = await request(app).delete('/empty').set('X-Idempotency-Key', KEY).send({ x: 1 });
+    const second = await request(app).delete('/empty').set('X-Idempotency-Key', KEY).send({ x: 1 });
+
+    expect(first.status).toBe(204);
+    expect(second.status).toBe(204);
+    expect(handlerCalls).toBe(1);
+  });
+
+  it('blockiert den Retry nach fehlgeschlagener DONE-Finalisierung auch nach dem alten Stale-Fenster', async () => {
+    const app = makeApp();
+    const body = { x: 1 };
+    prismaMock.idempotencyKey.update.mockRejectedValueOnce(new Error('finalize unavailable'));
+
+    const first = await request(app).post('/action').set('X-Idempotency-Key', KEY).send(body);
+    expect(first.status).toBe(200);
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    const hash = requestHash('/action', body);
+    const row = store.get(hash)!;
+    row.createdAt = new Date(Date.now() - 3 * 60 * 1000);
+
+    const retry = await request(app).post('/action').set('X-Idempotency-Key', KEY).send(body);
+    expect(retry.status).toBe(409);
+    expect(retry.body.code).toBe('IDEMPOTENCY_OUTCOME_UNKNOWN');
+    expect(handlerCalls).toBe(1);
   });
 });
