@@ -13,6 +13,7 @@ import { PinnedToolsProvider } from './lib/pinnedTools';
 import { RecentActionsProvider } from './lib/recentActions';
 import './index.css';
 import './theme.css';
+import './vivid-theme.css';
 import './botAdmin.mobile.css';
 
 const qc = new QueryClient({
