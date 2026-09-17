@@ -1,9 +1,9 @@
-import type { ComponentType } from 'react';
+import type { LucideIcon } from 'lucide-react';
 
 export interface SectionTabItem<T extends string> {
   key: T;
   label: string;
-  icon?: ComponentType<{ className?: string }>;
+  icon?: LucideIcon;
   badge?: string;
 }
 
