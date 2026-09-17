@@ -125,6 +125,10 @@ async function openWelcome(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Willkommen', exact: true }).click();
 }
 
+function lifecycleNavigation(page: Page) {
+  return page.getByRole('navigation', { name: 'Willkommen-Funktionen' });
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -141,6 +145,7 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     await expect(page.getByText(`Discord-Channel ${CHANNEL_ID}`).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Speichern', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: /Test senden/ })).toHaveCount(0);
+    await expect(lifecycleNavigation(page)).toHaveCount(0);
 
     expect(state.manageLookups).toEqual([]);
     expect(state.mutations).toEqual([]);
@@ -156,24 +161,33 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     expect(state.mutations).toEqual([]);
   });
 
-  test('welcome.manage zeigt den Cleanup im Goodbye-Bereich sichtbar, ohne Vollzugriff zu erteilen', async ({ page }) => {
+  test('welcome.manage trennt Welcome, Bye Bye und Cleanup ohne Vollzugriff zu erteilen', async ({ page }) => {
     const state = await stubLifecycle(page, ['welcome.view', 'welcome.manage']);
     await openWelcome(page);
 
+    const nav = lifecycleNavigation(page);
+    await expect(nav).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Willkommen', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toHaveCount(0);
+    await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Speichern', exact: true }).click();
+    await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/welcome/config`)).toBe(true);
+
+    await nav.getByRole('button', { name: 'Bye Bye', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Abschied / Goodbye' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Willkommen', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Bye Bye aktivieren', exact: true }).click();
+    await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/goodbye/config`)).toBe(true);
+    const goodbyeMutation = state.mutations.find(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/goodbye/config`);
+    expect(goodbyeMutation?.body).toEqual({ enabled: true, channelId: CHANNEL_ID });
+
+    await nav.getByRole('button', { name: 'Cleanup', exact: true }).click();
     await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toBeVisible();
     await expect(page.getByText('Spieler-Cleanup', { exact: true })).toBeVisible();
     await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toContainText('Discord-Server-Owner');
     await expect(page.getByTestId('goodbye-leave-cleanup-owner-only')).toContainText('dashboard.access');
     await expect(page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' })).toHaveCount(0);
-
-    await page.getByRole('button', { name: 'Speichern', exact: true }).click();
-    await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/welcome/config`)).toBe(true);
-    await page.getByRole('button', { name: 'Bye Bye aktivieren', exact: true }).click();
-    await expect.poll(() => state.mutations.some(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/goodbye/config`)).toBe(true);
-    const goodbyeMutation = state.mutations.find(m => m.method === 'POST' && m.path === `/api/v2/guilds/${GUILD_ID}/goodbye/config`);
-    expect(goodbyeMutation?.body).toEqual({ enabled: true, channelId: CHANNEL_ID });
 
     for (const mutation of state.mutations) {
       expect(mutation.path).toContain(`/api/v2/guilds/${GUILD_ID}/`);
@@ -185,10 +199,12 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     ]));
   });
 
-  test('dashboard.access kann den sichtbaren Cleanup wie der Owner sicher aktivieren', async ({ page }) => {
+  test('dashboard.access kann den Cleanup im eigenen Unterbereich sicher aktivieren', async ({ page }) => {
     const state = await stubLifecycle(page, ['dashboard.access']);
     await openWelcome(page);
 
+    const nav = lifecycleNavigation(page);
+    await nav.getByRole('button', { name: 'Cleanup', exact: true }).click();
     const cleanup = page.getByTestId('goodbye-leave-cleanup');
     const cleanupSwitch = page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' });
     await expect(cleanup).toBeVisible();
@@ -207,10 +223,12 @@ test.describe('Welcome/Goodbye authenticated dashboard contract', () => {
     await noPageOverflow(page);
   });
 
-  test('Server-Owner kann den sichtbaren Cleanup im Goodbye-Bereich weiterhin sicher aktivieren', async ({ page }) => {
+  test('Server-Owner kann den Cleanup im eigenen Unterbereich weiterhin sicher aktivieren', async ({ page }) => {
     const state = await stubLifecycle(page, [], false, true);
     await openWelcome(page);
 
+    const nav = lifecycleNavigation(page);
+    await nav.getByRole('button', { name: 'Cleanup', exact: true }).click();
     const cleanup = page.getByTestId('goodbye-leave-cleanup');
     const cleanupSwitch = page.getByRole('switch', { name: 'Whitelist und Spielerstatistik bei Austritt bereinigen' });
     await expect(cleanup).toBeVisible();
