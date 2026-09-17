@@ -101,20 +101,40 @@ async function stubRadar(page: Page, initialZones: Array<Record<string, unknown>
   return mutations;
 }
 
+function radarNavigation(page: Page) {
+  return page.getByRole('navigation', { name: 'Radar-Funktionen' });
+}
+
+async function openZones(page: Page): Promise<void> {
+  const nav = radarNavigation(page);
+  await expect(nav).toBeVisible();
+  await nav.getByRole('button', { name: 'Zonen', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Gespeicherte Zonen' })).toBeVisible();
+}
+
 function overflow(page: Page): Promise<number> {
   return page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 }
 
 test.describe('Authenticated Radar', () => {
-  test('rendert HD-Hybrid X/Z, speichert Kreis und sendet nur die neuen Policy-Felder', async ({ page }, testInfo) => {
+  test('rendert HD-Hybrid X/Z, trennt Live/Zonen/Funktionen und speichert Kreis', async ({ page }, testInfo) => {
     test.skip(testInfo.project.name === 'mobile-chrome', 'Desktop-Mausvertrag.');
     const mutations = await stubRadar(page);
     const image = page.waitForResponse(response => response.url().endsWith('/radar/maps/chernarus.png') && response.status() === 200);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
+    const nav = radarNavigation(page);
+    await expect(nav).toBeVisible();
     await expect(page.getByText('HD Hybrid · X/Z')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Gespeicherte Zonen' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Radar-Funktionen' })).toHaveCount(0);
     await expect(page.locator('.maplibregl-canvas').first()).toBeVisible();
     await image;
 
+    await nav.getByRole('button', { name: 'Funktionen', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Radar-Funktionen' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Radar-Karte' })).toHaveCount(0);
+
+    await openZones(page);
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await expect(editor.getByText('Geometrie X/Z')).toBeVisible();
@@ -161,6 +181,7 @@ test.describe('Authenticated Radar', () => {
     test.skip(testInfo.project.name === 'mobile-chrome', 'Desktop-Mausvertrag.');
     await stubRadar(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
+    await openZones(page);
     await page.getByRole('button', { name: 'Zone', exact: true }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await editor.getByRole('button', { name: 'Polygon' }).click();
@@ -180,7 +201,7 @@ test.describe('Authenticated Radar', () => {
     await expect(editor.locator('.radar-zone-insert-handle')).toHaveCount(3);
   });
 
-  test('laedt ein gespeichertes Polygon direkt geschlossen und vollstaendig bearbeitbar', async ({ page }) => {
+  test('laedt ein gespeichertes Polygon im Zonen-Unterbereich direkt geschlossen und vollstaendig bearbeitbar', async ({ page }) => {
     const savedZone = {
       id: 'saved-polygon',
       version: 4,
@@ -200,6 +221,7 @@ test.describe('Authenticated Radar', () => {
     };
     await stubRadar(page, [savedZone]);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
+    await openZones(page);
     await page.getByRole('button', { name: 'Tisy bearbeiten' }).click();
     const editor = page.getByLabel('Radar-Zoneneditor');
     await expect(editor).toBeVisible();
@@ -216,6 +238,7 @@ test.describe('Authenticated Radar', () => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=radar`);
       await expect(page.getByRole('heading', { name: 'Radar-Karte' })).toBeVisible();
+      await expect(radarNavigation(page)).toBeVisible();
       await expect(overflow(page)).resolves.toBeLessThanOrEqual(1);
     });
   }
