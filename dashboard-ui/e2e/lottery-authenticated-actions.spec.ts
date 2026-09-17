@@ -194,6 +194,14 @@ async function browserLocalDateTime(page: Page, offsetMs: number): Promise<strin
   }, offsetMs);
 }
 
+async function openLottery(page: Page): Promise<void> {
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+  const nav = page.getByRole('navigation', { name: 'Virtuelle-Konten-Funktionen' });
+  await expect(nav).toBeVisible();
+  await nav.getByRole('button', { name: 'Lotterie', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Lotterie', exact: true, level: 3 })).toBeVisible();
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
@@ -202,9 +210,8 @@ async function noPageOverflow(page: Page): Promise<void> {
 test.describe('Lottery authenticated dashboard contract', () => {
   test('economy.view sieht Status/History inklusive Gewinn, aber keine Manage-Aktionen', async ({ page }) => {
     await stubLottery(page, { canManage: false, active: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openLottery(page);
 
-    await expect(page.getByText('Lotterie', { exact: true })).toBeVisible();
     await expect(page.getByText('Aktuelle Runde')).toBeVisible();
     await expect(page.getByText(PRIZE_TEXT, { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Letzte Runden')).toBeVisible();
@@ -214,7 +221,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
 
   test('economy.view ohne aktive Runde bekommt ebenfalls kein Create-Formular', async ({ page }) => {
     await stubLottery(page, { canManage: false, active: false });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openLottery(page);
 
     await expect(page.getByText('Keine aktive oder noch zu verarbeitende Runde.')).toBeVisible();
     await expect(page.getByText('Neue Runde starten')).toHaveCount(0);
@@ -223,7 +230,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
 
   test('economy.manage erstellt und beendet eine Runde mit Freitext-Gewinn im exakten Guild+Slot-Contract', async ({ page }) => {
     const state = await stubLottery(page, { canManage: true, active: false });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openLottery(page);
 
     await expect(page.getByText('Neue Runde starten')).toBeVisible();
     const channel = page.getByRole('combobox', { name: 'Discord-Channel', exact: true });
@@ -273,7 +280,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
 
   test('zeigt Create-Backendfehler sichtbar und keinen False-Success', async ({ page }) => {
     await stubLottery(page, { canManage: true, active: false, createError: true });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+    await openLottery(page);
 
     const channel = page.getByRole('combobox', { name: 'Discord-Channel', exact: true });
     await expect(channel).toBeVisible();
@@ -291,7 +298,7 @@ test.describe('Lottery authenticated dashboard contract', () => {
     test(`Manage-Create bleibt bei ${width}px ohne Seiten-Overflow`, async ({ page }) => {
       await stubLottery(page, { canManage: true, active: false });
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+      await openLottery(page);
       await expect(page.getByText('Neue Runde starten')).toBeVisible();
       await expect(page.getByLabel('Gewinn', { exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Lotterie starten', exact: true })).toBeVisible();

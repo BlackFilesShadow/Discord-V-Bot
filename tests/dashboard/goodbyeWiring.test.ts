@@ -36,13 +36,16 @@ describe('Goodbye-1 dashboard wiring', () => {
     expect(wrapperSource).toContain("import { GoodbyePanel } from './GoodbyePanel';");
     expect(wrapperSource).toContain('<WelcomeCoreTab {...props} />');
     expect(wrapperSource).toContain('<GoodbyePanel {...props} />');
+    expect(wrapperSource).toContain("{ key: 'welcome', label: 'Willkommen'");
+    expect(wrapperSource).toContain("{ key: 'goodbye', label: 'Bye Bye'");
   });
 
-  it('keeps the full-access cleanup control visibly coupled to Goodbye without duplicating it', () => {
-    expect(panelSource).toContain("import { LeaveCleanupPanel } from './LeaveCleanupPanel';");
-    expect(panelSource).toContain('<LeaveCleanupPanel guildId={guildId} embedded />');
-    expect(wrapperSource).not.toContain("import { LeaveCleanupPanel } from './LeaveCleanupPanel';");
-    expect(wrapperSource).not.toContain('<LeaveCleanupPanel guildId={props.guildId} />');
+  it('moves the full-access cleanup control into its own lifecycle subtab without duplicating or weakening it', () => {
+    expect(panelSource).not.toContain("import { LeaveCleanupPanel } from './LeaveCleanupPanel';");
+    expect(panelSource).not.toContain('<LeaveCleanupPanel guildId={guildId} embedded />');
+    expect(wrapperSource).toContain("import { LeaveCleanupPanel } from './LeaveCleanupPanel';");
+    expect(wrapperSource).toContain("{ key: 'cleanup', label: 'Cleanup'");
+    expect(wrapperSource).toContain('<LeaveCleanupPanel guildId={props.guildId} embedded />');
     expect(cleanupSource).toContain('data-testid="goodbye-leave-cleanup"');
     expect(cleanupSource).toContain('data-testid="goodbye-leave-cleanup-owner-only"');
     expect(cleanupSource).toContain("const hasFullAccess = isOwner || ownerQ.data?.permissions?.includes('dashboard.access') === true;");

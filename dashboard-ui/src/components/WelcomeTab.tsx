@@ -1,31 +1,60 @@
-import type { ComponentProps } from 'react';
+import { useState, type ComponentProps } from 'react';
+import { LogOut, Settings2, Sparkles } from 'lucide-react';
 import { WelcomeTab as WelcomeCoreTab } from './WelcomeCoreTab';
 import { GoodbyePanel } from './GoodbyePanel';
+import { LeaveCleanupPanel } from './LeaveCleanupPanel';
 import { WelcomeReadOnlyPanel } from './WelcomeReadOnlyPanel';
+import { SectionTabs, type SectionTabItem } from './ui/SectionTabs';
 
 type WelcomeTabProps = ComponentProps<typeof WelcomeCoreTab>;
+type LifecycleSection = 'welcome' | 'goodbye' | 'cleanup';
+
+const LIFECYCLE_SECTIONS: ReadonlyArray<SectionTabItem<LifecycleSection>> = [
+  { key: 'welcome', label: 'Willkommen', icon: Sparkles },
+  { key: 'goodbye', label: 'Bye Bye', icon: LogOut },
+  { key: 'cleanup', label: 'Cleanup', icon: Settings2 },
+];
 
 /**
- * Welcome, Goodbye und der optionale Leave-Reset bleiben eine gemeinsame
- * Member-Lifecycle-Oberflaeche. Das bestehende Onboarding bleibt isoliert;
- * der destruktive Cleanup-Schalter wird innerhalb des Goodbye-Bereichs
- * angezeigt und entscheidet seinen Owner-Status weiterhin selbst.
+ * Welcome, Goodbye und Leave-Cleanup bleiben fachlich eine gemeinsame
+ * Member-Lifecycle-Oberflaeche. Die Unter-Navigation steuert ausschliesslich
+ * die Sichtbarkeit der bereits vorhandenen Funktionsbloecke; API-, Permission-
+ * und Mutationslogik bleibt in den jeweiligen Komponenten unveraendert.
  *
- * `welcome.view` ist ein echter Read-only-Vertrag. Ein Viewer darf deshalb
- * Welcome/Goodbye-Konfiguration lesen, ohne dass manage-only Lookups oder
- * Mutationen ausgeloest werden. Der Parent liefert `canManage`; bei false
- * entscheidet der Backend-GET weiterhin fail-closed, ob `welcome.view`
- * tatsaechlich vorhanden ist.
+ * Die drei Manager-Komponenten bleiben gleichzeitig gemountet und werden nur
+ * per `hidden` umgeschaltet. Dadurch gehen lokale, noch nicht gespeicherte
+ * Formularzustaende beim Wechsel zwischen den Unterbereichen nicht verloren.
+ *
+ * `welcome.view` ist weiterhin ein echter Read-only-Vertrag. Viewer erhalten
+ * unveraendert die bestehende Read-only-Oberflaeche, ohne manage-only Lookups
+ * oder Mutationen auszuloesen. Cleanup bleibt im etablierten `embedded`-Modus,
+ * damit auch der bestehende Owner/Vollzugriff-Hinweis erhalten bleibt.
  */
 export function WelcomeTab(props: WelcomeTabProps) {
+  const [section, setSection] = useState<LifecycleSection>('welcome');
+
   if (!props.canManage) {
     return <WelcomeReadOnlyPanel guildId={props.guildId} />;
   }
 
   return (
-    <div className="space-y-6">
-      <WelcomeCoreTab {...props} />
-      <GoodbyePanel {...props} />
+    <div className="space-y-5">
+      <SectionTabs
+        value={section}
+        items={LIFECYCLE_SECTIONS}
+        onChange={setSection}
+        ariaLabel="Willkommen-Funktionen"
+      />
+
+      <section hidden={section !== 'welcome'} aria-label="Willkommen">
+        <WelcomeCoreTab {...props} />
+      </section>
+      <section hidden={section !== 'goodbye'} aria-label="Bye Bye">
+        <GoodbyePanel {...props} />
+      </section>
+      <section hidden={section !== 'cleanup'} aria-label="Cleanup">
+        <LeaveCleanupPanel guildId={props.guildId} embedded />
+      </section>
     </div>
   );
 }

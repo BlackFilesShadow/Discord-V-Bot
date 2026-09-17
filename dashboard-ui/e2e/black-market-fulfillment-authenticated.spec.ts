@@ -130,6 +130,9 @@ function mutation(mutations: Mutation[], path: string): Mutation | undefined {
 
 async function openEconomy(page: Page): Promise<void> {
   await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=virtual-accounts`);
+  const nav = page.getByRole('navigation', { name: 'Virtuelle-Konten-Funktionen' });
+  await expect(nav).toBeVisible();
+  await nav.getByRole('button', { name: 'Schwarzmarkt', exact: true }).click();
   await expect(page.getByText('Bestellungen & Auslieferung')).toBeVisible();
   await expect(page.getByText('M4A1 × 2', { exact: true })).toBeVisible();
 }
