@@ -1,10 +1,14 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ExternalLink, Crown, Shield, Server as ServerIcon, Terminal, Activity } from 'lucide-react';
+import {
+  Activity, ArrowUpRight, CircleCheck, Crown, ExternalLink, RefreshCw,
+  Shield, Terminal, TriangleAlert, Users,
+} from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { Shell } from '@/components/Shell';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { LegalFooter } from '@/components/LegalFooter';
 import { useDevSession } from '@/lib/devSession';
 
@@ -36,27 +40,62 @@ export default function Servers() {
     staleTime: 30_000,
   });
 
+  const guildCount = data?.guilds.length ?? 0;
+  const connectedCount = data?.guilds.filter(guild => guild.botPresent).length ?? 0;
+  const memberCountComplete = data?.guilds.every(guild => guild.memberCount !== null) ?? false;
+  const memberCount = data?.guilds.reduce((total, guild) => total + (guild.memberCount ?? 0), 0) ?? 0;
+
   return (
     <Shell title="Server">
-      <div className="max-w-5xl mx-auto min-w-0">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <div className="min-w-0">
-            <h1 className="text-2xl sm:text-3xl font-bold text-white">Deine Server</h1>
-            <p className="text-muted text-sm mt-1">Server, auf denen du Owner bist oder &quot;Server verwalten&quot;-Rechte hast.</p>
+      <div className="nexus-servers max-w-5xl mx-auto min-w-0">
+        <section className="nexus-servers-hero" aria-labelledby="servers-title">
+          <div className="nexus-servers-horizon" aria-hidden="true" />
+          <div className="relative z-10 flex flex-wrap items-end justify-between gap-4">
+            <div className="min-w-0">
+              <div className="nexus-eyebrow">Serverzentrale</div>
+              <h1 id="servers-title" className="nexus-page-title">Deine <span>Server</span></h1>
+              <p className="text-muted text-sm mt-2 max-w-xl">Server, auf denen du Owner bist oder &quot;Server verwalten&quot;-Rechte hast.</p>
+            </div>
+            <Button
+              onClick={() => refetch()}
+              variant="outline"
+              size="sm"
+              loading={isFetching}
+              className="nexus-refresh-control"
+            >
+              {!isFetching && <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              Aktualisieren
+            </Button>
           </div>
-          <Button onClick={() => refetch()} variant="outline" size="sm" loading={isFetching}>Aktualisieren</Button>
-        </div>
+
+          {data && (
+            <div className="nexus-overview" aria-label="Serverübersicht">
+              <div className="nexus-overview-item">
+                <span>Communities</span>
+                <strong>{guildCount} Server</strong>
+              </div>
+              <div className="nexus-overview-item">
+                <span>Mitglieder</span>
+                <strong>{memberCountComplete ? memberCount.toLocaleString('de-DE') : '–'}</strong>
+              </div>
+              <div className="nexus-overview-item" data-tone="ok">
+                <span>Bot verbunden</span>
+                <strong>{connectedCount} von {guildCount}</strong>
+              </div>
+            </div>
+          )}
+        </section>
 
         {isLoading && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="nexus-server-grid">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-32 rounded-xl skeleton" />
+              <div key={i} className="h-72 rounded-[22px] skeleton" />
             ))}
           </div>
         )}
 
         {isError && (
-          <Card glow>
+          <Card glow className="nexus-message-card">
             <p className="text-danger font-medium">Fehler beim Laden.</p>
             <p className="text-muted text-sm mt-1 break-words">{(error as Error).message}</p>
             <Button onClick={() => refetch()} className="mt-4" size="sm" loading={isFetching}>Erneut versuchen</Button>
@@ -64,7 +103,7 @@ export default function Servers() {
         )}
 
         {data && data.guilds.length === 0 && (
-          <Card glow>
+          <Card glow className="nexus-message-card">
             <h2 className="text-lg font-semibold text-white">Keine Server gefunden</h2>
             <p className="text-muted text-sm mt-2">
               Du bist auf keinem Server Owner oder hast keine &quot;Server verwalten&quot;-Rechte.
@@ -74,7 +113,7 @@ export default function Servers() {
         )}
 
         {data && data.guilds.length > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="nexus-server-grid">
             {data.guilds.map(g => <GuildCard key={g.id} g={g} />)}
           </div>
         )}
@@ -90,46 +129,22 @@ export default function Servers() {
 
 function CreditsCard() {
   return (
-    <div className="mt-12 mx-auto max-w-2xl">
-      <div className="relative rounded-2xl p-[1.5px] bg-gradient-to-br from-accent/70 via-accent-dim/45 to-border/60 shadow-glow-sm">
-        <div className="rounded-[14px] bg-gradient-to-b from-bg-card/95 to-bg/95 backdrop-blur-md p-6 sm:p-8">
-          <div className="flex items-center justify-center gap-3 mb-5">
-            <span className="h-px flex-1 bg-gradient-to-r from-transparent to-accent/40" />
-            <span className="text-xs tracking-[0.35em] text-accent uppercase font-semibold">Credits</span>
-            <span className="h-px flex-1 bg-gradient-to-l from-transparent to-accent/40" />
-          </div>
-
-          <div className="grid gap-5 sm:grid-cols-2 text-sm">
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">Entwicklung &amp; Design</div>
-              <div className="text-white font-semibold text-base">Void_architect</div>
-            </div>
-            <div>
-              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">Gewidmet an</div>
-              <div className="text-white font-semibold text-base">Ash of Phoenix</div>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <div className="text-[10px] uppercase tracking-wider text-muted mb-2 text-center">Mitglieder</div>
-            <div className="flex flex-wrap justify-center gap-2">
-              {['BeatsOneElite', 'Blubbi', 'Celinchen0502', 'EoX-Kyrios', 'Mabra'].map(n => (
-                <span
-                  key={n}
-                  className="px-3 py-1 text-xs rounded-full bg-accent/10 border border-accent/30 text-accent-hover
-                             shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]
-                             hover:bg-accent/15 hover:border-accent/50 transition-colors"
-                >
-                  {n}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-6 text-center text-[10px] tracking-widest text-muted/70 uppercase">
-            V-Bot
-          </div>
+    <div className="nexus-credits mt-10" id="credits">
+      <div className="nexus-credits-primary">
+        <span>Credits</span>
+        <div>
+          <strong>Void_architect</strong>
+          <small>Entwicklung &amp; Design</small>
         </div>
+        <div>
+          <strong>Ash of Phoenix</strong>
+          <small>Gewidmet an</small>
+        </div>
+      </div>
+      <div className="nexus-credit-people" aria-label="Mitglieder">
+        {['BeatsOneElite', 'Blubbi', 'Celinchen0502', 'EoX-Kyrios', 'Mabra'].map(n => (
+          <span key={n}>{n}</span>
+        ))}
       </div>
     </div>
   );
@@ -193,51 +208,59 @@ function fmtMb(bytes: number): string {
 function GuildCard({ g }: { g: Guild }) {
   const initial = g.name.charAt(0).toUpperCase();
   return (
-    <Card interactive={g.botPresent} className="flex flex-col h-full min-w-0">
-      <div className="flex items-start gap-3 mb-3 min-w-0">
-        {g.iconUrl ? (
-          <img src={g.iconUrl} alt="" className="h-12 w-12 rounded-lg object-cover border border-border" />
-        ) : (
-          <div className="h-12 w-12 rounded-lg bg-bg-elev grid place-items-center text-white font-bold text-lg border border-border">
-            {initial}
-          </div>
-        )}
-        <div className="min-w-0 flex-1">
-          <h3 className="font-semibold text-white truncate" title={g.name}>{g.name}</h3>
-          <div className="flex flex-wrap items-center gap-1 mt-1">
-            {g.isOwner ? (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-accent/20 text-accent font-medium">
-                <Crown className="h-3 w-3" /> Owner
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-bg-elev text-muted font-medium">
-                <Shield className="h-3 w-3" /> Admin
-              </span>
-            )}
-            {g.botPresent && g.alias5 && (
-              <span className="text-[10px] font-mono text-muted bg-bg-elev px-1.5 py-0.5 rounded">{g.alias5}</span>
-            )}
+    <Card interactive={g.botPresent} className="nexus-server-card flex flex-col h-full min-w-0 !p-0 overflow-hidden">
+      <div className="nexus-server-card-hero">
+        <div className="nexus-server-identity">
+          {g.iconUrl ? (
+            <img src={g.iconUrl} alt="" className="nexus-server-avatar object-cover" />
+          ) : (
+            <div className="nexus-server-avatar" aria-hidden="true">
+              {initial}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            <h3 className="font-semibold text-white truncate" title={g.name}>{g.name}</h3>
+            <span className="nexus-server-role">{g.isOwner ? 'Owner' : 'Administrator'}</span>
           </div>
         </div>
+        <Badge variant={g.botPresent ? 'ok' : 'warn'} pulse={g.botPresent} className="nexus-server-status shrink-0">
+          {g.botPresent ? <CircleCheck className="h-3.5 w-3.5" aria-hidden="true" /> : <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />}
+          {g.botPresent ? 'Aktiv' : 'Einrichtung'}
+        </Badge>
       </div>
 
-      <div className="text-xs text-muted mb-4 flex items-center gap-1">
-        <ServerIcon className="h-3 w-3" />
-        {g.botPresent ? `${g.memberCount ?? '–'} Mitglieder` : 'Bot nicht eingeladen'}
-      </div>
+      <div className="nexus-server-card-body">
+        <div className="nexus-server-metrics">
+          <div className="nexus-server-metric">
+            <span><Users className="h-4 w-4" aria-hidden="true" /> Mitglieder</span>
+            <strong>{g.memberCount ?? '–'} Mitglieder</strong>
+          </div>
+          <div className="nexus-server-metric">
+            <span><Activity className="h-4 w-4" aria-hidden="true" /> Verbindung</span>
+            <strong>{g.botPresent ? 'Bot aktiv' : 'Bot nicht eingeladen'}</strong>
+          </div>
+        </div>
 
-      <div className="mt-auto">
-        {g.botPresent ? (
-          <Link to={`/servers/${g.id}`} className="block">
-            <Button className="w-full" size="sm">Verwalten</Button>
-          </Link>
-        ) : (
-          <a href={g.inviteUrl} target="_blank" rel="noopener noreferrer" className="block">
-            <Button variant="outline" size="sm" className="w-full">
-              <ExternalLink className="h-3.5 w-3.5 mr-1.5" /> Bot einladen
-            </Button>
-          </a>
-        )}
+        <div className="nexus-server-tags">
+          <span>{g.isOwner ? <Crown className="h-3.5 w-3.5" aria-hidden="true" /> : <Shield className="h-3.5 w-3.5" aria-hidden="true" />}{g.isOwner ? 'Owner' : 'Admin'}</span>
+          {g.botPresent && g.alias5 && <span className="font-mono">{g.alias5}</span>}
+        </div>
+
+        <div className="mt-auto pt-4">
+          {g.botPresent ? (
+            <Link to={`/servers/${g.id}`} className="block">
+              <Button className="nexus-server-action w-full" size="md">
+                <span>Verwalten</span><ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </Link>
+          ) : (
+            <a href={g.inviteUrl} target="_blank" rel="noopener noreferrer" className="block">
+              <Button variant="outline" size="md" className="nexus-server-action w-full">
+                <span>Bot einladen</span><ExternalLink className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </a>
+          )}
+        </div>
       </div>
     </Card>
   );
