@@ -4,8 +4,8 @@
  * Guarantees:
  * - all eight money commands acknowledge first and finish with a public embed;
  * - allowedMentions.parse=[] is kept on the visible result;
- * - the visible description never surfaces win-chance/audit-round-id/verify
- *   hints (players never see these; only the low-key Hash/Nonce footer remains);
+ * - visible game embeds never expose win-chance, round verification hints,
+ *   seed hash or nonce; audit data remains persisted internally;
  * - all commands retain optional gameserver selection;
  * - persisted result JSON keeps bigint payout JSON-safe and includes V3 audit.
  */
@@ -152,7 +152,7 @@ const GAME_CASES = [
 ] as const;
 
 describe('Casino V3 command embeds', () => {
-  it.each(GAME_CASES)('/%s deferiert vor der Runde und liefert ein kompaktes public Audit-Embed', async (_name, command, opts) => {
+  it.each(GAME_CASES)('/%s deferiert vor der Runde und liefert ein kompaktes public Embed ohne Audit-Geheimnisse', async (_name, command, opts) => {
     const { i, editReply, deferReply } = makeInteraction(opts as never);
     await command.execute(i as never);
 
@@ -172,9 +172,10 @@ describe('Casino V3 command embeds', () => {
     expect(description).toContain(':coin:');
     expect(json.fields ?? []).toHaveLength(0);
     expect(json.timestamp).toBeUndefined();
-    expect(json.footer?.text ?? '').toContain('Runden-Audit');
-    expect(json.footer?.text ?? '').toMatch(/Hash:\s+[a-f0-9]{16}/);
-    expect(json.footer?.text ?? '').toMatch(/Nonce:\s+\d+/);
+    expect(json.footer?.text ?? '').toBe('V-Bot • Casino');
+    expect(json.footer?.text ?? '').not.toContain('Runden-Audit');
+    expect(json.footer?.text ?? '').not.toContain('Hash:');
+    expect(json.footer?.text ?? '').not.toContain('Nonce:');
   });
 
   it('/slot persistiert payout als JSON-string und einen V3 Regel-Snapshot', async () => {

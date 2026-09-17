@@ -61,7 +61,7 @@ const CATEGORIES: readonly CategoryDefinition[] = [
       'link', 'unlink', 'links', 'link-info',
       'force-link', 'force-unlink', 'confirm-action',
       'slot', 'coinflip', 'dice', 'blackjack', 'roulette', 'highlow', 'baccarat', 'wheel',
-      'casino-stats', 'casino-verify',
+      'casino-stats',
       'virtual-account', 'lottery', 'black-market',
     ]),
   },

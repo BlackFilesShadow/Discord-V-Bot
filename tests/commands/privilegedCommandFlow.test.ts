@@ -160,7 +160,7 @@ describe('privileged durable confirmation flow', () => {
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('Muscheln') }));
   });
 
-  it('/force-link queues an explicit admin override without requiring an ADM/session hit', async () => {
+  it('/force-link queues an admin override that bypasses only the five-minute playtime rule', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     createPendingServerAction.mockResolvedValue({ id: actionId });
     const { interaction, reply } = forceLinkInteraction();
@@ -171,11 +171,14 @@ describe('privileged durable confirmation flow', () => {
       payload: { targetUserId: TEST_TARGET_USER, playerName: 'Void__Architect' },
     }));
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('ADM-/Session-Anwesenheits- und Spielzeitregel umgangen'),
+      content: expect.stringContaining('nur die 5-Minuten-Spielzeitregel umgangen'),
+    }));
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('eindeutig in den ADM-/Session-Daten erkannt'),
     }));
   });
 
-  it('/confirm-action accepts an unresolved admin force-link and does not invent GUID rewards', async () => {
+  it('/confirm-action rejects an unresolved force-link instead of creating a name-only verified link', async () => {
     const actionId = '123e4567-e89b-42d3-a456-426614174000';
     claimPendingServerAction.mockResolvedValue(claimedAction(actionId, 'FORCE_LINK', {
       targetUserId: TEST_TARGET_USER,
@@ -193,14 +196,47 @@ describe('privileged durable confirmation flow', () => {
     const { interaction, reply } = confirmInteraction(actionId);
     await confirmActionCommand.execute(interaction);
 
+    expect(applySuccessfulLinkEconomyEffects).not.toHaveBeenCalled();
+    expect(completePendingServerAction).toHaveBeenCalledTimes(1);
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('keine eindeutige DayZ-GUID'),
+    }));
+  });
+
+  it('/confirm-action completes a resolved force-link through the normal economy/reward hook', async () => {
+    const actionId = '123e4567-e89b-42d3-a456-426614174000';
+    claimPendingServerAction.mockResolvedValue(claimedAction(actionId, 'FORCE_LINK', {
+      targetUserId: TEST_TARGET_USER,
+      playerName: 'Void__Architect',
+    }));
+    forceAdminLinkByPlayerName.mockResolvedValue({
+      ok: true,
+      alreadyLinked: false,
+      playerName: 'Void__Architect',
+      gameId: 'real-guid-1',
+      playedSeconds: 30,
+      pendingIdentityResolution: false,
+      newIdentityBinding: true,
+    });
+    const { interaction, reply } = confirmInteraction(actionId);
+    await confirmActionCommand.execute(interaction);
+
     expect(forceAdminLinkByPlayerName).toHaveBeenCalledWith(expect.objectContaining({
       userDiscordId: TEST_TARGET_USER,
       playerName: 'Void__Architect',
     }));
-    expect(applySuccessfulLinkEconomyEffects).not.toHaveBeenCalled();
+    expect(applySuccessfulLinkEconomyEffects).toHaveBeenCalledWith(expect.objectContaining({
+      scope: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId },
+      userDiscordId: TEST_TARGET_USER,
+      gameId: 'real-guid-1',
+      newLink: true,
+    }));
     expect(completePendingServerAction).toHaveBeenCalledTimes(1);
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.stringContaining('Admin-Verknuepfung ist sofort aktiv'),
+      content: expect.stringContaining('Force-Link wurde ausgefuehrt'),
+    }));
+    expect(reply).not.toHaveBeenCalledWith(expect.objectContaining({
+      content: expect.stringContaining('automatisch nachgezogen'),
     }));
   });
 

@@ -30,7 +30,7 @@ describe('Economy embed presentation contract', () => {
     expect(balance).toContain('await embedReply(i, e, false);');
   });
 
-  it('does not change the established economy mutation calls or their actor scope', () => {
+  it('keeps explicit economy mutation calls and supports full-balance deposit/withdraw when amount is omitted', () => {
     const pay = block('export const payCommand', 'export const adminPayCommand');
     const deposit = block('export const depositCommand', 'export const withdrawCommand');
     const withdraw = block('export const withdrawCommand', 'export const transferCommand');
@@ -41,8 +41,18 @@ describe('Economy embed presentation contract', () => {
     expect(pay).toContain('amount: betrag');
     expect(pay).toContain('ephemeral: false');
 
+    expect(deposit).toContain(".setName('betrag')");
+    expect(deposit).toContain(".setDescription('Betrag (leer = komplettes Wallet)').setRequired(false)");
+    expect(deposit).toContain("const requestedAmount = i.options.getInteger('betrag');");
+    expect(deposit).toContain('before!.walletBalance');
     expect(deposit).toContain('await deposit(scope.guildId, connId, scope.actorDiscordId, amount);');
+
+    expect(withdraw).toContain(".setName('betrag')");
+    expect(withdraw).toContain(".setDescription('Betrag (leer = komplette Bank)').setRequired(false)");
+    expect(withdraw).toContain("const requestedAmount = i.options.getInteger('betrag');");
+    expect(withdraw).toContain('before!.bankBalance');
     expect(withdraw).toContain('await withdraw(scope.guildId, connId, scope.actorDiscordId, amount);');
+
     expect(transfer).toContain('fromUserId: scope.actorDiscordId');
     expect(transfer).toContain('toUserId: asUserDiscordId(target.id)');
     expect(transfer).toContain('amount });');

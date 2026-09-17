@@ -184,7 +184,12 @@ export function casinoEmbed(
   color: number = Colors.Primary,
   footerText: string = 'V-Bot • Casino',
 ): EmbedBuilder {
-  return compactEmbed(color, footerText);
+  // Seed-Hash/Nonce bleiben fuer die interne Rundenaudit-Persistenz erhalten,
+  // werden aber nicht mehr in Spieler-Embeds veroeffentlicht.
+  const visibleFooter = footerText.includes('Runden-Audit')
+    ? 'V-Bot • Casino'
+    : footerText;
+  return compactEmbed(color, visibleFooter);
 }
 
 /**

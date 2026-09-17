@@ -20,10 +20,11 @@ export interface CommandClassification {
  * echter Lese-)Dashboard-Ersatz existiert, gehoeren hier rein. Ein Cross-Check
  * 2026-09 hat den fruesten deutlich groesseren Stand dieses Sets widerlegt:
  * `giveaway`, `poll`, `ticket`, `pay`, `transfer`, `virtual-account`, `lottery`
- * sowie alle acht Casino-Spiele (`slot`..`wheel`) und `casino-verify` haben im
- * Dashboard KEINE Mutation/Aktion, die dasselbe leistet wie der Discord-Befehl
- * (teils nur eine Admin-Konfigurationsseite, teils gar nichts) - dort bestand
- * nur eine oberflaechliche Namensaehnlichkeit zur jeweiligen Dashboard-Sektion.
+ * sowie alle acht Casino-Spiele (`slot`..`wheel`) haben im Dashboard KEINE
+ * Mutation/Aktion, die dasselbe leistet wie der Discord-Befehl (teils nur eine
+ * Admin-Konfigurationsseite, teils gar nichts) - dort bestand nur eine
+ * oberflaechliche Namensaehnlichkeit zur jeweiligen Dashboard-Sektion.
+ * `casino-verify` ist bewusst aus der oeffentlichen Slash-Oberflaeche entfernt.
  * `ticket` verwechselte zusaetzlich zwei unterschiedliche Datenmodelle
  * (Owner-Kontakt-`Ticket` des Slash-Commands vs. `TicketTemplate`/`TicketInstance`
  * im Dashboard). Verifiziert und hier belassen: `factions`/`balance`
@@ -40,7 +41,7 @@ const ADMIN_EXTRA_NAMES = new Set<string>([
   'ai-trigger', 'feed', 'selfrole', 'translate-post', 'xp-config',
 ]);
 
-const REMOVE_NAMES = new Set<string>(['autorole']);
+const REMOVE_NAMES = new Set<string>(['autorole', 'casino-verify']);
 
 export const PRESERVED_MANUFACTURER_COMMANDS = new Set<string>([
   'dev-manufacturer',
@@ -74,7 +75,7 @@ export const SPEC_KEEP_COMMANDS = new Set<string>([
   'link', 'unlink', 'links', 'link-info',
   'force-link', 'force-unlink', 'confirm-action',
   'pay', 'admin-pay', 'add-money', 'remove-money',
-  'casino-stats', 'casino-verify', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
+  'casino-stats', 'transfer', 'withdraw', 'virtual-account', 'lottery', 'black-market',
   'whitelist-antrag', 'whitelist-add', 'whitelist-remove',
   'perm-add', 'perm-remove', 'perms',
   'server-ban', 'server-unban',
