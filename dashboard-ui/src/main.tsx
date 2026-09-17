@@ -14,6 +14,7 @@ import { RecentActionsProvider } from './lib/recentActions';
 import './index.css';
 import './theme.css';
 import './vivid-theme.css';
+import './slot-page-architecture.css';
 import './botAdmin.mobile.css';
 
 const qc = new QueryClient({
