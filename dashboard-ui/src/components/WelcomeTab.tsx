@@ -27,7 +27,8 @@ const LIFECYCLE_SECTIONS: ReadonlyArray<SectionTabItem<LifecycleSection>> = [
  *
  * `welcome.view` ist weiterhin ein echter Read-only-Vertrag. Viewer erhalten
  * unveraendert die bestehende Read-only-Oberflaeche, ohne manage-only Lookups
- * oder Mutationen auszuloesen.
+ * oder Mutationen auszuloesen. Cleanup bleibt im etablierten `embedded`-Modus,
+ * damit auch der bestehende Owner/Vollzugriff-Hinweis erhalten bleibt.
  */
 export function WelcomeTab(props: WelcomeTabProps) {
   const [section, setSection] = useState<LifecycleSection>('welcome');
@@ -52,7 +53,7 @@ export function WelcomeTab(props: WelcomeTabProps) {
         <GoodbyePanel {...props} />
       </section>
       <section hidden={section !== 'cleanup'} aria-label="Cleanup">
-        <LeaveCleanupPanel guildId={props.guildId} />
+        <LeaveCleanupPanel guildId={props.guildId} embedded />
       </section>
     </div>
   );
