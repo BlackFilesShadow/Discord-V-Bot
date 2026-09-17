@@ -39,6 +39,9 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   const serverDriftScope = serverSlotMatch
     ? { guildId: serverSlotMatch[1], slot: serverSlotMatch[2] }
     : null;
+  let dashboardPage: '1' | '2' | undefined;
+  if (serverSlotMatch) dashboardPage = '2';
+  else if (/^\/servers\/[^/]+\/?$/.test(loc.pathname)) dashboardPage = '1';
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(
@@ -88,7 +91,7 @@ export function Shell({ title, back, sidebar, children }: ShellProps) {
   const nextThemeLabel = theme === 'obsidian' ? 'Ice' : 'Obsidian';
 
   return (
-    <div className="dashboard-shell min-h-full flex flex-col" data-dashboard-theme={theme}>
+    <div className="dashboard-shell min-h-full flex flex-col" data-dashboard-theme={theme} data-dashboard-page={dashboardPage}>
       <header className="nexus-header sticky top-0 z-40 h-16 glass header-premium flex items-center justify-between px-3 sm:px-6">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           {sidebar && (

@@ -1,37 +1,93 @@
 /*
- * Slot navigation architecture
+ * Dashboard page architecture
  *
- * The guild/server dashboard is PAGE 1. A selected Nitrado slot is PAGE 2.
- * All eight existing slot functions belong to PAGE 2; there is no nested
- * PAGE 1/PAGE 2 split inside the slot sidebar.
+ * PAGE 1 = guild/server dashboard.
+ * PAGE 2 = selected Nitrado slot.
  *
- * Presentation only: routes, tab keys, order, components and behaviour remain
- * untouched in ServerSlot.tsx and ServerSlotV3.tsx.
+ * The Shell exposes the current architecture level through
+ * data-dashboard-page. The visual treatment below is presentation only:
+ * routes, tab keys, order, components, permissions, queries and mutations
+ * remain untouched.
  */
 
+.dashboard-shell[data-dashboard-page='1'] {
+  --dashboard-page-color: var(--color-accent);
+}
+
+.dashboard-shell[data-dashboard-page='2'] {
+  --dashboard-page-color: var(--color-info);
+}
+
+.dashboard-shell[data-dashboard-page] .dashboard-main {
+  position: relative;
+  background-image:
+    linear-gradient(135deg, rgb(var(--dashboard-page-color) / 0.08), transparent 18rem),
+    linear-gradient(90deg, rgb(var(--dashboard-page-color) / 0.12), transparent 1px);
+  box-shadow:
+    inset 3px 0 0 rgb(var(--dashboard-page-color) / 0.72),
+    inset 0 1px 0 rgb(var(--dashboard-page-color) / 0.16);
+}
+
+.dashboard-shell[data-dashboard-page] .dashboard-main::before {
+  display: block;
+  width: fit-content;
+  margin: 0 0 1rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid rgb(var(--dashboard-page-color) / 0.40);
+  border-radius: 9999px;
+  background: rgb(var(--dashboard-page-color) / 0.11);
+  box-shadow: 0 0 18px -8px rgb(var(--dashboard-page-color) / 0.70);
+  color: rgb(var(--dashboard-page-color));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.dashboard-shell[data-dashboard-page='1'] .dashboard-main::before {
+  content: 'PAGE 1 · SERVER-/GUILD-EBENE';
+}
+
+.dashboard-shell[data-dashboard-page='2'] .dashboard-main::before {
+  content: 'PAGE 2 · NITRADO-SLOT-EBENE';
+}
+
 @media (min-width: 768px) {
-  .dashboard-sidebar nav[aria-label='Slot-Funktionen']::before {
-    content: 'PAGE 2';
+  .dashboard-shell[data-dashboard-page] .dashboard-sidebar {
+    box-shadow: inset -1px 0 0 rgb(var(--dashboard-page-color) / 0.16);
+  }
+
+  .dashboard-shell[data-dashboard-page='1'] .dashboard-sidebar nav[aria-label='Server-Bereiche']::before,
+  .dashboard-shell[data-dashboard-page='2'] .dashboard-sidebar nav[aria-label='Slot-Funktionen']::before {
     display: block;
-    padding: 0 0.75rem 0.25rem;
-    color: rgb(var(--color-muted) / 0.60);
+    padding: 0 0.75rem 0.45rem;
+    color: rgb(var(--dashboard-page-color));
     font-size: 10px;
-    font-weight: 600;
+    font-weight: 700;
     letter-spacing: 0.18em;
     text-transform: uppercase;
   }
 
+  .dashboard-shell[data-dashboard-page='1'] .dashboard-sidebar nav[aria-label='Server-Bereiche']::before {
+    content: 'PAGE 1 · SERVER-EBENE';
+  }
+
+  .dashboard-shell[data-dashboard-page='2'] .dashboard-sidebar nav[aria-label='Slot-Funktionen']::before {
+    content: 'PAGE 2 · SLOT-EBENE';
+  }
+
   /* Legacy slot navigation still contains the historical PAGE 1 / PAGE 2
      labels in its DOM. Hide only those presentation labels. */
-  .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > p,
-  .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t > p {
+  .dashboard-shell[data-dashboard-page='2'] .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > p,
+  .dashboard-shell[data-dashboard-page='2'] .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t > p {
     display: none;
   }
 
   /* Legacy groups the last four items in a wrapper; V3 marks the fifth item
      with the same divider classes. Flatten only that historical page divider
      so all eight functions are shown as one PAGE 2 navigation. */
-  .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t {
+  .dashboard-shell[data-dashboard-page='2'] .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t {
     margin-top: 0 !important;
     padding-top: 0 !important;
     border-top-width: 0 !important;
