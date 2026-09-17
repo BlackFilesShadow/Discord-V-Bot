@@ -1,0 +1,313 @@
+/*
+ * V-Bot Dashboard · Vivid Color Layer
+ *
+ * Presentation only. This file intentionally overrides theme tokens and the
+ * shared visual primitives after index.css/theme.css. No component behaviour,
+ * permissions, API contracts or state transitions live here.
+ */
+
+:root:not([data-theme]),
+html[data-theme='obsidian'] {
+  --color-bg: 6 8 12;
+  --color-bg-card: 14 18 24;
+  --color-bg-elev: 23 29 38;
+  --color-bg-hover: 35 42 54;
+  --color-bg-subtle: 9 12 17;
+  --color-fg: 250 250 252;
+  --color-muted: 160 170 186;
+  --color-border: 58 67 82;
+  --color-accent: 239 45 66;
+  --color-accent-hover: 255 65 85;
+  --color-accent-glow: 255 91 111;
+  --color-accent-dim: 164 22 49;
+  --color-focus: 255 113 133;
+  --color-ok: 34 197 94;
+  --color-warn: 250 204 21;
+  --color-danger: 239 68 68;
+  --color-info: 14 165 233;
+  --color-planned: 139 92 246;
+  --color-neutral: 163 174 192;
+  --color-on-accent: 255 255 255;
+}
+
+html[data-theme='ice'] {
+  --color-bg: 6 18 34;
+  --color-bg-card: 12 36 61;
+  --color-bg-elev: 22 54 85;
+  --color-bg-hover: 35 76 112;
+  --color-bg-subtle: 7 26 46;
+  --color-fg: 250 253 255;
+  --color-muted: 184 216 239;
+  --color-border: 80 135 179;
+  --color-accent: 34 211 238;
+  --color-accent-hover: 103 232 249;
+  --color-accent-glow: 165 243 252;
+  --color-accent-dim: 8 145 178;
+  --color-focus: 103 232 249;
+  --color-ok: 74 222 128;
+  --color-warn: 250 204 21;
+  --color-danger: 251 76 105;
+  --color-info: 56 189 248;
+  --color-planned: 167 139 250;
+  --color-neutral: 186 207 224;
+  --color-on-accent: 6 24 40;
+}
+
+/* Stronger ambient colour without brightening the whole dark shell. */
+html[data-theme='obsidian'] body::before {
+  background:
+    radial-gradient(46% 42% at 82% 8%, rgb(var(--color-accent) / 0.28), transparent 62%),
+    radial-gradient(36% 34% at 12% 18%, rgb(var(--color-accent-dim) / 0.20), transparent 64%),
+    radial-gradient(46% 40% at 55% 95%, rgb(var(--color-planned) / 0.09), transparent 70%),
+    linear-gradient(145deg, rgba(255,255,255,0.025), transparent 42%);
+  filter: blur(46px) saturate(150%);
+}
+
+html[data-theme='ice'] body::before {
+  background:
+    radial-gradient(48% 42% at 84% 8%, rgb(var(--color-accent) / 0.30), transparent 62%),
+    radial-gradient(40% 34% at 11% 20%, rgb(var(--color-accent-dim) / 0.24), transparent 65%),
+    radial-gradient(46% 40% at 52% 96%, rgb(var(--color-info) / 0.13), transparent 70%),
+    linear-gradient(145deg, rgba(255,255,255,0.035), transparent 45%);
+  filter: blur(48px) saturate(155%);
+}
+
+/* Cards remain dark, but their colour identity is easier to read. */
+html[data-theme='obsidian'] .card-premium::before,
+html[data-theme='ice'] .card-premium::before {
+  background: linear-gradient(
+    135deg,
+    rgb(var(--color-accent) / 0.46) 0%,
+    rgb(var(--color-accent-hover) / 0.18) 24%,
+    rgb(var(--color-border) / 0.16) 48%,
+    transparent 78%
+  );
+}
+
+html[data-theme='obsidian'] .card-premium[data-interactive='true']:hover,
+html[data-theme='ice'] .card-premium[data-interactive='true']:hover {
+  border-color: rgb(var(--color-accent) / 0.58);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    0 28px 58px -32px rgba(0,0,0,0.90),
+    0 0 0 1px rgb(var(--color-accent) / 0.16),
+    0 0 46px -20px rgb(var(--color-accent-glow) / 0.58);
+}
+
+/* Primary actions are intentionally saturated instead of dark grey with a tint. */
+.btn-premium-primary {
+  color: rgb(var(--color-on-accent));
+  background:
+    radial-gradient(90% 150% at 16% 0%, rgba(255,255,255,0.24), transparent 52%),
+    linear-gradient(120deg, rgb(var(--color-accent-hover)) 0%, rgb(var(--color-accent)) 52%, rgb(var(--color-accent-dim)) 100%);
+  border-color: rgb(var(--color-accent-glow) / 0.84);
+  text-shadow: 0 1px 1px rgba(0,0,0,0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.24),
+    inset 0 -1px 0 rgba(0,0,0,0.26),
+    0 14px 30px -16px rgb(var(--color-accent-glow) / 0.78),
+    0 0 22px -14px rgb(var(--color-accent-glow) / 0.92);
+}
+
+@media (hover: hover) {
+  .btn-premium-primary:not(:disabled):hover {
+    color: rgb(var(--color-on-accent));
+    border-color: rgb(var(--color-accent-glow));
+    background:
+      radial-gradient(90% 150% at 16% 0%, rgba(255,255,255,0.32), transparent 52%),
+      linear-gradient(120deg, rgb(var(--color-accent-glow)) 0%, rgb(var(--color-accent-hover)) 48%, rgb(var(--color-accent)) 100%);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.30),
+      inset 0 -1px 0 rgba(0,0,0,0.22),
+      0 18px 38px -16px rgb(var(--color-accent-glow) / 0.94),
+      0 0 30px -14px rgb(var(--color-accent-glow));
+  }
+}
+
+.btn-premium-secondary {
+  background: linear-gradient(180deg, rgb(var(--color-accent) / 0.22), rgb(var(--color-bg-elev) / 0.98));
+  border-color: rgb(var(--color-accent) / 0.48);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.09), 0 10px 22px -16px rgb(var(--color-accent-glow) / 0.46);
+}
+
+.btn-premium-outline {
+  background: linear-gradient(180deg, rgb(var(--color-accent) / 0.10), rgb(var(--color-bg-card) / 0.20));
+  border-color: rgb(var(--color-accent) / 0.62);
+}
+
+.btn-premium-ghost {
+  color: rgb(var(--color-fg));
+}
+
+@media (hover: hover) {
+  .btn-premium-secondary:not(:disabled):hover {
+    border-color: rgb(var(--color-accent-hover) / 0.78);
+    background: linear-gradient(180deg, rgb(var(--color-accent) / 0.32), rgb(var(--color-bg-hover) / 0.96));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 14px 28px -15px rgb(var(--color-accent-glow) / 0.64);
+  }
+
+  .btn-premium-outline:not(:disabled):hover {
+    border-color: rgb(var(--color-accent-hover) / 0.88);
+    background: rgb(var(--color-accent) / 0.18);
+    box-shadow: 0 0 24px -12px rgb(var(--color-accent-glow) / 0.70);
+  }
+
+  .btn-premium-ghost:not(:disabled):hover {
+    color: rgb(var(--color-accent-hover));
+    background: rgb(var(--color-accent) / 0.14);
+    border-color: rgb(var(--color-accent) / 0.42);
+  }
+}
+
+.btn-premium-danger {
+  color: rgb(var(--color-fg));
+  background: linear-gradient(180deg, rgb(var(--color-danger) / 0.36), rgb(var(--color-danger) / 0.20));
+  border-color: rgb(var(--color-danger) / 0.72);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 10px 24px -13px rgb(var(--color-danger) / 0.78);
+}
+
+@media (hover: hover) {
+  .btn-premium-danger:not(:disabled):hover {
+    background: linear-gradient(180deg, rgb(var(--color-danger) / 0.56), rgb(var(--color-danger) / 0.30));
+    border-color: rgb(var(--color-danger));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 14px 30px -12px rgb(var(--color-danger) / 0.90);
+  }
+}
+
+/* Active toggles need an unmistakable state. */
+.switch-premium[aria-checked='true'] {
+  border-color: rgb(var(--color-accent-glow) / 0.94);
+  background: linear-gradient(135deg, rgb(var(--color-accent-glow)), rgb(var(--color-accent-hover)) 44%, rgb(var(--color-accent)) 72%, rgb(var(--color-accent-dim)));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.32), 0 0 24px -7px rgb(var(--color-accent-glow) / 0.90);
+}
+
+/* Strong semantic pills/statuses: green/yellow/red/blue/purple stay distinct. */
+.pill-glow-ok {
+  background: linear-gradient(180deg, rgb(var(--color-ok) / 0.34), rgb(var(--color-ok) / 0.14));
+  border-color: rgb(var(--color-ok) / 0.64);
+  box-shadow: 0 0 20px -7px rgb(var(--color-ok) / 0.72), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.pill-glow-warn {
+  background: linear-gradient(180deg, rgb(var(--color-warn) / 0.34), rgb(var(--color-warn) / 0.14));
+  border-color: rgb(var(--color-warn) / 0.64);
+  box-shadow: 0 0 20px -7px rgb(var(--color-warn) / 0.72), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.pill-glow-danger {
+  background: linear-gradient(180deg, rgb(var(--color-danger) / 0.38), rgb(var(--color-danger) / 0.16));
+  border-color: rgb(var(--color-danger) / 0.70);
+  box-shadow: 0 0 22px -7px rgb(var(--color-danger) / 0.80), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.pill-glow-info {
+  background: linear-gradient(180deg, rgb(var(--color-info) / 0.34), rgb(var(--color-info) / 0.14));
+  border-color: rgb(var(--color-info) / 0.64);
+  box-shadow: 0 0 20px -7px rgb(var(--color-info) / 0.72), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.pill-glow-planned {
+  background: linear-gradient(180deg, rgb(var(--color-planned) / 0.36), rgb(var(--color-planned) / 0.15));
+  border-color: rgb(var(--color-planned) / 0.66);
+  box-shadow: 0 0 20px -7px rgb(var(--color-planned) / 0.76), inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.pill-glow-neutral {
+  background: linear-gradient(180deg, rgb(var(--color-neutral) / 0.24), rgb(var(--color-neutral) / 0.10));
+  border-color: rgb(var(--color-neutral) / 0.46);
+}
+
+.status-pill[data-state='ok'] {
+  color: rgb(var(--color-ok));
+  border-color: rgb(var(--color-ok) / 0.62);
+  background: rgb(var(--color-ok) / 0.16);
+}
+.status-pill[data-state='warn'] {
+  color: rgb(var(--color-warn));
+  border-color: rgb(var(--color-warn) / 0.62);
+  background: rgb(var(--color-warn) / 0.16);
+}
+.status-pill[data-state='danger'] {
+  color: rgb(var(--color-danger));
+  border-color: rgb(var(--color-danger) / 0.68);
+  background: rgb(var(--color-danger) / 0.18);
+}
+
+.toast-item[data-variant='success'] {
+  background: linear-gradient(90deg, rgb(var(--color-ok) / 0.16), rgb(var(--color-bg-card) / 0.98) 40%);
+  border-left-color: rgb(var(--color-ok));
+}
+.toast-item[data-variant='warn'] {
+  background: linear-gradient(90deg, rgb(var(--color-warn) / 0.16), rgb(var(--color-bg-card) / 0.98) 40%);
+  border-left-color: rgb(var(--color-warn));
+}
+.toast-item[data-variant='danger'] {
+  background: linear-gradient(90deg, rgb(var(--color-danger) / 0.18), rgb(var(--color-bg-card) / 0.98) 40%);
+  border-left-color: rgb(var(--color-danger));
+}
+.toast-item[data-variant='info'] {
+  background: linear-gradient(90deg, rgb(var(--color-info) / 0.16), rgb(var(--color-bg-card) / 0.98) 40%);
+  border-left-color: rgb(var(--color-info));
+}
+
+/* Inputs/focus should pick up the new colour instead of falling back to grey. */
+html[data-theme='obsidian'] .input-premium:focus,
+html[data-theme='obsidian'] .input-premium:focus-visible,
+html[data-theme='ice'] .input-premium:focus,
+html[data-theme='ice'] .input-premium:focus-visible {
+  border-color: rgb(var(--color-accent-hover) / 0.86);
+  background: linear-gradient(180deg, rgb(var(--color-accent) / 0.14), rgb(var(--color-bg-card) / 0.96));
+  box-shadow: 0 0 0 3px rgb(var(--color-accent) / 0.20), 0 10px 28px -12px rgb(var(--color-accent-glow) / 0.58);
+}
+
+/* New subsection switchers from PR #461. */
+.section-tabs {
+  border-color: rgb(var(--color-accent) / 0.26) !important;
+  background: linear-gradient(180deg, rgb(var(--color-bg-card) / 0.90), rgb(var(--color-bg-subtle) / 0.88)) !important;
+}
+
+.section-tabs button[aria-current='page'] {
+  color: rgb(var(--color-on-accent)) !important;
+  border-color: rgb(var(--color-accent-glow) / 0.76) !important;
+  background: linear-gradient(135deg, rgb(var(--color-accent-hover) / 0.92), rgb(var(--color-accent) / 0.82), rgb(var(--color-accent-dim) / 0.88)) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20), 0 10px 28px -16px rgb(var(--color-accent-glow) / 0.90) !important;
+}
+
+.section-tabs button[aria-current='page'] svg {
+  color: currentColor !important;
+}
+
+.section-tabs button[aria-current='page'] span span:last-child:not(:only-child) {
+  border-color: rgb(var(--color-on-accent) / 0.30) !important;
+  background: rgb(var(--color-on-accent) / 0.13) !important;
+  color: currentColor !important;
+}
+
+@media (hover: hover) {
+  .section-tabs button:not([aria-current='page']):hover {
+    color: rgb(var(--color-accent-hover)) !important;
+    border-color: rgb(var(--color-accent) / 0.40) !important;
+    background: rgb(var(--color-accent) / 0.12) !important;
+  }
+}
+
+/* Existing selected navigation commonly uses bg-accent/15 or /20 utility classes.
+   Strengthen only selected action/navigation surfaces, not every accent tint. */
+.dashboard-shell :is(button, a)[class*='bg-accent/20'],
+.dashboard-shell :is(button, a)[class*='bg-accent/15'] {
+  background-color: rgb(var(--color-accent) / 0.32) !important;
+  border-color: rgb(var(--color-accent) / 0.58) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 0 24px -14px rgb(var(--color-accent-glow) / 0.72);
+}
+
+/* Semantic utility surfaces used outside Badge should also read as colour. */
+.dashboard-shell [class*='bg-ok/10'],
+.dashboard-shell [class*='bg-ok/5'] { background-color: rgb(var(--color-ok) / 0.18) !important; }
+.dashboard-shell [class*='bg-warn/10'],
+.dashboard-shell [class*='bg-warn/5'] { background-color: rgb(var(--color-warn) / 0.18) !important; }
+.dashboard-shell [class*='bg-danger/10'],
+.dashboard-shell [class*='bg-danger/5'] { background-color: rgb(var(--color-danger) / 0.20) !important; }
+.dashboard-shell [class*='bg-info/10'],
+.dashboard-shell [class*='bg-info/5'] { background-color: rgb(var(--color-info) / 0.18) !important; }
+.dashboard-shell [class*='bg-planned/10'],
+.dashboard-shell [class*='bg-planned/5'] { background-color: rgb(var(--color-planned) / 0.18) !important; }
