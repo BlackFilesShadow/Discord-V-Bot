@@ -90,16 +90,45 @@ function casinoSaveButtons(page: Page) {
   return page.getByRole('button', { name: 'Speichern', exact: true });
 }
 
+function bankCasinoNavigation(page: Page) {
+  return page.getByRole('navigation', { name: 'Bank-und-Casino-Funktionen' });
+}
+
+async function openCasino(page: Page): Promise<void> {
+  await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
+  const nav = bankCasinoNavigation(page);
+  await expect(nav).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Bank', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toHaveCount(0);
+  await nav.getByRole('button', { name: /Casino/ }).click();
+  await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Bank', exact: true })).toHaveCount(0);
+}
+
 async function noPageOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
 }
 
 test.describe('Casino V3 authenticated dashboard contract', () => {
-  test('renders eight separate cards with server values and decided W/D/L stats', async ({ page }) => {
+  test('Bank/Casino wechselt nur die Sichtbarkeit und behaelt ungespeicherten Bank-Entwurf', async ({ page }) => {
     await stubCasino(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
+    const nav = bankCasinoNavigation(page);
+    const interest = page.getByLabel('Tageszins (%)');
+
+    await expect(interest).toHaveValue('3');
+    await interest.fill('7.25');
+    await nav.getByRole('button', { name: /Casino/ }).click();
     await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toBeVisible();
+    await nav.getByRole('button', { name: 'Bank', exact: true }).click();
+    await expect(interest).toBeVisible();
+    await expect(interest).toHaveValue('7.25');
+  });
+
+  test('renders eight separate cards with server values and decided W/D/L stats', async ({ page }) => {
+    await stubCasino(page);
+    await openCasino(page);
     await expect(casinoSaveButtons(page)).toHaveCount(8);
     for (const type of TYPES) await expect(page.getByLabel(`${type} Gewinnchance`)).toBeVisible();
     await expect(page.getByLabel('SLOT Gewinnchance')).toHaveValue('35');
@@ -112,7 +141,7 @@ test.describe('Casino V3 authenticated dashboard contract', () => {
 
   test('all games send configurable chance, payout, min/max and cooldown', async ({ page }) => {
     const mutations = await stubCasino(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
+    await openCasino(page);
 
     await page.getByLabel('BLACKJACK Gewinnchance').fill('40');
     await page.getByLabel('BLACKJACK Auszahlung').fill('2.1');
@@ -132,14 +161,14 @@ test.describe('Casino V3 authenticated dashboard contract', () => {
 
   test('Blackjack RTP includes configured conditional draw refunds', async ({ page }) => {
     await stubCasino(page);
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
+    await openCasino(page);
     // 42% * x2 + 58% * 10% refund = 89.8%.
     await expect(page.getByText('89.80%', { exact: true })).toBeVisible();
   });
 
   test('update errors surface to the user instead of being swallowed', async ({ page }) => {
     await stubCasino(page, { updateErrorType: 'DICE' });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
+    await openCasino(page);
     await casinoSaveButtons(page).nth(2).click();
     await expect(page.getByText(/CASINO_UPDATE_BLOCKED/)).toBeVisible();
   });
@@ -149,8 +178,7 @@ for (const width of [320, 360, 375, 390, 430] as const) {
   test(`${width}px casino cards stay without page overflow`, async ({ page }) => {
     await stubCasino(page);
     await page.setViewportSize({ width, height: 900 });
-    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=bank-casino`);
-    await expect(page.getByRole('heading', { name: '🎲 Casino-Games' })).toBeVisible();
+    await openCasino(page);
     await expect(page.getByLabel('BACCARAT Gewinnchance')).toBeVisible();
     await noPageOverflow(page);
   });
