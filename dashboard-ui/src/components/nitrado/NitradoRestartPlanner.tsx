@@ -126,6 +126,21 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
   );
 
   const loadedPlan = query.data?.plan ?? null;
+
+  // Unsaved editor state is scoped to exactly one guild/slot. ServerSlotV3 can
+  // reuse this component instance while navigating between slots; carrying a
+  // dirty form across that boundary could otherwise submit slot A's schedule
+  // to slot B's endpoint.
+  useEffect(() => {
+    setDirty(false);
+    setConfirmClear(false);
+    setMode('INTERVAL');
+    setIntervalHours(4);
+    setStartTime('00:00');
+    setTimes([]);
+    setNewTime('00:00');
+  }, [guildId, slot]);
+
   useEffect(() => {
     if (dirty || !loadedPlan) return;
     setMode(loadedPlan.mode);

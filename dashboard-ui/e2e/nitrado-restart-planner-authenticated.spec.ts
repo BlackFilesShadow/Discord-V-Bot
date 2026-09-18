@@ -170,6 +170,43 @@ test.describe('PAGE 2 Nitrado restart planner', () => {
     await expect(page.getByText('Minutenvariable', { exact: false })).toHaveCount(0);
   });
 
+  test('verwirft ungespeicherten Editor-State beim Wechsel auf einen anderen Gameserver-Slot', async ({ page }) => {
+    await stubRestartPlanner(page);
+    await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=restart-tasks`);
+
+    await page.getByLabel('Erste Uhrzeit').fill('00:15');
+    await expect(page.getByText('4:15', { exact: true })).toBeVisible();
+
+    await page.route(`**/api/v2/guilds/${GUILD_ID}/nitrado-tasks/restart-plan?slot=2`, route => json(route, {
+      plan: {
+        enabled: true,
+        mode: 'INTERVAL',
+        intervalHours: 6,
+        startTime: '01:30',
+        times: ['01:30', '07:30', '13:30', '19:30'],
+        revision: 7,
+        syncStatus: 'SYNCED',
+        lastSyncAt: '2026-09-18T10:00:00+02:00',
+        lastSyncError: null,
+        serviceBindingMatches: true,
+      },
+      remote: {
+        actionSupported: true,
+        synchronized: true,
+        restartTasks: [],
+      },
+    }));
+
+    await page.goto(`/servers/${GUILD_ID}/server/2?tab=restart-tasks`);
+
+    await expect(page.getByLabel('Intervall')).toHaveValue('6');
+    await expect(page.getByLabel('Erste Uhrzeit')).toHaveValue('01:30');
+    for (const time of ['1:30', '7:30', '13:30', '19:30']) {
+      await expect(page.getByText(time, { exact: true })).toBeVisible();
+    }
+    await expect(page.getByText('4:15', { exact: true })).toHaveCount(0);
+  });
+
   test('die bewusste Bereinigung bestätigt und löscht alle Restart-Aufgaben über den Remote-API-Pfad', async ({ page }) => {
     const state = await stubRestartPlanner(page);
     await page.goto(`/servers/${GUILD_ID}/server/${SLOT}?tab=restart-tasks`);
