@@ -711,7 +711,12 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             }
 
             const configLock = await tryAcquireNitradoConfigMutationLock(conn.id);
-            if (!configLock) throw new Error('Nitrado-Konfiguration wird parallel geaendert.');
+            if (!configLock) {
+              // Lock-Contention ist kein Remote-Fehler und darf das Retry-Budget
+              // des persistenten Jobs nicht verbrauchen.
+              await requeueForConnectionLock(claim);
+              return;
+            }
 
             try {
               const freshConn = await prisma.nitradoConnection.findFirst({
