@@ -139,7 +139,9 @@ function exactStringExists(value: unknown, expected: string, seen = new Set<obje
   if (seen.has(value as object)) return false;
   seen.add(value as object);
   if (Array.isArray(value)) return value.some(item => exactStringExists(item, expected, seen));
-  return Object.values(value as Record<string, unknown>).some(item => exactStringExists(item, expected, seen));
+  return Object.entries(value as Record<string, unknown>).some(
+    ([key, item]) => key === expected || exactStringExists(item, expected, seen),
+  );
 }
 
 export function taskCatalogSupportsRestart(catalog: unknown): boolean {
