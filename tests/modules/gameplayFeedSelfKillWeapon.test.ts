@@ -70,6 +70,29 @@ describe('Self-Kill Waffenanzeige aus ADM-V2', () => {
     expect(description).toContain('**Waffe:** IJ-70');
   });
 
+  it('rendert einen killed-by-Player Tod mit identischer Spieler-ID als Self Kill Report', () => {
+    const event = parseSelfKill(
+      '01:06:03 | Player "Emil_O92" (DEAD) (id=same-player-guid pos=<3510.7, 9872.4, 269.3>) killed by Player "Emil_O92" (id=same-player-guid pos=<3510.7, 9872.4, 269.3>) with M79 from 0 meters',
+    );
+    const view = deriveGameplayFeedView(event, {
+      showActorCoords: true,
+      showTargetCoords: true,
+      showTool: true,
+      showDistance: true,
+    });
+
+    expect(event.eventType).toBe('PLAYER_SUICIDE');
+    expect(view?.category).toBe('SUICIDE');
+    const description = buildGameplayFeedEmbed(view!, '#dc2626', 'Killhouse').toJSON().description ?? '';
+    expect(description).toContain('**🩸 Self Kill Report**');
+    expect(description).toContain('**Spieler:** Emil\\_O92');
+    expect(description).toContain('**Waffe:** M79');
+    expect(description).not.toContain('V-Kill Report');
+    expect(description).not.toContain('**Killer');
+    expect(description).not.toContain('**Opfer');
+    expect(description).not.toContain('**Distanz:**');
+  });
+
   it('blendet die Waffenzeile komplett aus wenn Waffe / Ursache deaktiviert ist', () => {
     const event = parseSelfKill(
       '01:06:00 | Player "DrQuinnxX" (DEAD) (id=1 pos=<5601.6, 2068.5, 7.5>) committed suicide',
