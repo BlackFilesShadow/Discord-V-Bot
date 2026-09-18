@@ -15,6 +15,7 @@ enum NitradoRestartPlanSyncStatus {
 model NitradoRestartPlan {
   guildId             String
   nitradoConnId       String
+  nitradoServerId     String
   enabled             Boolean                      @default(false)
   mode                NitradoRestartPlanMode       @default(INTERVAL)
   intervalHours       Int?
