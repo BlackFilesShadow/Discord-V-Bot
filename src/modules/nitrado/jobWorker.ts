@@ -16,6 +16,7 @@
  *   - KEEPALIVE          payload: {}              -> validateToken()
  *   - DOWNLOAD_ADM       payload: { profileDir? } -> wird vom ADM-Sync genutzt
  *   - RESTART_IF_DOWN    payload: {}
+ *   - RESTART_PLAN_SYNC   payload: { planRevision } -> echte Nitrado-Tasks reconciliieren
  *
  * Multi-instance: Jeder ausgefuehrte Job haelt zusaetzlich einen dedizierten
  * PostgreSQL-Advisory-Lock pro nitradoConnId. Die DB-Lease fenced den Besitz
@@ -53,6 +54,17 @@ import {
   setNitradoJobQueueMetrics,
   type NitradoJobMetricStatus,
 } from '../../utils/metrics';
+import {
+  reconcileRestartTasks,
+  RestartTaskActionUnsupportedError,
+} from './restartTaskPlan';
+import {
+  RESTART_PLAN_SYNC_OPERATION,
+  markRestartPlanSynced,
+  markRestartPlanSyncPendingError,
+  parsePlanTimes,
+} from './restartTaskPlanStore';
+import { tryAcquireNitradoConfigMutationLock } from './configMutationLock';
 
 const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
@@ -81,6 +93,7 @@ const KNOWN_OPERATIONS = new Set([
   'KEEPALIVE',
   'DOWNLOAD_ADM',
   'RESTART_IF_DOWN',
+  RESTART_PLAN_SYNC_OPERATION,
 ]);
 
 let timer: NodeJS.Timeout | null = null;
@@ -131,6 +144,7 @@ interface JobPayload {
   profileDir?: string;
   banId?: string;
   encryptedIdentifier?: string;
+  planRevision?: number;
   [key: string]: unknown;
 }
 
@@ -161,6 +175,13 @@ class LostJobClaimError extends Error {
   constructor(jobId: string) {
     super(`NitradoJob ${jobId}: Ausfuehrungs-Claim verloren.`);
     this.name = 'LostJobClaimError';
+  }
+}
+
+class SupersededRestartPlanError extends Error {
+  constructor() {
+    super('Restart-Plan wurde durch eine neuere Revision ersetzt.');
+    this.name = 'SupersededRestartPlanError';
   }
 }
 
@@ -660,6 +681,115 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             }
             break;
           }
+          case RESTART_PLAN_SYNC_OPERATION: {
+            if (!conn.nitradoServerId) throw new PermanentJobError('Kein nitradoServerId fuer RESTART_PLAN_SYNC');
+            const revision = payload.planRevision;
+            if (!Number.isSafeInteger(revision) || Number(revision) <= 0) {
+              throw new PermanentJobError('payload.planRevision fehlt oder ist ungueltig');
+            }
+
+            const plan = await prisma.nitradoRestartPlan.findFirst({
+              where: {
+                guildId: job.guildId,
+                nitradoConnId: conn.id,
+                revision: Number(revision),
+              },
+            });
+            if (!plan) {
+              logger.info(`Nitrado Restart-Plan ${job.id}: Revision ${String(revision)} ist nicht mehr aktuell.`);
+              break;
+            }
+            if (plan.nitradoServerId !== conn.nitradoServerId) {
+              const message = 'Nitrado-Servicebindung hat sich seit dem Speichern des Restart-Plans geaendert.';
+              await markRestartPlanSyncPendingError({
+                guildId: job.guildId,
+                nitradoConnId: conn.id,
+                revision: Number(revision),
+                message,
+              });
+              throw new PermanentJobError(message);
+            }
+
+            const configLock = await tryAcquireNitradoConfigMutationLock(conn.id);
+            if (!configLock) throw new Error('Nitrado-Konfiguration wird parallel geaendert.');
+
+            try {
+              const freshConn = await prisma.nitradoConnection.findFirst({
+                where: {
+                  id: conn.id,
+                  guildId: job.guildId,
+                  status: 'ACTIVE',
+                  nitradoServerId: plan.nitradoServerId,
+                },
+                select: {
+                  encryptedToken: true,
+                  nitradoServerId: true,
+                },
+              });
+              if (!freshConn?.nitradoServerId) {
+                throw new PermanentJobError('Nitrado-Servicebindung ist nicht mehr aktuell.');
+              }
+
+              const desiredTimes = plan.enabled ? parsePlanTimes(plan.times) : [];
+              const taskClient = new NitradoClient(
+                decrypt(freshConn.encryptedToken, config.security.encryptionKey),
+              );
+
+              const assertCurrentRevision = async (): Promise<void> => {
+                await ensureClaimOwned();
+                const freshPlan = await prisma.nitradoRestartPlan.findFirst({
+                  where: {
+                    guildId: job.guildId,
+                    nitradoConnId: conn.id,
+                    revision: Number(revision),
+                    nitradoServerId: freshConn.nitradoServerId!,
+                  },
+                  select: { revision: true },
+                });
+                if (!freshPlan) throw new SupersededRestartPlanError();
+              };
+
+              try {
+                await reconcileRestartTasks({
+                  api: taskClient,
+                  serviceId: freshConn.nitradoServerId,
+                  desiredTimes,
+                  beforeMutation: assertCurrentRevision,
+                });
+              } catch (error) {
+                if (error instanceof SupersededRestartPlanError) {
+                  logger.info(`Nitrado Restart-Plan ${job.id}: waehrend Sync durch neuere Revision ersetzt.`);
+                  break;
+                }
+                await markRestartPlanSyncPendingError({
+                  guildId: job.guildId,
+                  nitradoConnId: conn.id,
+                  revision: Number(revision),
+                  message: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+              }
+
+              await assertCurrentRevision();
+              await markRestartPlanSynced({
+                guildId: job.guildId,
+                nitradoConnId: conn.id,
+                revision: Number(revision),
+              });
+              logAudit('NITRADO_RESTART_PLAN_SYNCED', 'NITRADO', {
+                guildId: job.guildId,
+                jobId: job.id,
+                details: {
+                  nitradoConnId: conn.id,
+                  revision: Number(revision),
+                  restartCount: desiredTimes.length,
+                },
+              });
+            } finally {
+              await configLock.release();
+            }
+            break;
+          }
           default:
             throw new PermanentJobError(`Unbekannte Operation: ${job.operation}`);
         }
@@ -687,6 +817,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
           : rawMsg;
         const httpStatus = e instanceof NitradoApiError ? e.status : null;
         const permanent = e instanceof PermanentJobError
+          || e instanceof RestartTaskActionUnsupportedError
           || (httpStatus !== null && httpStatus >= 400 && httpStatus < 500 && httpStatus !== 429);
         await failJob(
           claim,
