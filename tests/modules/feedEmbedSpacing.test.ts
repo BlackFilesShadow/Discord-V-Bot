@@ -43,6 +43,36 @@ describe('approved gameplay feed spacing', () => {
     ].join('\n'));
   });
 
+  const admHeadingCases: Array<[string, Partial<GameplayFeedView>, string]> = [
+    ['PVP', { kind: 'KILL', category: 'PVP', eventType: 'PLAYER_KILLED' }, '💀 V-Kill Report'],
+    ['SUICIDE', { kind: 'DEATH', category: 'SUICIDE', eventType: 'PLAYER_SUICIDE' }, '🩸 Self Kill Report'],
+    ['NPC', { kind: 'DEATH', category: 'NPC', eventType: 'NPC_KILL' }, '☣️ Wild Kill Report'],
+    ['VEHICLE', { kind: 'DEATH', category: 'VEHICLE', eventType: 'VEHICLE_DEATH' }, '💥 Crash Kill Report'],
+    ['OTHER', { kind: 'DEATH', category: 'OTHER', eventType: 'PLAYER_DIED' }, '☠️ Death Report'],
+    ['PLACEMENT', { kind: 'PLACEMENT', category: 'PLACEMENT', eventType: 'PLACEMENT' }, '📦 Placement Report'],
+    ['BUILD', { kind: 'BUILD', category: 'BUILD', eventType: 'BUILD' }, '🔨 Build Report'],
+    ['DISMANTLE', { kind: 'BUILD', category: 'DISMANTLE', eventType: 'DISMANTLE' }, '🔧 Dismantle Report'],
+    ['DESTROY', { kind: 'BUILD', category: 'DESTROY', eventType: 'DESTROY' }, '💥 Destruction Report'],
+    ['RAISED', { kind: 'FLAG', category: 'RAISED', eventType: 'FLAG_RAISED' }, '🚩 Flagge hochgezogen'],
+    ['LOWERED', { kind: 'FLAG', category: 'LOWERED', eventType: 'FLAG_LOWERED' }, '🏳️ Flagge heruntergelassen'],
+  ];
+
+  it.each(admHeadingCases)('%s keeps the embed name exactly one blank line above its content', (_category, overrides, title) => {
+    const description = buildGameplayFeedEmbed(baseView({
+      ...overrides,
+      actorName: 'Spacing Player',
+      targetName: overrides.category === 'NPC' ? 'Animal_CanisLupus' : 'Target',
+      objectType: overrides.kind === 'FLAG' ? 'Flag_RSTA' : 'Fence',
+      toolOrWeapon: 'M4-A1',
+      distanceMeters: 42.5,
+      actorPosition: '100, 20, 200',
+      targetPosition: '101, 21, 201',
+    }), '#dc2626', 'Chernarus Main').toJSON().description ?? '';
+
+    expect(description.startsWith(`**${title}**\n\n`)).toBe(true);
+    expect(description.startsWith(`**${title}**\n\n\n`)).toBe(false);
+  });
+
   it('keeps regular ADM feed fields compact below one blank line after the heading', () => {
     const description = buildGameplayFeedEmbed(baseView({
       kind: 'DEATH',

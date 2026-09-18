@@ -21,6 +21,10 @@ const IZURVIVE_BASE_URL = 'https://www.izurvive.com/';
 const IZURVIVE_ZOOM = 6;
 const ADM_WEAPON_NOT_REPORTED = 'Im ADM-Log nicht angegeben';
 const ADM_DEATH_CAUSE_NOT_REPORTED = 'Im ADM-Log nicht näher angegeben';
+// Verbindlicher Namenabstand fuer alle ADM-Gameplay-Feeds: exakt eine
+// sichtbare Leerzeile zwischen Embed-Name und erstem Inhaltsblock, wie beim
+// freigegebenen V-Kill-Referenzlayout.
+const ADM_FEED_HEADING_SEPARATOR = '\n\n';
 
 function parseHex(value: string): number {
   const raw = value.startsWith('#') ? value.slice(1) : value;
@@ -219,7 +223,7 @@ function compactGameplayPresentation(
   return compactEmbed(
     parseHex(embedColor),
     safeEmbedField(serverAlias.trim() || 'DayZ-Server', 256),
-  ).setDescription(`**${title}**\n\n${groups.join('\n\n')}`);
+  ).setDescription(`**${title}**${ADM_FEED_HEADING_SEPARATOR}${groups.join('\n\n')}`);
 }
 
 export function buildGameplayFeedEmbed(
