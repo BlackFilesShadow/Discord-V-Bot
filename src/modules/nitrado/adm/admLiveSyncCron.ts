@@ -30,6 +30,7 @@ import {
 import { newDateContext, resolveBaseDate, type AdmDateContext } from './admLineParser';
 import { verifyLinkChallengesInAdmText } from '../../linking/admChallengeVerifier';
 import type { LinkClient } from '../../linking/linkService';
+import { resumeAutoPausedGameplayFeeds } from '../../gameplayFeeds/autoPauseRecovery';
 import {
   admBindingFileIdentity,
   admBindingFileIdentityPrefix,
@@ -220,12 +221,24 @@ async function setSourceStatus(conn: LiveConn, message: string | null): Promise<
   });
 }
 
+async function resumeFeedsAfterHealthySync(conn: LiveConn): Promise<void> {
+  await withFreshAdmBinding(conn, async () => {
+    const resumed = await resumeAutoPausedGameplayFeeds({
+      guildId: conn.guildId,
+      nitradoConnId: conn.id,
+    });
+    if (resumed > 0) {
+      logger.info(`ADM-Live-Sync ${conn.id}: ${resumed} automatisch pausierte Gameplay-Feed(s) nach gesunder Nitrado-Quelle reaktiviert.`);
+    }
+  });
+}
+
 async function baselineCurrentFile(
   conn: LiveConn,
   client: NitradoClient,
   profileDir: string,
   file: AdmFile,
-): Promise<void> {
+): Promise<boolean> {
   const remotePath = resolveAdmRemoteFilePath(profileDir, file);
   let newOffset = file.size;
   let tail = '';
@@ -255,6 +268,7 @@ async function baselineCurrentFile(
     fingerprint(tail),
   ));
   logger.info(`ADM-Live-Sync ${conn.id}: Baseline ${file.name} bei Byte ${newOffset}/${file.size} (${profileDir}, Binding ${conn.bindingVersion}).`);
+  return isAdmFileFullyConsumed(newOffset, file.size);
 }
 
 async function ingestFile(
@@ -379,8 +393,9 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
     });
 
     if (!latestCursor) {
-      await baselineCurrentFile(conn, client, profile.profileDir, files[files.length - 1]);
+      const baselineComplete = await baselineCurrentFile(conn, client, profile.profileDir, files[files.length - 1]);
       await setSourceStatus(conn, null);
+      if (baselineComplete) await resumeFeedsAfterHealthySync(conn);
       return;
     }
 
@@ -408,6 +423,7 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
     }
 
     let firstFileError: string | null = null;
+    let sourceCaughtUp = candidates.length <= MAX_FILES_PER_TICK;
     for (const file of candidates.slice(0, MAX_FILES_PER_TICK)) {
       const fileIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
       const cursor = await prisma.admSourceCursor.findUnique({
@@ -444,11 +460,15 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
         // Do not let a newer rotated file overtake unconsumed bytes in this
         // older file. Reward caps/cooldowns and all feeds then observe one
         // monotonic source chronology rather than poll-budget timing.
-        if (!fileComplete) break;
+        if (!fileComplete) {
+          sourceCaughtUp = false;
+          break;
+        }
       } catch (error) {
         if (isAdmBindingFenceError(error)) throw error;
         const message = safeError(error);
         firstFileError ??= `${file.name}: ${message}`;
+        sourceCaughtUp = false;
         logger.warn(`ADM-Live-Sync ${conn.id}: Datei ${file.name} fehlgeschlagen: ${message}`);
         // Even a non-circuit source failure fences newer files. Advancing past
         // an unread older file would otherwise create an event-time inversion.
@@ -459,6 +479,7 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
       }
     }
     await setSourceStatus(conn, firstFileError);
+    if (!firstFileError && sourceCaughtUp) await resumeFeedsAfterHealthySync(conn);
   } catch (error) {
     if (isAdmBindingFenceError(error)) {
       logger.debug(`ADM-Live-Sync ${conn.id}: Remote-Ergebnis wegen geaenderter/beschaeftigter Binding verworfen.`);
