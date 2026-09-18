@@ -9,7 +9,7 @@ function ctxWithDate() {
 
 describe('admLineParser — Golden', () => {
   it('verwendet die neue Parser-Version fuer korrigierte Feed-Semantik', () => {
-    expect(ADM_PARSER_VERSION).toBe(8);
+    expect(ADM_PARSER_VERSION).toBe(9);
   });
 
   it('erkennt den Header und setzt das Basisdatum', () => {
@@ -71,6 +71,26 @@ describe('admLineParser — Golden', () => {
     expect(ev?.targetName).toBe('Alpha');
     expect(ev?.toolOrWeapon).toBe('Mosin 91/30');
     expect(ev?.distanceMeters).toBeCloseTo(25.3);
+  });
+
+  it('ordnet killed-by-Player mit identischer Spieler-ID als Self Kill statt PvP ein', () => {
+    const ev = parseAdmLine('18:06:00 | Player "Emil_O92" (DEAD) (id=same-player-guid pos=<3510.7, 9872.4, 269.3>) killed by Player "Emil_O92" (id=same-player-guid pos=<3510.7, 9872.4, 269.3>) with M79 from 0 meters', ctxWithDate());
+    expect(ev).toMatchObject({
+      eventType: 'PLAYER_SUICIDE',
+      actorName: 'Emil_O92',
+      actorGameId: 'same-player-guid',
+      toolOrWeapon: 'M79',
+      targetName: null,
+      targetGameId: null,
+      distanceMeters: null,
+    });
+  });
+
+  it('gleicher Spielername allein reicht ohne identische ID nicht fuer Self Kill', () => {
+    const ev = parseAdmLine('18:06:01 | Player "SameName" (DEAD) (id=victim-guid pos=<1,2,3>) killed by Player "SameName" (id=killer-guid pos=<4,5,6>) with M4-A1 from 10 meters', ctxWithDate());
+    expect(ev?.eventType).toBe('PLAYER_KILLED');
+    expect(ev?.actorGameId).toBe('victim-guid');
+    expect(ev?.targetGameId).toBe('killer-guid');
   });
 
   it('PvP-Kill funktioniert ohne DEAD und ohne Player-Praefix beim Killer', () => {
