@@ -86,7 +86,7 @@
 
   /* Legacy groups the last four items in a wrapper; V3 marks the fifth item
      with the same divider classes. Flatten only that historical page divider
-     so all eight functions are shown as one PAGE 2 navigation. */
+     so all slot functions are shown as one PAGE 2 navigation. */
   .dashboard-shell[data-dashboard-page='2'] .dashboard-sidebar nav[aria-label='Slot-Funktionen'] > div.pt-4.mt-3.border-t {
     margin-top: 0 !important;
     padding-top: 0 !important;
