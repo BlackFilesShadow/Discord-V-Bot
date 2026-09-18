@@ -1,6 +1,6 @@
 import { EmbedBuilder } from 'discord.js';
 import { safeEmbedField } from '../../utils/embedSanitize';
-import { compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { compactEmbed } from '../../utils/embedDesign';
 import type { GameplayFeedView } from './types';
 
 const TITLES: Record<GameplayFeedView['category'], string> = {
@@ -172,26 +172,54 @@ export function placementObjectLabel(value: string): string {
   return displayName || humanizePlacementClass(className);
 }
 
+function visibleFieldLine(field: { name: string; value: string }): string {
+  return field.value.includes('\n')
+    ? `**${field.name}**\n${field.value}`
+    : `**${field.name}:** ${field.value}`;
+}
+
 /**
- * Wandelt ausschliesslich die bereits fertig berechneten sichtbaren Felder in
- * die kompakte Referenzdarstellung um. Die fachliche Auswahl, Reihenfolge und
- * Werte der Gameplay-Daten bleiben unveraendert.
+ * Praesentiert die bereits berechneten sichtbaren Felder im freigegebenen
+ * Feed-Layout. Fachliche Auswahl, Reihenfolge und Werte bleiben unveraendert;
+ * nur die sichtbaren Abstaende werden pro Feed-Typ gesetzt.
  */
 function compactGameplayPresentation(
   source: EmbedBuilder,
   embedColor: string,
   serverAlias: string,
+  category: GameplayFeedView['category'],
 ): EmbedBuilder {
   const json = source.toJSON();
-  const lines = (json.fields ?? [])
-    .filter(field => field.name !== 'Server')
-    .map(field => field.value.includes('\n')
-      ? `**${field.name}**\n${field.value}`
-      : `**${field.name}:** ${field.value}`);
+  const visibleFields = (json.fields ?? []).filter(field => field.name !== 'Server');
+  const byName = new Map(visibleFields.map(field => [field.name, visibleFieldLine(field)]));
+  const title = json.title ?? 'Gameplay Report';
+
+  let groups: string[];
+  if (category === 'PVP') {
+    const rest = visibleFields
+      .filter(field => field.name !== 'Killer' && field.name !== 'Opfer')
+      .map(visibleFieldLine)
+      .join('\n');
+    groups = [byName.get('Killer'), byName.get('Opfer'), rest].filter((value): value is string => Boolean(value));
+  } else if (category === 'RAISED' || category === 'LOWERED') {
+    const actionBlock = [byName.get('Aktion'), byName.get('Spieler')]
+      .filter((value): value is string => Boolean(value))
+      .join('\n');
+    groups = [
+      actionBlock,
+      byName.get('Flagge'),
+      byName.get('Flaggen-Position'),
+      byName.get('Spieler-Position'),
+      byName.get('Ereigniszeit'),
+    ].filter((value): value is string => Boolean(value));
+  } else {
+    groups = [visibleFields.map(visibleFieldLine).join('\n')].filter(Boolean);
+  }
+
   return compactEmbed(
     parseHex(embedColor),
     safeEmbedField(serverAlias.trim() || 'DayZ-Server', 256),
-  ).setDescription(compactDescription(json.title ?? 'Gameplay Report', lines));
+  ).setDescription(`**${title}**\n\n${groups.join('\n\n')}`);
 }
 
 export function buildGameplayFeedEmbed(
@@ -223,7 +251,7 @@ export function buildGameplayFeedEmbed(
     const actorPos = flagPositionField(view.actorPosition);
     if (actorPos) embed.addFields({ name: 'Spieler-Position', value: actorPos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return compactGameplayPresentation(embed, embedColor, serverAlias);
+    return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
   }
 
   if (view.category === 'PVP') {
@@ -243,7 +271,7 @@ export function buildGameplayFeedEmbed(
       embed.addFields({ name: 'Distanz', value: `${view.distanceMeters} m`, inline: false });
     }
     addServer(embed, serverAlias);
-    return compactGameplayPresentation(embed, embedColor, serverAlias);
+    return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
   }
 
   if (view.category === 'SUICIDE') {
@@ -252,7 +280,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return compactGameplayPresentation(embed, embedColor, serverAlias);
+    return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
   }
 
   if (view.category === 'NPC') {
@@ -263,7 +291,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return compactGameplayPresentation(embed, embedColor, serverAlias);
+    return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
   }
 
   if (view.category === 'VEHICLE') {
@@ -274,7 +302,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return compactGameplayPresentation(embed, embedColor, serverAlias);
+    return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
   }
 
   if (view.category === 'OTHER') {
@@ -287,7 +315,7 @@ export function buildGameplayFeedEmbed(
     const pos = positionField(view.actorPosition);
     if (pos) embed.addFields({ name: 'Pos', value: pos, inline: false });
     addServer(embed, serverAlias, view.occurredAt, true);
-    return compactGameplayPresentation(embed, embedColor, serverAlias);
+    return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
   }
 
   embed.addFields({ name: 'Spieler', value: safeName(view.actorName), inline: false });
@@ -303,5 +331,5 @@ export function buildGameplayFeedEmbed(
   const pos = positionField(view.actorPosition);
   if (pos) embed.addFields({ name: 'Position', value: pos, inline: false });
   addServer(embed, serverAlias, view.occurredAt, true);
-  return compactGameplayPresentation(embed, embedColor, serverAlias);
+  return compactGameplayPresentation(embed, embedColor, serverAlias, view.category);
 }
