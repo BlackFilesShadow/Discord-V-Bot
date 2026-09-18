@@ -85,7 +85,7 @@ describe('Self-Kill Waffenanzeige aus ADM-V2', () => {
     expect(view?.category).toBe('SUICIDE');
     const description = buildGameplayFeedEmbed(view!, '#dc2626', 'Killhouse').toJSON().description ?? '';
     expect(description).toContain('**🩸 Self Kill Report**');
-    expect(description).toContain('**Spieler:** Emil\_O92');
+    expect(description).toContain('**Spieler:** Emil\\_O92');
     expect(description).toContain('**Waffe:** M79');
     expect(description).not.toContain('V-Kill Report');
     expect(description).not.toContain('**Killer');
