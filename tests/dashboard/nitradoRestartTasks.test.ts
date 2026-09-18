@@ -16,7 +16,7 @@ const clearRestartPlan = jest.fn();
 const logAuditDb = jest.fn((..._args: unknown[]) => undefined);
 const acquireMutationLock = jest.fn();
 const releaseMutationLock = jest.fn(async () => undefined);
-const decryptMock = jest.fn(() => 'decrypted-token');
+const decryptMock = jest.fn((..._args: unknown[]) => 'decrypted-token');
 
 const listTasks = jest.fn();
 const getTaskActionCatalog = jest.fn();
