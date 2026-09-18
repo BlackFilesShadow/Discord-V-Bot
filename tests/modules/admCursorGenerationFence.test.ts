@@ -11,12 +11,12 @@ type CursorSnapshot = {
   lastKnownSize: bigint;
 };
 
-function ingestResult(newOffset: number): IngestResult {
+function ingestResult(newOffset: number, wasReset = false): IngestResult {
   return {
     events: [],
     newOffset,
     trailingPartial: '',
-    wasReset: false,
+    wasReset,
   };
 }
 
@@ -79,7 +79,7 @@ describe('ADM cursor generation fence', () => {
       holder.client,
       { guildId: 'guild', nitradoConnId: 'conn' },
       sourceMeta(101, 100_000),
-      ingestResult(4_048),
+      ingestResult(4_048, true),
       'new-generation-fingerprint',
     );
 
@@ -102,7 +102,7 @@ describe('ADM cursor generation fence', () => {
       holder.client,
       { guildId: 'guild', nitradoConnId: 'conn' },
       sourceMeta(101, 4_096),
-      ingestResult(4_096),
+      ingestResult(4_096, true),
       'replacement-fingerprint',
     );
 
@@ -121,13 +121,32 @@ describe('ADM cursor generation fence', () => {
       holder.client,
       { guildId: 'guild', nitradoConnId: 'conn' },
       sourceMeta(100, 40_000),
-      ingestResult(4_048),
+      ingestResult(4_048, true),
       'truncated-generation-fingerprint',
     );
 
     expect(holder.upserts).toHaveLength(1);
     expect(holder.cursor.processedByteOffset).toBe(4_048n);
     expect(holder.cursor.lastKnownSize).toBe(40_000n);
+  });
+
+  it('blockiert eine kleinere Snapshot-Groesse ohne Reset-Signal auch bei gleicher mtime', async () => {
+    const holder = makeClient({
+      processedByteOffset: 80_000n,
+      lastModifiedAt: 100,
+      lastKnownSize: 100_000n,
+    });
+
+    await persistAdmEvents(
+      holder.client,
+      { guildId: 'guild', nitradoConnId: 'conn' },
+      sourceMeta(100, 90_000),
+      ingestResult(70_000),
+      'same-second-stale-snapshot',
+    );
+
+    expect(holder.upserts).toHaveLength(0);
+    expect(holder.cursor.processedByteOffset).toBe(80_000n);
   });
 
   it('blockiert weiterhin einen langsameren normalen Append-Poll mit neuerem mtime aber kleinerem Offset', async () => {
