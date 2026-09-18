@@ -264,11 +264,13 @@ async function ingestFile(
   timeZone: string | null,
   file: AdmFile,
   startOffset: number,
+  resetCursor: boolean,
 ): Promise<boolean> {
   if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error(`Ungueltige ADM-Dateigroesse fuer ${file.name}`);
   const sourceIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
   const remotePath = resolveAdmRemoteFilePath(profileDir, file);
-  let offset = startOffset > file.size ? 0 : startOffset;
+  const resetAtStart = resetCursor || startOffset > file.size;
+  let offset = resetAtStart ? 0 : startOffset;
   let context = await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone);
   let rangeReads = 0;
 
@@ -284,7 +286,10 @@ async function ingestFile(
     rangeReads += 1;
     if (chunk.length === 0) break;
 
-    const result = ingestChunk(chunk, offset, { fileName: file.name, dateCtx: context });
+    const parsedResult = ingestChunk(chunk, offset, { fileName: file.name, dateCtx: context });
+    const result = resetAtStart && rangeReads === 1
+      ? { ...parsedResult, wasReset: true }
+      : parsedResult;
     const meta: AdmSourceMeta = {
       fileIdentity: sourceIdentity,
       fileName: file.name,
@@ -415,9 +420,18 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
         },
       });
       try {
-        const startOffset = cursor && !shouldRestartReusedAdmFile(file, cursor)
+        const replacedInPlace = cursor ? shouldRestartReusedAdmFile(file, cursor) : false;
+        const cursorPastEnd = cursor ? Number(cursor.processedByteOffset) > file.size : false;
+        const sourceShrank = cursor ? file.size < Number(cursor.lastKnownSize) : false;
+        const resetCursor = Boolean(cursor && (replacedInPlace || cursorPastEnd || sourceShrank));
+        const startOffset = cursor && !resetCursor
           ? Number(cursor.processedByteOffset)
           : 0;
+        if (resetCursor) {
+          logger.info(
+            `ADM-Live-Sync ${conn.id}: neue Generation fuer ${file.name} erkannt; Cursor wird kontrolliert auf Byte 0 rebased.`,
+          );
+        }
         const fileComplete = await ingestFile(
           conn,
           client,
@@ -425,6 +439,7 @@ async function processConnection(scope: { id: string; guildId: string }): Promis
           profile.timeZone,
           file,
           startOffset,
+          resetCursor,
         );
         // Do not let a newer rotated file overtake unconsumed bytes in this
         // older file. Reward caps/cooldowns and all feeds then observe one

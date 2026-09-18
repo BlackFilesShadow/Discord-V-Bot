@@ -128,6 +128,14 @@ export interface AdmSourceMeta {
   fileSize: number;
 }
 
+type AdmCursorSnapshot = {
+  processedByteOffset: bigint;
+  // Alte Test-/Legacy-Doubles liefern weiterhin nur den Offset. In Produktion
+  // selektieren wir beide Generationsfelder immer mit.
+  lastModifiedAt?: number;
+  lastKnownSize?: bigint;
+};
+
 export interface AdmPersistClient {
   admEvent: { createMany: (args: { data: unknown[]; skipDuplicates?: boolean }) => Promise<{ count: number }> };
   // Optional im Test-/Legacy-Client: Nur echte Flaggenereignisse benoetigen
@@ -137,18 +145,65 @@ export interface AdmPersistClient {
   admSourceCursor: {
     upsert: (args: unknown) => Promise<unknown>;
     // Optional: der produktive PrismaClient hat diese Methode immer. Wird sie
-    // bereitgestellt, prueft persistAdmEvents vor dem Cursor-Schreiben, ob ein
-    // paralleler Sync-Lauf (z.B. eine zweite Bot-Instanz, die denselben
-    // nitradoConnId pollt) den Cursor bereits weiter vorangebracht hat, und
-    // ueberschreibt processedByteOffset dann nicht rueckwaerts. Fehlt sie
-    // (Alt-/Test-Doubles), bleibt das bisherige Verhalten unveraendert.
-    findUnique?: (args: unknown) => Promise<{ processedByteOffset: bigint } | null>;
+    // bereitgestellt, prueft persistAdmEvents nicht nur die Byte-Position,
+    // sondern auch die Quellgeneration. Dadurch bleiben parallele Polls
+    // monoton, waehrend eine von Nitrado rotierte/ersetzte Datei ihren Cursor
+    // legitim wieder bei Byte 0 beginnen darf.
+    findUnique?: (args: unknown) => Promise<AdmCursorSnapshot | null>;
   };
   $transaction: <T>(fn: (tx: AdmPersistClient) => Promise<T>) => Promise<T>;
 }
 
 function isFlagEvent(event: RawAdmEvent): boolean {
   return event.eventType === 'FLAG_RAISED' || event.eventType === 'FLAG_LOWERED';
+}
+
+function shouldWriteCursor(
+  existing: AdmCursorSnapshot,
+  meta: AdmSourceMeta,
+  result: IngestResult,
+): boolean {
+  const newOffset = BigInt(result.newOffset);
+
+  // Legacy-/Test-Clients ohne Generationsmetadaten behalten exakt den bisherigen
+  // monotonic-offset Schutz. Der produktive Prisma-Pfad liefert beide Felder.
+  if (existing.lastModifiedAt === undefined || existing.lastKnownSize === undefined) {
+    return newOffset > existing.processedByteOffset;
+  }
+
+  // Ein Lauf aus einer aelteren Dateigeneration darf nach einem bereits
+  // erfolgten Rotations-Reset niemals wieder den neuen Cursor ueberschreiben.
+  if (meta.lastModifiedAt < existing.lastModifiedAt) return false;
+
+  // Vorwaertsbewegung ist der normale Append-Fall. Auch bei neuerem mtime gilt:
+  // nur ein groesserer Byte-Offset darf den Cursor ohne Generationwechsel
+  // fortschreiben.
+  if (newOffset > existing.processedByteOffset) return true;
+
+  // Rueckwaerts-/Gleichstand-Schreiben sind nur erlaubt, wenn der Ingestor den
+  // Lauf ausdruecklich als Quellen-Reset markiert hat. Damit kann ein normaler
+  // paralleler Append-Poll mit nur neuerem mtime niemals den Cursor rebasen.
+  if (!result.wasReset) return false;
+
+  const incomingSize = BigInt(meta.fileSize);
+
+  // Nitrado same-name/same-size Rotation: die alte Generation war komplett
+  // gelesen, Groesse bleibt identisch, mtime ist neuer. Auch ein exakt gleich
+  // grosser kleiner Log muss die Metadaten aktualisieren duerfen, sonst wird er
+  // bei jedem Poll erneut als Rotation erkannt.
+  const sameSizeReplacement = meta.lastModifiedAt > existing.lastModifiedAt
+    && incomingSize === existing.lastKnownSize
+    && existing.processedByteOffset >= existing.lastKnownSize;
+  if (sameSizeReplacement) return true;
+
+  // Truncation/kleinere Ersatzdatei: `wasReset` bestaetigt, dass der Aufrufer
+  // bewusst wieder bei Byte 0 begonnen hat. Die Groesse allein reicht nicht,
+  // damit ein gleichsekundiger langsamer Poll niemals einen neueren Cursor
+  // zuruecksetzen kann.
+  const truncatedReplacement = incomingSize < existing.lastKnownSize;
+  if (truncatedReplacement) return true;
+
+  return false;
 }
 
 async function persistRowsInBatches(
@@ -237,16 +292,6 @@ export async function persistAdmEvents(
     }
 
     if (tx.admSourceCursor.findUnique) {
-      // Events sind bereits idempotent eingefuegt (eventKey-Dedup). Nur der
-      // Cursor selbst ist bei zwei parallel denselben nitradoConnId pollenden
-      // Instanzen ohne diese Pruefung rueckwaerts-verwundbar: ein langsamerer
-      // Lauf koennte processedByteOffset hinter einen bereits weiter
-      // fortgeschrittenen Wert zuruecksetzen. Read-then-write statt eines
-      // einzelnen atomaren Statements, da AdmPersistClient bewusst kein
-      // $executeRaw fuer Test-Doubles exponiert - das verengt das Race-Fenster
-      // erheblich, ohne es fuer eine adversarielle Nebenlaeufigkeit zu
-      // garantieren (fuer den beschriebenen Bedrohungsfall - zwei kooperative
-      // Bot-Instanzen, keine feindliche Nebenlaeufigkeit - ausreichend).
       const existing = await tx.admSourceCursor.findUnique({
         where: {
           guildId_nitradoConnId_fileIdentity: {
@@ -255,9 +300,13 @@ export async function persistAdmEvents(
             fileIdentity: meta.fileIdentity,
           },
         },
-        select: { processedByteOffset: true },
+        select: {
+          processedByteOffset: true,
+          lastModifiedAt: true,
+          lastKnownSize: true,
+        },
       });
-      if (existing && existing.processedByteOffset >= BigInt(result.newOffset)) {
+      if (existing && !shouldWriteCursor(existing, meta, result)) {
         return { inserted };
       }
     }
