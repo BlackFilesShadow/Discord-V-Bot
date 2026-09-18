@@ -23,12 +23,11 @@ describe('Online List embed and change detection', () => {
     { gameId: 'guid-a', playerName: 'Alpha', position: '100,200,10' },
   ];
 
-  it('renders the compact reference empty state for zero players', () => {
+  it('renders the approved empty-state spacing for zero players', () => {
     const json = buildPlayerListEmbeds({
       serverAlias: 'Empty Server', entries: [], showCoordinates: false, embedColor: '#2563eb',
     })[0].toJSON();
-    expect(json.description).toContain('**🌐 • Online List · 0 Players**');
-    expect(json.description).toMatch(/keine Spieler/i);
+    expect(json.description).toContain('**🌐 • Online List · 0 Players**\n\nKeine Spieler online.');
     expect(json.footer?.text).toBe('Empty Server');
     expect(json.fields ?? []).toHaveLength(0);
   });
@@ -47,7 +46,7 @@ describe('Online List embed and change detection', () => {
       embedColor: '#2563eb',
     })[0].toJSON();
     const pendingValue = without.description ?? '';
-    expect(pendingValue).toContain('Solo');
+    expect(pendingValue).toContain('**🌐 • Online List · 1 Players**\n\n• Solo');
     expect(pendingValue).not.toMatch(/Position unbekannt|izurvive/i);
     expect(withPosition.description).toMatch(/Solo.*50,60/s);
   });
@@ -57,7 +56,7 @@ describe('Online List embed and change detection', () => {
       serverAlias: 'Chernarus #1', entries, showCoordinates: true, embedColor: '#2563eb',
     })[0].toJSON();
     expect(json.footer?.text).toBe('Chernarus #1');
-    expect(json.description).toContain('**🌐 • Online List · 2 Players**');
+    expect(json.description).toContain('**🌐 • Online List · 2 Players**\n\n');
     expect(json.description).toMatch(/Alpha.*izurvive\.com.*Bravo/s);
     expect(JSON.stringify(json)).not.toContain('Position unbekannt');
   });
@@ -129,7 +128,7 @@ describe('Online List embed and change detection', () => {
     });
     expect(embeds).toHaveLength(1);
     const json = embeds[0].toJSON();
-    expect(json.description).toContain('**🌐 • Online List · 50 Players**');
+    expect(json.description).toContain('**🌐 • Online List · 50 Players**\n\n');
     expect(json.description).not.toMatch(/Fortsetzung/);
     expect(json.description).toContain('Player\\_000');
     expect(json.description).toContain('Player\\_049');
