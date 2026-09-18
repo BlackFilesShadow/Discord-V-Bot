@@ -22,7 +22,7 @@ const liveKnowledge = read('src/modules/ai/liveServerKnowledgeIndex.ts');
 
 describe('Nitrado-1Z final production coupling matrix', () => {
   it('keeps every mutating remote intent behind the durable worker + claim/lease boundary', () => {
-    for (const operation of ['WHITELIST_ADD', 'WHITELIST_REMOVE', 'SERVER_BAN_ADD', 'SERVER_BAN_REMOVE', 'RESTART_IF_DOWN']) expect(worker).toContain(operation);
+    for (const operation of ['WHITELIST_ADD', 'WHITELIST_REMOVE', 'SERVER_BAN_ADD', 'SERVER_BAN_REMOVE', 'RESTART_IF_DOWN', 'RESTART_PLAN_SYNC']) expect(worker).toContain(operation);
     expect(worker).toContain('claimNitradoJob');
     expect(worker).toContain('heartbeatNitradoJobClaim');
     expect(worker).toContain('transitionClaimedNitradoJob');
