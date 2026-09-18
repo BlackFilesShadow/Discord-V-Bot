@@ -88,6 +88,13 @@ function formatRemoteDate(value: string | null): string {
   return parsed.toLocaleString('de-DE');
 }
 
+function displayClock(value: string): string {
+  const normalized = normalizeTime(value);
+  if (!normalized) return value;
+  const [hour, minute] = normalized.split(':');
+  return `${Number(hour)}:${minute}`;
+}
+
 export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -297,7 +304,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
               <div className="flex flex-wrap gap-2">
                 {fixedTimes(times).map(time => (
                   <span key={time} className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-bg/40 px-2 py-1 text-sm">
-                    {time}
+                    {displayClock(time)}
                     <button
                       type="button"
                       className="rounded px-1 text-muted hover:text-danger"
@@ -389,8 +396,16 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
             </Badge>
           </div>
         </CardHeader>
-        {!data || data.remote.restartTasks.length === 0 ? (
-          <p className="text-sm text-muted">Keine automatischen Restart-Aufgaben bei Nitrado vorhanden.</p>
+        {query.isLoading ? (
+          <p className="text-sm text-muted">Lade den aktuellen Nitrado-Zustand…</p>
+        ) : query.isError ? (
+          <div role="alert" className="text-sm text-danger">
+            Der aktuelle Nitrado-Task-Zustand ist nicht verfügbar. Es wird ausdrücklich nicht angenommen, dass keine Aufgaben existieren.
+          </div>
+        ) : !data ? (
+          <div role="alert" className="text-sm text-danger">Kein bestätigter Nitrado-Zustand verfügbar.</div>
+        ) : data.remote.restartTasks.length === 0 ? (
+          <p className="text-sm text-muted">Nitrado bestätigt aktuell keine automatischen Restart-Aufgaben.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-sm">
@@ -406,7 +421,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
                 {data.remote.restartTasks.map(task => (
                   <tr key={task.id} className="border-t border-border/60">
                     <td className="py-2 font-mono text-white">
-                      {task.time ?? `${task.hour}:${task.minute}`}
+                      {task.time ? displayClock(task.time) : `${task.hour}:${task.minute}`}
                     </td>
                     <td className="py-2 text-muted">{formatRemoteDate(task.lastRun)}</td>
                     <td className="py-2 text-muted">{formatRemoteDate(task.nextRun)}</td>
