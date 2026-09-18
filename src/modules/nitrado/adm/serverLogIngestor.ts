@@ -130,8 +130,10 @@ export interface AdmSourceMeta {
 
 type AdmCursorSnapshot = {
   processedByteOffset: bigint;
-  lastModifiedAt: number;
-  lastKnownSize: bigint;
+  // Alte Test-/Legacy-Doubles liefern weiterhin nur den Offset. In Produktion
+  // selektieren wir beide Generationsfelder immer mit.
+  lastModifiedAt?: number;
+  lastKnownSize?: bigint;
 };
 
 export interface AdmPersistClient {
@@ -161,6 +163,12 @@ function shouldWriteCursor(
   meta: AdmSourceMeta,
   newOffset: bigint,
 ): boolean {
+  // Legacy-/Test-Clients ohne Generationsmetadaten behalten exakt den bisherigen
+  // monotonic-offset Schutz. Der produktive Prisma-Pfad liefert beide Felder.
+  if (existing.lastModifiedAt === undefined || existing.lastKnownSize === undefined) {
+    return newOffset > existing.processedByteOffset;
+  }
+
   // Ein Lauf aus einer aelteren Dateigeneration darf nach einem bereits
   // erfolgten Rotations-Reset niemals wieder den neuen Cursor ueberschreiben.
   if (meta.lastModifiedAt < existing.lastModifiedAt) return false;
