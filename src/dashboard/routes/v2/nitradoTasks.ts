@@ -17,6 +17,7 @@ import {
   clearRestartPlan,
   parsePlanTimes,
   saveRestartPlan,
+  RestartPlanBindingConflictError,
 } from '../../../modules/nitrado/restartTaskPlanStore';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
 
@@ -159,15 +160,24 @@ nitradoTasksRouter.put('/restart-plan', requireGuildPermission('nitrado.write'),
     return;
   }
 
-  const saved = await saveRestartPlan(
-    {
-      guildId: scope.guildId,
-      nitradoConnId: binding.id,
-      nitradoServerId: binding.nitradoServerId,
-    },
-    scope.actorDiscordId,
-    plan,
-  );
+  let saved;
+  try {
+    saved = await saveRestartPlan(
+      {
+        guildId: scope.guildId,
+        nitradoConnId: binding.id,
+        nitradoServerId: binding.nitradoServerId,
+      },
+      scope.actorDiscordId,
+      plan,
+    );
+  } catch (error) {
+    if (error instanceof RestartPlanBindingConflictError) {
+      res.status(409).json({ error: error.message, code: error.code });
+      return;
+    }
+    throw error;
+  }
 
   logAuditDb('NITRADO_RESTART_PLAN_QUEUED', 'NITRADO', {
     actorUserId: req.auth!.userId,
@@ -196,14 +206,23 @@ nitradoTasksRouter.delete('/restart-tasks', requireGuildPermission('nitrado.writ
   const binding = await resolveBinding(scope, req.query.slot, res);
   if (!binding) return;
 
-  const saved = await clearRestartPlan(
-    {
-      guildId: scope.guildId,
-      nitradoConnId: binding.id,
-      nitradoServerId: binding.nitradoServerId,
-    },
-    scope.actorDiscordId,
-  );
+  let saved;
+  try {
+    saved = await clearRestartPlan(
+      {
+        guildId: scope.guildId,
+        nitradoConnId: binding.id,
+        nitradoServerId: binding.nitradoServerId,
+      },
+      scope.actorDiscordId,
+    );
+  } catch (error) {
+    if (error instanceof RestartPlanBindingConflictError) {
+      res.status(409).json({ error: error.message, code: error.code });
+      return;
+    }
+    throw error;
+  }
 
   logAuditDb('NITRADO_RESTART_TASKS_CLEAR_QUEUED', 'NITRADO', {
     actorUserId: req.auth!.userId,
