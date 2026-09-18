@@ -51,7 +51,7 @@ async function reply(
   state: ReplyState = 'INFO',
   title?: string,
 ): Promise<void> {
-  const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : Colors.Primary;
+  const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : Colors.Info;
   const defaultTitle = state === 'SUCCESS' ? 'Erfolgreich' : state === 'ERROR' ? 'Aktion nicht moeglich' : 'Information';
   const embed = vEmbed(color)
     .setTitle(title ?? defaultTitle)
@@ -64,6 +64,12 @@ async function reply(
 function safeLine(value: string | null | undefined, fallback = '—'): string {
   const cleaned = (value ?? '').replace(/[\r\n]+/g, ' ').replace(/`/g, "'").trim();
   return cleaned || fallback;
+}
+
+function simpleWhitelistError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === ACTIVE_BAN_WHITELIST_WARNING) return 'Der Spieler ist auf diesem Gameserver aktuell gesperrt.';
+  return safeLine(message, 'Die Aktion konnte nicht durchgeführt werden.');
 }
 
 // ============================================================
@@ -106,7 +112,13 @@ export const whitelistCommand: Command = {
       { guildId: scope.guildId, nitradoConnId: target.id },
       id,
     )) {
-      await reply(i, ACTIVE_BAN_WHITELIST_WARNING, true, 'ERROR', 'Whitelist durch Bann gesperrt');
+      await reply(
+        i,
+        'Dieser Spieler ist auf diesem Gameserver aktuell gesperrt und kann deshalb nicht zur Whitelist hinzugefügt werden.',
+        true,
+        'ERROR',
+        'Whitelist nicht möglich',
+      );
       return;
     }
 
@@ -120,7 +132,7 @@ export const whitelistCommand: Command = {
     if (existing && existing.syncState !== 'PENDING_REMOVE') {
       await reply(
         i,
-        `**${id}** ist auf **${targetLabel(target)}** bereits fuer die Whitelist freigeschaltet. Ein neuer Antrag ist nicht erforderlich.`,
+        `**${id}** ist auf **${targetLabel(target)}** bereits für die Whitelist freigeschaltet. Ein neuer Antrag ist nicht erforderlich.`,
         true,
         'INFO',
         'Bereits auf der Whitelist',
@@ -140,7 +152,7 @@ export const whitelistCommand: Command = {
       const createdAt = Math.floor(openSame.createdAt.getTime() / 1000);
       await reply(
         i,
-        `Fuer **${id}** besteht auf **${targetLabel(target)}** bereits ein offener Whitelist-Antrag.\n\nErstellt: <t:${createdAt}:f> · <t:${createdAt}:R>`,
+        `Für **${id}** besteht auf **${targetLabel(target)}** bereits ein offener Whitelist-Antrag.\n\nErstellt: <t:${createdAt}:f> · <t:${createdAt}:R>`,
         true,
         'INFO',
         'Whitelist-Antrag bereits vorhanden',
@@ -158,10 +170,10 @@ export const whitelistCommand: Command = {
       logger.warn(`Whitelist-Antrag Remote-Preflight fehlgeschlagen (${scope.guildId}/${target.id}/${id}): ${(error as Error).message}`);
       await reply(
         i,
-        `Der aktuelle Whitelist-Status auf **${targetLabel(target)}** konnte gerade nicht sicher bei Nitrado geprueft werden. Es wurde kein Antrag erstellt. Bitte versuche es erneut.`,
+        `Der aktuelle Whitelist-Status auf **${targetLabel(target)}** konnte gerade nicht sicher geprüft werden. Es wurde kein Antrag erstellt. Bitte versuche es erneut.`,
         true,
         'ERROR',
-        'Whitelist-Status nicht pruefbar',
+        'Whitelist-Status nicht prüfbar',
       );
       return;
     }
@@ -169,7 +181,7 @@ export const whitelistCommand: Command = {
     if (remoteAlreadyWhitelisted) {
       await reply(
         i,
-        `**${id}** steht auf **${targetLabel(target)}** bereits auf der Nitrado-Whitelist. Ein neuer Antrag ist nicht erforderlich.`,
+        `**${id}** ist auf **${targetLabel(target)}** bereits für die Whitelist freigeschaltet. Ein neuer Antrag ist nicht erforderlich.`,
         true,
         'INFO',
         'Bereits auf der Whitelist',
@@ -208,7 +220,7 @@ export const whitelistCommand: Command = {
       const createdAt = Math.floor(claim.createdAt.getTime() / 1000);
       await reply(
         i,
-        `Fuer **${id}** besteht auf **${targetLabel(target)}** bereits ein offener Whitelist-Antrag.\n\nErstellt: <t:${createdAt}:f> · <t:${createdAt}:R>`,
+        `Für **${id}** besteht auf **${targetLabel(target)}** bereits ein offener Whitelist-Antrag.\n\nErstellt: <t:${createdAt}:f> · <t:${createdAt}:R>`,
         true,
         'INFO',
         'Whitelist-Antrag bereits vorhanden',
@@ -216,7 +228,7 @@ export const whitelistCommand: Command = {
       return;
     }
     if (claim.kind === 'LIMIT_REACHED') {
-      await reply(i, `Du hast auf diesem Server bereits ${claim.activeCount} aktive Whitelist-Eintraege/Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}).`, true, 'ERROR');
+      await reply(i, `Du hast auf diesem Server bereits ${claim.activeCount} aktive Whitelist-Einträge oder Anfragen (Maximum: ${MAX_REQUESTS_PER_USER}).`, true, 'ERROR');
       return;
     }
     const created = claim.request;
@@ -235,7 +247,7 @@ export const whitelistCommand: Command = {
 
     if (!messageId) {
       await prisma.whitelistRequest.delete({ where: { id: created.id, guildId: scope.guildId } }).catch(() => null);
-      await reply(i, 'Annahme-Kanal nicht erreichbar. Bitte einen Admin um Pruefung der Kanal-Konfiguration.', true, 'ERROR');
+      await reply(i, 'Der Whitelist-Kanal ist aktuell nicht erreichbar. Bitte wende dich an einen Administrator.', true, 'ERROR');
       return;
     }
 
@@ -249,10 +261,13 @@ export const whitelistCommand: Command = {
     });
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'requested', entryId: created.id } });
 
-    const ack = vEmbed(Colors.Primary)
+    const ack = vEmbed(Colors.Info)
       .setTitle('Whitelist-Anfrage gestellt')
-      .setDescription(`Deine Anfrage wurde fuer **${targetLabel(target)}** an das Server-Team weitergeleitet.`)
-      .addFields({ name: 'Beantragter Name', value: `\`${id}\`` })
+      .setDescription('Deine Anfrage wurde erfolgreich an das Server-Team weitergeleitet.\n\nDu wirst informiert, sobald dein Antrag bearbeitet wurde.')
+      .addFields(
+        { name: 'Server', value: targetLabel(target), inline: false },
+        { name: 'Beantragter Spielername', value: `\`${id}\``, inline: false },
+      )
       .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
     await i.reply({ embeds: [ack], flags: MessageFlags.Ephemeral });
@@ -314,20 +329,25 @@ export const wlAddCommand: Command = {
           );
         });
         logAudit('WL_ADD', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId });
-        results.push(`✅ **${targetLabel(target)}** — Add-Sync eingereiht.`);
+        results.push(`✅ ${targetLabel(target)}`);
       } catch (error) {
         failures++;
-        results.push(`❌ **${targetLabel(target)}** — ${safeLine(error instanceof Error ? error.message : String(error))}`);
+        results.push(`❌ ${targetLabel(target)} — ${simpleWhitelistError(error)}`);
       }
     }
 
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'added' } });
+    const description = targets.length === 1 && failures === 0
+      ? `Der Spieler **${id}** wurde zur Whitelist hinzugefügt.\n\n**Server**\n${targetLabel(targets[0])}`
+      : failures === targets.length
+        ? `Der Spieler **${id}** konnte nicht zur Whitelist hinzugefügt werden.\n\n${results.join('\n')}`
+        : `Der Spieler **${id}** wurde auf folgenden Servern freigeschaltet:\n\n${results.join('\n')}`;
     await reply(
       i,
-      results.join('\n'),
+      description,
       true,
       failures === 0 ? 'SUCCESS' : failures === targets.length ? 'ERROR' : 'INFO',
-      'Whitelist-Add verarbeitet',
+      'Whitelist aktualisiert',
     );
   }),
 };
@@ -374,15 +394,6 @@ export const wlRemoveCommand: Command = {
             },
             data: { status: 'CANCELLED' },
           });
-          // Auch ohne lokale Zeile einreihen: Nitrado kann manuelle Eintraege
-          // enthalten, die der lokale Spiegel noch nicht kennt. WICHTIG: Ohne
-          // lokale Zeile gilt der Name fuer den Worker als UNTRACKED und wird
-          // von readWhitelistDesiredState()/whitelistIntent.ts aus Sicherheits-
-          // gruenden absichtlich NICHT automatisch von Nitrado entfernt (nur eine
-          // verifizierte Verlassen-Bereinigung darf einen UNTRACKED-Remove
-          // ausfuehren) — der Job wird dann als erledigt/superseded markiert,
-          // OHNE dass Nitrado je kontaktiert wurde. Die Antwort unten muss das
-          // ehrlich widerspiegeln statt pauschal Erfolg zu melden.
           await enqueueWhitelistRemove(
             tx as unknown as WhitelistOutboxClient,
             { guildId: scope.guildId, nitradoConnId: target.id },
@@ -392,24 +403,42 @@ export const wlRemoveCommand: Command = {
         });
         logAudit('WL_REMOVE', 'WHITELIST', { guildId: scope.guildId, slotId: target.id, slot: target.slot, alias: target.alias, actor: scope.actorDiscordId, hadLocalEntry });
         if (hadLocalEntry) {
-          results.push(`✅ **${targetLabel(target)}** — Remove-Sync eingereiht; lokale Finalisierung erfolgt erst nach Nitrado-Bestaetigung.`);
+          results.push(`✅ ${targetLabel(target)}`);
         } else {
           untracked++;
-          results.push(`⚠️ **${targetLabel(target)}** — Kein lokaler Eintrag gefunden. Automatische Nitrado-Entfernung ist fuer nicht getrackte Namen aus Sicherheitsgruenden gesperrt; bitte Schreibweise pruefen oder den Eintrag direkt auf Nitrado entfernen.`);
+          results.push(`⚠️ ${targetLabel(target)} — Spieler nicht eindeutig in der Whitelist gefunden.`);
         }
       } catch (error) {
         failures++;
-        results.push(`❌ **${targetLabel(target)}** — ${safeLine(error instanceof Error ? error.message : String(error))}`);
+        results.push(`❌ ${targetLabel(target)} — ${simpleWhitelistError(error)}`);
       }
     }
 
     emitGuildEvent(scope.guildId, { type: 'whitelist.changed', payload: { guildId: scope.guildId, action: 'remove_pending' } });
+
+    if (targets.length === 1 && untracked === 1 && failures === 0) {
+      await reply(
+        i,
+        `Der Spieler **${id}** konnte auf **${targetLabel(targets[0])}** nicht eindeutig in der Whitelist gefunden werden.\n\nBitte überprüfe die Schreibweise oder kontrolliere den Eintrag direkt beim Gameserver.`,
+        true,
+        'INFO',
+        'Spieler nicht gefunden',
+      );
+      return;
+    }
+
+    const description = targets.length === 1 && failures === 0 && untracked === 0
+      ? `Der Spieler **${id}** wurde von der Whitelist entfernt.\n\n**Server**\n${targetLabel(targets[0])}`
+      : failures === targets.length
+        ? `Der Spieler **${id}** konnte nicht von der Whitelist entfernt werden.\n\n${results.join('\n')}`
+        : `Der Spieler **${id}** wurde auf folgenden Servern von der Whitelist entfernt:\n\n${results.join('\n')}`;
+
     await reply(
       i,
-      results.join('\n'),
+      description,
       true,
       failures === targets.length ? 'ERROR' : failures > 0 || untracked > 0 ? 'INFO' : 'SUCCESS',
-      'Whitelist-Remove verarbeitet',
+      'Whitelist aktualisiert',
     );
   }),
 };
