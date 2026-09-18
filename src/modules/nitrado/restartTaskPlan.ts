@@ -92,7 +92,13 @@ export function canonicalizeRestartPlanInput(value: unknown): CanonicalRestartPl
     throw new RestartPlanValidationError('Ungueltige Neustart-Konfiguration.');
   }
   const body = value as Record<string, unknown>;
+  const keys = Object.keys(body).sort();
   if (body.mode === 'INTERVAL') {
+    const allowed = new Set(['mode', 'intervalHours', 'startTime']);
+    const unknown = keys.filter(key => !allowed.has(key));
+    if (unknown.length > 0) {
+      throw new RestartPlanValidationError(`Unbekannte Felder: ${unknown.join(', ')}`);
+    }
     if (!Number.isInteger(body.intervalHours)) {
       throw new RestartPlanValidationError('intervalHours muss eine ganze Zahl sein.');
     }
@@ -109,6 +115,11 @@ export function canonicalizeRestartPlanInput(value: unknown): CanonicalRestartPl
     };
   }
   if (body.mode === 'FIXED') {
+    const allowed = new Set(['mode', 'times']);
+    const unknown = keys.filter(key => !allowed.has(key));
+    if (unknown.length > 0) {
+      throw new RestartPlanValidationError(`Unbekannte Felder: ${unknown.join(', ')}`);
+    }
     if (!Array.isArray(body.times) || !body.times.every(item => typeof item === 'string')) {
       throw new RestartPlanValidationError('times muss eine Liste von Uhrzeiten sein.');
     }
