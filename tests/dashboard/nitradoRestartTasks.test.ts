@@ -14,6 +14,8 @@ const sendDashboardServerResolutionError = jest.fn();
 const saveRestartPlan = jest.fn();
 const clearRestartPlan = jest.fn();
 const logAuditDb = jest.fn();
+const acquireMutationLock = jest.fn();
+const releaseMutationLock = jest.fn(async () => undefined);
 const decryptMock = jest.fn(() => 'decrypted-token');
 
 const listTasks = jest.fn();
@@ -84,6 +86,10 @@ jest.mock('../../src/modules/nitrado/restartTaskPlanStore', () => ({
   RestartPlanBindingConflictError: MockBindingConflictError,
 }));
 
+jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
+  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => acquireMutationLock(...args),
+}));
+
 import express from 'express';
 import request from 'supertest';
 import { nitradoTasksRouter } from '../../src/dashboard/routes/v2/nitradoTasks';
@@ -108,6 +114,8 @@ beforeEach(() => {
   getTaskActionCatalog.mockResolvedValue([{ action_method: 'game_server_restart' }]);
   saveRestartPlan.mockResolvedValue({ revision: 1, syncStatus: 'PENDING' });
   clearRestartPlan.mockResolvedValue({ revision: 2, syncStatus: 'PENDING' });
+  acquireMutationLock.mockResolvedValue({ release: releaseMutationLock });
+  releaseMutationLock.mockResolvedValue(undefined);
 });
 
 describe('Nitrado restart task dashboard API', () => {
@@ -184,6 +192,33 @@ describe('Nitrado restart task dashboard API', () => {
       },
     );
     expect(listTasks).not.toHaveBeenCalled();
+    expect(acquireMutationLock).toHaveBeenCalledWith(CONN);
+    expect(releaseMutationLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails busy with 409 before persisting a new desired state', async () => {
+    acquireMutationLock.mockResolvedValue(null);
+
+    const res = await request(app())
+      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
+      .send({ mode: 'FIXED', times: ['04:00'] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('NITRADO_CONNECTION_BUSY');
+    expect(saveRestartPlan).not.toHaveBeenCalled();
+    expect(releaseMutationLock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with 503 when the mutation-lock infrastructure is unavailable', async () => {
+    acquireMutationLock.mockRejectedValue(new Error('lock db down'));
+
+    const res = await request(app())
+      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
+      .send({ mode: 'FIXED', times: ['04:00'] });
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('NITRADO_LOCK_UNAVAILABLE');
+    expect(saveRestartPlan).not.toHaveBeenCalled();
   });
 
   it('maps a binding race to 409 instead of queueing a stale success response', async () => {
@@ -196,6 +231,7 @@ describe('Nitrado restart task dashboard API', () => {
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('NITRADO_TASK_BINDING_CHANGED');
     expect(logAuditDb).not.toHaveBeenCalled();
+    expect(releaseMutationLock).toHaveBeenCalledTimes(1);
   });
 
   it('queues deletion of every restart task without deleting other task types in the route', async () => {
@@ -217,6 +253,8 @@ describe('Nitrado restart task dashboard API', () => {
       syncStatus: 'PENDING',
     }));
     expect(listTasks).not.toHaveBeenCalled();
+    expect(acquireMutationLock).toHaveBeenCalledWith(CONN);
+    expect(releaseMutationLock).toHaveBeenCalledTimes(1);
   });
 
   it('keeps confirmed remote tasks visible when only the action catalog is temporarily unavailable', async () => {
