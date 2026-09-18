@@ -91,21 +91,6 @@ export async function resumeAutoPausedGameplayFeeds(
 
   for (const feed of configs) {
     const watermark = await recoveryWatermark(scope, feed.kind, now);
-    const data: Record<string, unknown> = {
-      isActive: true,
-      autoPausedReason: null,
-      autoPausedAt: null,
-      lastErrorMsg: null,
-      lastPolledAt: now,
-      nextDeliveryAt: now,
-      cursorCreatedAt: watermark.createdAt,
-      cursorEventId: watermark.id,
-    };
-
-    if (feed.kind === GameplayFeedKind.PLAYER_LIST) {
-      data.lastStateHash = null;
-      data.nextPlayerListPostAt = feed.playerListIntervalMinutes ? now : null;
-    }
 
     // CAS gegen parallele Dashboard-Aenderungen: Nur ein noch immer explizit
     // auto-pausierter Feed darf von diesem Recovery-Lauf eingeschaltet werden.
@@ -117,7 +102,22 @@ export async function resumeAutoPausedGameplayFeeds(
         isActive: false,
         autoPausedReason: NITRADO_AUTO_PAUSE_REASON,
       },
-      data,
+      data: {
+        isActive: true,
+        autoPausedReason: null,
+        autoPausedAt: null,
+        lastErrorMsg: null,
+        lastPolledAt: now,
+        nextDeliveryAt: now,
+        cursorCreatedAt: watermark.createdAt,
+        cursorEventId: watermark.id,
+        ...(feed.kind === GameplayFeedKind.PLAYER_LIST
+          ? {
+              lastStateHash: null,
+              nextPlayerListPostAt: feed.playerListIntervalMinutes ? now : null,
+            }
+          : {}),
+      },
     });
     resumed += result.count;
   }
