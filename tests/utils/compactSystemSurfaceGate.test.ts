@@ -22,7 +22,6 @@ const compactSystemSurfaces = [
   'src/modules/economy/virtualAccountManagerPanelSafety.ts',
   'src/modules/nitrado/driftDiscord.ts',
   'src/modules/ai/translatedPostSchedulerV2.ts',
-  'src/modules/radar/runtime.ts',
 ] as const;
 
 const compactSystemSurfacesWithModalTitles = [
@@ -43,6 +42,14 @@ describe('compact V-Bot system surface gate', () => {
     const text = source(file);
     expect(text).not.toContain('.setTitle(');
     expect(text).toMatch(/compact(?:Description|Embed)|buildStatusEmbed|economyEmbed/);
+  });
+
+  it('keeps the approved radar layout in the description without a Discord title', () => {
+    const text = source('src/modules/radar/runtime.ts');
+    expect(text).not.toContain('.setTitle(');
+    expect(text).toContain('.setDescription(`**${zoneName}**\\n\\n${lines.join(\'\\n\')}`)');
+    expect(text).toContain('`**Koordinaten:** ${coordinates}`');
+    expect(text).toContain('`**Erkannt:** ${admTime(event.admOccurredAt)}`');
   });
 
   it.each(compactSystemSurfacesWithModalTitles)('%s keeps embed headings compact while allowing exactly one Discord modal title', file => {
