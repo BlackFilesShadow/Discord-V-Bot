@@ -18,7 +18,7 @@ describe('Killfeed dashboard placement', () => {
   });
 
   it('bleibt im konkreten Gameserver-Slot auf Page 2 neben den zwei separierten Economy-Oberflaechen', () => {
-    expect(slot).toContain("type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed'");
+    expect(slot).toContain("type Tab = 'settings' | 'restart-tasks' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar'");
     expect(slot).toContain('>Page 1</p>');
     expect(slot).toContain('>Page 2</p>');
     expect(slot).toContain("['virtual-accounts', 'Virtuelle Konten', Banknote]");

@@ -12,6 +12,7 @@ const architectureCss = read('dashboard-ui/src/slot-page-architecture.css');
 
 const SLOT_ENTRIES = [
   "['settings', 'Settings', Settings]",
+  "['restart-tasks', 'Auto-Restarts', Clock3]",
   "['whitelist', 'Whitelist', Shield]",
   "['economy', 'Economy', Coins]",
   "['links', 'Economy-Links', LinkIcon]",
@@ -39,7 +40,7 @@ function between(source: string, start: string, end: string): string {
 }
 
 describe('dashboard page architecture', () => {
-  it('keeps all eight slot functions in the established order in legacy and V3 navigation definitions', () => {
+  it('keeps all nine slot functions in the established order in legacy and V3 navigation definitions', () => {
     const legacyNavigation = between(legacySource, 'const pageOneTabs = [', 'const sidebarButton =');
     const v3Navigation = between(v3Source, 'const NAV:', 'const ECONOMY_SECTIONS');
     expectOrder(legacyNavigation, SLOT_ENTRIES);
@@ -47,7 +48,7 @@ describe('dashboard page architecture', () => {
   });
 
   it('does not change slot route keys or function assignments', () => {
-    const tabType = "type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';";
+    const tabType = "type Tab = 'settings' | 'restart-tasks' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';";
     expect(legacySource).toContain(tabType);
     expect(v3Source).toContain(tabType);
     for (const entry of SLOT_ENTRIES) {

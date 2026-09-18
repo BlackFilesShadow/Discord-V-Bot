@@ -17,14 +17,19 @@ import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
 import { ZoneRadarTab } from '@/components/radar/ZoneRadarTab';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
-import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair, MapPinned } from 'lucide-react';
+import { NitradoRestartPlanner } from '@/components/nitrado/NitradoRestartPlanner';
+import { Settings, Shield, Coins, Link as LinkIcon, Trash2, Plus, Check, X, Banknote, Dice5, RefreshCw, Crosshair, MapPinned, Clock3 } from 'lucide-react';
 
-type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
+type Tab = 'settings' | 'restart-tasks' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
 
 const SLOT_HELP: Record<Tab, { title: string; text: string[] }> = {
   settings: {
     title: 'Server-Einstellungen',
     text: ['Hier schaltest du Funktionen für diesen Gameserver ein oder aus.', 'Whitelist und Economy wirken nur auf diesen Slot. Perma-Only hält den Nitrado-Server bei einem Stopp automatisch online.'],
+  },
+  'restart-tasks': {
+    title: 'Automatische Nitrado-Neustarts',
+    text: ['Hier planst du echte automatische Restart-Aufgaben direkt bei Nitrado.', 'Die Live-Vorschau zeigt vor dem Speichern jede konkrete Uhrzeit. Nitrado führt die Aufgaben danach selbst aus, auch wenn V-Bot offline ist.'],
   },
   whitelist: {
     title: 'Whitelist',
@@ -117,6 +122,7 @@ export default function ServerSlot() {
     const t = searchParams.get('tab');
     if (
       t === 'settings'
+      || t === 'restart-tasks'
       || t === 'whitelist'
       || t === 'economy'
       || t === 'links'
@@ -196,6 +202,7 @@ export default function ServerSlot() {
   // doppelt auftaucht.
   const pageOneTabs = [
     ['settings', 'Settings', Settings],
+    ['restart-tasks', 'Auto-Restarts', Clock3],
     ['whitelist', 'Whitelist', Shield],
     ['economy', 'Economy', Coins],
     ['links', 'Economy-Links', LinkIcon],
@@ -285,6 +292,10 @@ export default function ServerSlot() {
               </div>
             )}
           </Card>
+        )}
+
+        {tab === 'restart-tasks' && guildId && slot && (
+          <NitradoRestartPlanner guildId={guildId} slot={slot} />
         )}
 
         {tab === 'whitelist' && guildId && slot && <WhitelistPanel guildId={guildId} slot={slot} />}

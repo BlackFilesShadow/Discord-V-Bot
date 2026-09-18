@@ -1,0 +1,35 @@
+enum NitradoRestartPlanMode {
+  INTERVAL
+  FIXED
+}
+
+enum NitradoRestartPlanSyncStatus {
+  PENDING
+  SYNCED
+  ERROR
+}
+
+/// Gewuenschter, von V-Bot verwalteter Satz automatischer Nitrado-Restarts.
+/// Die tatsaechliche Ausfuehrung bleibt vollstaendig bei Nitrado; V-Bot
+/// reconciled nur die Nitrado-Task-Liste auf diesen Sollzustand.
+model NitradoRestartPlan {
+  guildId             String
+  nitradoConnId       String
+  nitradoServerId     String
+  enabled             Boolean                      @default(false)
+  mode                NitradoRestartPlanMode       @default(INTERVAL)
+  intervalHours       Int?
+  startTime           String?                      @db.VarChar(5)
+  times               Json
+  revision            Int                          @default(1)
+  syncStatus          NitradoRestartPlanSyncStatus @default(PENDING)
+  lastSyncAt          DateTime?
+  lastSyncError       String?                      @db.Text
+  updatedByDiscordId  String
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+
+  @@id([guildId, nitradoConnId])
+  @@index([guildId])
+  @@index([guildId, syncStatus])
+}

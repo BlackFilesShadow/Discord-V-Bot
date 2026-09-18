@@ -14,6 +14,7 @@ import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { SectionTabs, type SectionTabItem } from '@/components/ui/SectionTabs';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
+import { NitradoRestartPlanner } from '@/components/nitrado/NitradoRestartPlanner';
 import { useToast } from '@/lib/toast';
 import {
   Banknote,
@@ -24,10 +25,11 @@ import {
   MapPinned,
   Settings,
   Shield,
+  Clock3,
 } from 'lucide-react';
 
 type CasinoGameType = 'SLOT' | 'COINFLIP' | 'DICE' | 'BLACKJACK' | 'ROULETTE' | 'HIGHLOW' | 'BACCARAT' | 'WHEEL';
-type Tab = 'settings' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
+type Tab = 'settings' | 'restart-tasks' | 'whitelist' | 'economy' | 'links' | 'virtual-accounts' | 'bank-casino' | 'killfeed' | 'radar';
 type RewardTarget = 'WALLET' | 'BANK';
 type EconomySection = 'overview' | 'config' | 'rewards' | 'scope';
 type BankCasinoSection = 'bank' | 'casino';
@@ -115,6 +117,7 @@ const SNOWFLAKE_RE = /^\d{17,20}$/;
 
 const NAV: ReadonlyArray<[Tab, string, typeof Settings]> = [
   ['settings', 'Settings', Settings],
+  ['restart-tasks', 'Auto-Restarts', Clock3],
   ['whitelist', 'Whitelist', Shield],
   ['economy', 'Economy', Coins],
   ['links', 'Economy-Links', LinkIcon],
@@ -158,7 +161,7 @@ function SlotV3Shell({ tab, children }: { tab: Tab; children: React.ReactNode })
   const sidebar = (
     <nav className="space-y-1 text-sm" aria-label="Slot-Funktionen">
       {NAV.map(([key, label, Icon], index) => (
-        <div key={key} className={index === 4 ? 'pt-4 mt-3 border-t border-border/60' : ''}>
+        <div key={key} className={index === 5 ? 'pt-4 mt-3 border-t border-border/60' : ''}>
           <button
             type="button"
             onClick={() => changeTab(key)}
@@ -736,6 +739,7 @@ export default function ServerSlotV3() {
   const tab = (params.get('tab') ?? 'settings') as Tab;
 
   if (!guildId || !slot) return <LegacyServerSlot />;
+  if (tab === 'restart-tasks') return <SlotV3Shell tab="restart-tasks"><NitradoRestartPlanner guildId={guildId} slot={slot} /></SlotV3Shell>;
   if (tab === 'economy') return <SlotV3Shell tab="economy"><EconomyV3Page guildId={guildId} slot={slot} /></SlotV3Shell>;
   if (tab === 'bank-casino') return <SlotV3Shell tab="bank-casino"><BankCasinoV3Page guildId={guildId} slot={slot} /></SlotV3Shell>;
   return <LegacyServerSlot />;

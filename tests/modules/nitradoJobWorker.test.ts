@@ -17,6 +17,28 @@ const serverBanFindFirstMock = jest.fn();
 const serverBanFindManyMock = jest.fn(async () => []);
 const serverBanUpdateManyMock = jest.fn(async () => ({ count: 1 }));
 const reconcileWhitelistIntentMock = jest.fn();
+const restartPlanFindFirstMock = jest.fn();
+const restartPlanUpdateManyMock = jest.fn(async () => ({ count: 1 }));
+let remoteRestartTasks: Array<Record<string, unknown>> = [];
+const listTasks = jest.fn(async () => remoteRestartTasks.map(row => ({ ...row })));
+const getTaskActionCatalog = jest.fn(async () => [{ action_method: 'game_server_restart' }]);
+const createTask = jest.fn(async (_serviceId: string, input: Record<string, string>) => {
+  remoteRestartTasks.push({
+    id: 100 + remoteRestartTasks.length,
+    hour: input.hour,
+    minute: input.minute,
+    day: input.day ?? '*',
+    month: input.month ?? '*',
+    weekday: input.weekday ?? '*',
+    action_method: input.actionMethod,
+    last_run: null,
+    next_run: null,
+    timezone: 'Europe/Berlin',
+  });
+});
+const deleteTask = jest.fn(async (_serviceId: string, taskId: number) => {
+  remoteRestartTasks = remoteRestartTasks.filter(row => row.id !== taskId);
+});
 const jobStore: Record<string, unknown> = {};
 
 type TestClaim = { id: string; guildId: string; claimToken: string };
@@ -50,6 +72,10 @@ const prismaMock = {
     findFirst: serverBanFindFirstMock,
     findMany: serverBanFindManyMock,
     updateMany: serverBanUpdateManyMock,
+  },
+  nitradoRestartPlan: {
+    findFirst: restartPlanFindFirstMock,
+    updateMany: restartPlanUpdateManyMock,
   },
 };
 jest.mock('../../src/database/prisma', () => ({ __esModule: true, default: prismaMock }));
@@ -97,6 +123,10 @@ jest.mock('../../src/modules/nitrado/nitradoClient', () => ({
     getBanlist,
     addToBanlist,
     removeFromBanlist,
+    listTasks,
+    getTaskActionCatalog,
+    createTask,
+    deleteTask,
   })),
   NitradoApiError: class NitradoApiError extends Error { status: number | null = null; },
 }));
@@ -143,6 +173,13 @@ beforeEach(() => {
   serverBanUpdateManyMock.mockResolvedValue({ count: 1 });
   jobFindManyMock.mockResolvedValue([]);
   jobCreateMock.mockResolvedValue({});
+  restartPlanFindFirstMock.mockResolvedValue(null);
+  restartPlanUpdateManyMock.mockResolvedValue({ count: 1 });
+  remoteRestartTasks = [];
+  listTasks.mockClear();
+  getTaskActionCatalog.mockClear();
+  createTask.mockClear();
+  deleteTask.mockClear();
   for (const k of Object.keys(jobStore)) delete jobStore[k];
 });
 
@@ -471,4 +508,94 @@ describe('NIT-010 — drainAndStopJobWorker', () => {
   it('resolved ohne laufenden Poll sofort', async () => {
     await expect(drainAndStopJobWorker(200)).resolves.toBeUndefined();
   });
+});
+
+describe('PAGE2 — durable Nitrado restart plan sync', () => {
+  const restartPlan = {
+    guildId: 'g1',
+    nitradoConnId: 'conn-1',
+    nitradoServerId: '123',
+    enabled: true,
+    mode: 'INTERVAL',
+    intervalHours: 4,
+    startTime: '00:00',
+    times: ['00:00', '04:00'],
+    revision: 7,
+    syncStatus: 'PENDING',
+    lastSyncAt: null,
+    lastSyncError: null,
+    updatedByDiscordId: 'actor',
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it('reconciles the exact desired times at Nitrado and marks plan + job successful only after remote verification', async () => {
+    jobStore['restart-plan-sync'] = {
+      id: 'restart-plan-sync',
+      guildId: 'g1',
+      nitradoConnId: 'conn-1',
+      operation: 'RESTART_PLAN_SYNC',
+      payload: { planRevision: 7 },
+      attempts: 0,
+      maxAttempts: 8,
+    };
+    restartPlanFindFirstMock.mockResolvedValue(restartPlan);
+    decryptMock.mockReturnValue('decrypted-token');
+
+    await executeJob(claim('restart-plan-sync'));
+
+    expect(createTask).toHaveBeenCalledTimes(2);
+    expect(remoteRestartTasks.map(row => String(row.hour) + ':' + String(row.minute)).sort())
+      .toEqual(['00:00', '04:00']);
+    expect(restartPlanUpdateManyMock).toHaveBeenCalledWith({
+      where: { guildId: 'g1', nitradoConnId: 'conn-1', revision: 7 },
+      data: expect.objectContaining({ syncStatus: 'SYNCED', lastSyncError: null }),
+    });
+    expect(lastUpdateData().status).toBe('DONE');
+  });
+
+  it('treats an already superseded revision as a no-op and never touches Nitrado', async () => {
+    jobStore['stale-restart-plan'] = {
+      id: 'stale-restart-plan',
+      guildId: 'g1',
+      nitradoConnId: 'conn-1',
+      operation: 'RESTART_PLAN_SYNC',
+      payload: { planRevision: 6 },
+      attempts: 0,
+      maxAttempts: 8,
+    };
+    restartPlanFindFirstMock.mockResolvedValue(null);
+    decryptMock.mockReturnValue('decrypted-token');
+
+    await executeJob(claim('stale-restart-plan'));
+
+    expect(createTask).not.toHaveBeenCalled();
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(lastUpdateData().status).toBe('DONE');
+  });
+
+  it('fails closed if the saved service binding no longer matches the current Nitrado service', async () => {
+    jobStore['rebound-restart-plan'] = {
+      id: 'rebound-restart-plan',
+      guildId: 'g1',
+      nitradoConnId: 'conn-1',
+      operation: 'RESTART_PLAN_SYNC',
+      payload: { planRevision: 7 },
+      attempts: 0,
+      maxAttempts: 8,
+    };
+    restartPlanFindFirstMock.mockResolvedValue({ ...restartPlan, nitradoServerId: '999' });
+    decryptMock.mockReturnValue('decrypted-token');
+
+    await executeJob(claim('rebound-restart-plan'));
+
+    expect(createTask).not.toHaveBeenCalled();
+    expect(deleteTask).not.toHaveBeenCalled();
+    expect(restartPlanUpdateManyMock).toHaveBeenCalledWith({
+      where: { guildId: 'g1', nitradoConnId: 'conn-1', revision: 7 },
+      data: expect.objectContaining({ syncStatus: 'ERROR' }),
+    });
+    expect(lastUpdateData().status).toBe('DEAD');
+  });
+
 });

@@ -56,6 +56,7 @@ const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMar
 const CURRENT_MANAGER_PICKER = 'dashboard-ui/src/components/economy/ManagerPicker.tsx';
 const CURRENT_BLACK_MARKET_DISCORD_SETTINGS = 'dashboard-ui/src/components/economy/BlackMarketDiscordSettings.tsx';
 const CURRENT_NITRADO_DRIFT_BANNER = 'dashboard-ui/src/components/NitradoDriftBanner.tsx';
+const CURRENT_NITRADO_RESTART_PLANNER = 'dashboard-ui/src/components/nitrado/NitradoRestartPlanner.tsx';
 const CURRENT_KILLFEED_PANEL = 'dashboard-ui/src/components/KillfeedTab.tsx';
 const CURRENT_ADM_TIME_ZONE_CARD = 'dashboard-ui/src/components/AdmTimeZoneCard.tsx';
 const CURRENT_GOODBYE_PANEL = 'dashboard-ui/src/components/GoodbyePanel.tsx';
@@ -78,6 +79,7 @@ const REVIEWED_POST_STAGE_FILES = new Set([
   CURRENT_MANAGER_PICKER,
   CURRENT_BLACK_MARKET_DISCORD_SETTINGS,
   CURRENT_NITRADO_DRIFT_BANNER,
+  CURRENT_NITRADO_RESTART_PLANNER,
   CURRENT_KILLFEED_PANEL,
   CURRENT_ADM_TIME_ZONE_CARD,
   CURRENT_GOODBYE_PANEL,
@@ -247,6 +249,7 @@ describe('stage 24 dashboard button matrix architecture', () => {
       || button.file === CURRENT_BLACK_MARKET_PANEL
       || button.file === CURRENT_BLACK_MARKET_DISCORD_SETTINGS
       || button.file === CURRENT_RADAR_TAB
+      || button.file === CURRENT_NITRADO_RESTART_PLANNER
       || button.file === CURRENT_RADAR_EDITOR
       || button.file === CURRENT_SECTION_TABS
       || button.file === CURRENT_SERVER_SLOT_V3
@@ -285,6 +288,7 @@ describe('stage 24 dashboard button matrix architecture', () => {
     const architecture = read(CURRENT_SLOT_PAGE_ARCHITECTURE);
     const entries = [
       "['settings', 'Settings', Settings]",
+      "['restart-tasks', 'Auto-Restarts', Clock3]",
       "['whitelist', 'Whitelist', Shield]",
       "['economy', 'Economy', Coins]",
       "['links', 'Economy-Links', LinkIcon]",
