@@ -161,8 +161,10 @@ function isFlagEvent(event: RawAdmEvent): boolean {
 function shouldWriteCursor(
   existing: AdmCursorSnapshot,
   meta: AdmSourceMeta,
-  newOffset: bigint,
+  result: IngestResult,
 ): boolean {
+  const newOffset = BigInt(result.newOffset);
+
   // Legacy-/Test-Clients ohne Generationsmetadaten behalten exakt den bisherigen
   // monotonic-offset Schutz. Der produktive Prisma-Pfad liefert beide Felder.
   if (existing.lastModifiedAt === undefined || existing.lastKnownSize === undefined) {
@@ -178,26 +180,29 @@ function shouldWriteCursor(
   // fortschreiben.
   if (newOffset > existing.processedByteOffset) return true;
 
+  // Rueckwaerts-/Gleichstand-Schreiben sind nur erlaubt, wenn der Ingestor den
+  // Lauf ausdruecklich als Quellen-Reset markiert hat. Damit kann ein normaler
+  // paralleler Append-Poll mit nur neuerem mtime niemals den Cursor rebasen.
+  if (!result.wasReset) return false;
+
   const incomingSize = BigInt(meta.fileSize);
 
-  // Exakt dieselbe Generationserkennung wie im Live-Sync fuer Nitrados
-  // same-name/same-size Rotation: die alte Datei war komplett gelesen, die
-  // Groesse bleibt identisch, aber mtime ist neuer. Hier MUSS ein kleinerer
-  // oder gleicher Offset erlaubt sein, sonst startet jeder Poll erneut bei 0
-  // und der Chronologie-Fence blockiert alle juengeren ADM-Dateien dauerhaft.
+  // Nitrado same-name/same-size Rotation: die alte Generation war komplett
+  // gelesen, Groesse bleibt identisch, mtime ist neuer. Auch ein exakt gleich
+  // grosser kleiner Log muss die Metadaten aktualisieren duerfen, sonst wird er
+  // bei jedem Poll erneut als Rotation erkannt.
   const sameSizeReplacement = meta.lastModifiedAt > existing.lastModifiedAt
     && incomingSize === existing.lastKnownSize
     && existing.processedByteOffset >= existing.lastKnownSize;
   if (sameSizeReplacement) return true;
 
-  // Truncation/kleinere Ersatzdatei: ingestFullFile bzw. der Live-Sync setzt
-  // bewusst auf Byte 0 zurueck. Eine kleinere Remote-Groesse ist ein
-  // eindeutiger Generationswechsel und darf deshalb ebenfalls rebasen.
+  // Truncation/kleinere Ersatzdatei: `wasReset` bestaetigt, dass der Aufrufer
+  // bewusst wieder bei Byte 0 begonnen hat. Die Groesse allein reicht nicht,
+  // damit ein gleichsekundiger langsamer Poll niemals einen neueren Cursor
+  // zuruecksetzen kann.
   const truncatedReplacement = incomingSize < existing.lastKnownSize;
   if (truncatedReplacement) return true;
 
-  // Gleiche Generation, gleicher oder kleinerer Offset: typischer paralleler
-  // bzw. langsamerer Poll. Den bereits weiter fortgeschrittenen Cursor halten.
   return false;
 }
 
@@ -301,7 +306,7 @@ export async function persistAdmEvents(
           lastKnownSize: true,
         },
       });
-      if (existing && !shouldWriteCursor(existing, meta, BigInt(result.newOffset))) {
+      if (existing && !shouldWriteCursor(existing, meta, result)) {
         return { inserted };
       }
     }
