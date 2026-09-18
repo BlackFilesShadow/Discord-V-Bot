@@ -13,7 +13,7 @@ const resolveDashboardGameServer = jest.fn();
 const sendDashboardServerResolutionError = jest.fn();
 const saveRestartPlan = jest.fn();
 const clearRestartPlan = jest.fn();
-const logAuditDb = jest.fn();
+const logAuditDb = jest.fn((..._args: unknown[]) => undefined);
 const acquireMutationLock = jest.fn();
 const releaseMutationLock = jest.fn(async () => undefined);
 const decryptMock = jest.fn(() => 'decrypted-token');
@@ -104,11 +104,7 @@ function app() {
 beforeEach(() => {
   jest.clearAllMocks();
   resolveDashboardGameServer.mockResolvedValue({ kind: 'RESOLVED', nitradoConnId: CONN });
-  prismaMock.nitradoConnection.findFirst.mockResolvedValue({
-    id: CONN,
-    nitradoServerId: '12345',
-    encryptedToken: 'enc',
-  });
+  prismaMock.nitradoConnection.findFirst.mockResolvedValue({ id: CONN, nitradoServerId: '12345', encryptedToken: 'enc' });
   prismaMock.nitradoRestartPlan.findUnique.mockResolvedValue(null);
   listTasks.mockResolvedValue([]);
   getTaskActionCatalog.mockResolvedValue([{ action_method: 'game_server_restart' }]);
@@ -120,37 +116,13 @@ beforeEach(() => {
 
 describe('Nitrado restart task dashboard API', () => {
   it('reads the real Nitrado task list and reports exact remote synchronization', async () => {
-    prismaMock.nitradoRestartPlan.findUnique.mockResolvedValue({
-      enabled: true,
-      mode: 'INTERVAL',
-      intervalHours: 4,
-      startTime: '00:00',
-      times: ['00:00', '04:00'],
-      revision: 3,
-      syncStatus: 'SYNCED',
-      lastSyncAt: new Date('2026-09-18T00:00:00Z'),
-      lastSyncError: null,
-      nitradoServerId: '12345',
-    });
+    prismaMock.nitradoRestartPlan.findUnique.mockResolvedValue({ enabled: true, mode: 'INTERVAL', intervalHours: 4, startTime: '00:00', times: ['00:00', '04:00'], revision: 3, syncStatus: 'SYNCED', lastSyncAt: new Date('2026-09-18T00:00:00Z'), lastSyncError: null, nitradoServerId: '12345' });
     listTasks.mockResolvedValue([
-      {
-        id: 10, hour: '0', minute: '0', day: '*', month: '*', weekday: '*',
-        action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin',
-      },
-      {
-        id: 11, hour: '4', minute: '0', day: '*', month: '*', weekday: '*',
-        action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin',
-      },
-      {
-        id: 12, hour: '7', minute: '0', day: '*', month: '*', weekday: '*',
-        action_method: 'game_server_stop', last_run: null, next_run: null, timezone: 'Europe/Berlin',
-      },
+      { id: 10, hour: '0', minute: '0', day: '*', month: '*', weekday: '*', action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin' },
+      { id: 11, hour: '4', minute: '0', day: '*', month: '*', weekday: '*', action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin' },
+      { id: 12, hour: '7', minute: '0', day: '*', month: '*', weekday: '*', action_method: 'game_server_stop', last_run: null, next_run: null, timezone: 'Europe/Berlin' },
     ]);
-
-    const res = await request(app()).get(
-      `/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`,
-    );
-
+    const res = await request(app()).get(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`);
     expect(res.status).toBe(200);
     expect(res.body.remote.actionSupported).toBe(true);
     expect(res.body.remote.synchronized).toBe(true);
@@ -161,36 +133,17 @@ describe('Nitrado restart task dashboard API', () => {
   });
 
   it('rejects malformed restart plans before creating any durable work', async () => {
-    const res = await request(app())
-      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
-      .send({ mode: 'INTERVAL', intervalHours: 5, startTime: '00:00' });
-
+    const res = await request(app()).put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`).send({ mode: 'INTERVAL', intervalHours: 5, startTime: '00:00' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('NITRADO_RESTART_PLAN_INVALID');
     expect(saveRestartPlan).not.toHaveBeenCalled();
   });
 
   it('queues an exact canonical plan instead of mutating Nitrado in the HTTP request', async () => {
-    const res = await request(app())
-      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
-      .send({ mode: 'INTERVAL', intervalHours: 4, startTime: '0:15' });
-
+    const res = await request(app()).put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`).send({ mode: 'INTERVAL', intervalHours: 4, startTime: '0:15' });
     expect(res.status).toBe(202);
     expect(res.body.times).toEqual(['00:15', '04:15', '08:15', '12:15', '16:15', '20:15']);
-    expect(saveRestartPlan).toHaveBeenCalledWith(
-      {
-        guildId: GUILD,
-        nitradoConnId: CONN,
-        nitradoServerId: '12345',
-      },
-      ACTOR,
-      {
-        mode: 'INTERVAL',
-        intervalHours: 4,
-        startTime: '00:15',
-        times: ['00:15', '04:15', '08:15', '12:15', '16:15', '20:15'],
-      },
-    );
+    expect(saveRestartPlan).toHaveBeenCalledWith({ guildId: GUILD, nitradoConnId: CONN, nitradoServerId: '12345' }, ACTOR, { mode: 'INTERVAL', intervalHours: 4, startTime: '00:15', times: ['00:15', '04:15', '08:15', '12:15', '16:15', '20:15'] });
     expect(listTasks).not.toHaveBeenCalled();
     expect(acquireMutationLock).toHaveBeenCalledWith(CONN);
     expect(releaseMutationLock).toHaveBeenCalledTimes(1);
@@ -198,11 +151,7 @@ describe('Nitrado restart task dashboard API', () => {
 
   it('fails busy with 409 before persisting a new desired state', async () => {
     acquireMutationLock.mockResolvedValue(null);
-
-    const res = await request(app())
-      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
-      .send({ mode: 'FIXED', times: ['04:00'] });
-
+    const res = await request(app()).put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`).send({ mode: 'FIXED', times: ['04:00'] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('NITRADO_CONNECTION_BUSY');
     expect(saveRestartPlan).not.toHaveBeenCalled();
@@ -211,11 +160,7 @@ describe('Nitrado restart task dashboard API', () => {
 
   it('fails closed with 503 when the mutation-lock infrastructure is unavailable', async () => {
     acquireMutationLock.mockRejectedValue(new Error('lock db down'));
-
-    const res = await request(app())
-      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
-      .send({ mode: 'FIXED', times: ['04:00'] });
-
+    const res = await request(app()).put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`).send({ mode: 'FIXED', times: ['04:00'] });
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('NITRADO_LOCK_UNAVAILABLE');
     expect(saveRestartPlan).not.toHaveBeenCalled();
@@ -223,11 +168,7 @@ describe('Nitrado restart task dashboard API', () => {
 
   it('maps a binding race to 409 instead of queueing a stale success response', async () => {
     saveRestartPlan.mockRejectedValue(new MockBindingConflictError('binding changed'));
-
-    const res = await request(app())
-      .put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`)
-      .send({ mode: 'FIXED', times: ['04:00'] });
-
+    const res = await request(app()).put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`).send({ mode: 'FIXED', times: ['04:00'] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('NITRADO_TASK_BINDING_CHANGED');
     expect(logAuditDb).not.toHaveBeenCalled();
@@ -235,55 +176,27 @@ describe('Nitrado restart task dashboard API', () => {
   });
 
   it('queues deletion of every restart task without deleting other task types in the route', async () => {
-    const res = await request(app())
-      .delete(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-tasks?slot=1`);
-
+    const res = await request(app()).delete(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-tasks?slot=1`);
     expect(res.status).toBe(202);
-    expect(clearRestartPlan).toHaveBeenCalledWith(
-      {
-        guildId: GUILD,
-        nitradoConnId: CONN,
-        nitradoServerId: '12345',
-      },
-      ACTOR,
-    );
-    expect(res.body).toEqual(expect.objectContaining({
-      enabled: false,
-      times: [],
-      syncStatus: 'PENDING',
-    }));
+    expect(clearRestartPlan).toHaveBeenCalledWith({ guildId: GUILD, nitradoConnId: CONN, nitradoServerId: '12345' }, ACTOR);
+    expect(res.body).toEqual(expect.objectContaining({ enabled: false, times: [], syncStatus: 'PENDING' }));
     expect(listTasks).not.toHaveBeenCalled();
     expect(acquireMutationLock).toHaveBeenCalledWith(CONN);
     expect(releaseMutationLock).toHaveBeenCalledTimes(1);
   });
 
   it('keeps confirmed remote tasks visible when only the action catalog is temporarily unavailable', async () => {
-    listTasks.mockResolvedValue([
-      {
-        id: 10, hour: '4', minute: '0', day: '*', month: '*', weekday: '*',
-        action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin',
-      },
-    ]);
+    listTasks.mockResolvedValue([{ id: 10, hour: '4', minute: '0', day: '*', month: '*', weekday: '*', action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin' }]);
     getTaskActionCatalog.mockRejectedValue(new MockNitradoApiError('catalog down', 503, '/tasks/list'));
-
-    const res = await request(app()).get(
-      `/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`,
-    );
-
+    const res = await request(app()).get(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`);
     expect(res.status).toBe(200);
     expect(res.body.remote.actionSupported).toBeNull();
-    expect(res.body.remote.restartTasks).toEqual([
-      expect.objectContaining({ id: 10, time: '04:00' }),
-    ]);
+    expect(res.body.remote.restartTasks).toEqual([expect.objectContaining({ id: 10, time: '04:00' })]);
   });
 
   it('fails closed when Nitrado task reads are unavailable', async () => {
     listTasks.mockRejectedValue(new MockNitradoApiError('remote down', 503, '/tasks'));
-
-    const res = await request(app()).get(
-      `/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`,
-    );
-
+    const res = await request(app()).get(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`);
     expect(res.status).toBe(503);
     expect(res.body.code).toBe('NITRADO_TASK_REMOTE_UNAVAILABLE');
     expect(res.body).not.toHaveProperty('remote');
