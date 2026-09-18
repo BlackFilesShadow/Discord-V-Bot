@@ -43,18 +43,18 @@ function expectOrder(description: string, labels: string[]): void {
 }
 
 describe('approved V-Bot gameplay feed embed designs', () => {
-  it('renders V-Kill Report compactly with Killer before Opfer, inline Pos links and server alias footer', () => {
+  it('renders V-Kill Report with the approved spacing, Killer before Opfer, inline Pos links and server alias footer', () => {
     const json = buildGameplayFeedEmbed(view({}), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
-    expect(description).toContain('**💀 V-Kill Report**');
+    expect(description).toContain('**💀 V-Kill Report**\n\n**Killer**');
     expectOrder(description, ['**Killer**', '**Opfer**', '**Waffe:**', '**Distanz:**']);
-    expect(description).toContain('Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)');
-    expect(description).toContain('Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)');
+    expect(description).toContain('Killer\nPos: [110,210,10](https://www.izurvive.com/#location=110;210;6)\n\n**Opfer**');
+    expect(description).toContain('Victim\nPos: [100,200,10](https://www.izurvive.com/#location=100;200;6)\n\n**Waffe:** M4-A1');
     expect(json.footer?.text).toBe(SERVER);
     expect(json.fields ?? []).toHaveLength(0);
   });
 
-  it('renders Self Kill Report with weapon, Pos, alias and event time', () => {
+  it('renders Self Kill Report with approved title spacing, weapon, Pos, alias and event time', () => {
     const json = buildGameplayFeedEmbed(view({
       kind: 'DEATH',
       category: 'SUICIDE',
@@ -66,7 +66,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
-    expect(description).toContain('**🩸 Self Kill Report**');
+    expect(description).toContain('**🩸 Self Kill Report**\n\n**Spieler:** Solo');
     expectOrder(description, ['**Spieler:**', '**Waffe:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('**Waffe:** IJ-70');
     expect(description).toContain(EVENT_TIME);
@@ -85,7 +85,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
-    expect(description).toContain('**☣️ Wild Kill Report**');
+    expect(description).toContain('**☣️ Wild Kill Report**\n\n**Opfer:** Survivor');
     expectOrder(description, ['**Opfer:**', '**Ursache:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('Animal\\_CanisLupus');
     expect(description).toContain(EVENT_TIME);
@@ -103,7 +103,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
-    expect(description).toContain('**💥 Crash Kill Report**');
+    expect(description).toContain('**💥 Crash Kill Report**\n\n**Opfer:** Victim');
     expectOrder(description, ['**Opfer:**', '**Fahrzeug / Ursache:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('**Fahrzeug / Ursache:** OffroadHatchback');
     expect(description).toContain(EVENT_TIME);
@@ -122,7 +122,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
       distanceMeters: null,
     }), '#dc2626', SERVER).toJSON();
     const description = json.description ?? '';
-    expect(description).toContain('**☠️ Death Report**');
+    expect(description).toContain('**☠️ Death Report**\n\n**Spieler:** Survivor');
     expectOrder(description, ['**Spieler:**', '**Todesursache:**', '**Pos:**', '**Ereigniszeit:**']);
     expect(description).toContain('**Todesursache:** Bled out');
     expect(description).toContain(EVENT_TIME);
@@ -148,7 +148,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     ['DESTROY', 'DESTROY', '💥 Destruction Report'],
   ] as const;
 
-  it.each(buildCases)('renders %s as the approved compact report with alias footer and event time', (_event, category, title) => {
+  it.each(buildCases)('renders %s as the approved report with title spacing, alias footer and event time', (_event, category, title) => {
     const feed = view({
       kind: category === 'PLACEMENT' ? 'PLACEMENT' : 'BUILD',
       category,
@@ -162,8 +162,7 @@ describe('approved V-Bot gameplay feed embed designs', () => {
     });
     const json = buildGameplayFeedEmbed(feed, '#eab308', SERVER).toJSON();
     const description = json.description ?? '';
-    expect(description).toContain(`**${title}**`);
-    expect(description).toContain('**Spieler:** Builder');
+    expect(description).toContain(`**${title}**\n\n**Spieler:** Builder`);
     expect(description).toContain('**Objekt:** Fence');
     expect(description).toContain(EVENT_TIME);
     expect(json.footer?.text).toBe(SERVER);
