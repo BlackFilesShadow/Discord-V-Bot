@@ -26,7 +26,7 @@ interface RestartPlanResponse {
     serviceBindingMatches: boolean;
   } | null;
   remote: {
-    actionSupported: boolean;
+    actionSupported: boolean | null;
     synchronized: boolean;
     restartTasks: Array<{
       id: number;
@@ -232,10 +232,16 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
 
         {data && (
           <div className="mt-5 space-y-5">
-            {!data.remote.actionSupported && (
+            {data.remote.actionSupported === false && (
               <div role="alert" className="rounded-lg border border-danger/40 bg-danger/10 p-3 text-sm text-danger">
                 Nitrado meldet <code>game_server_restart</code> für diesen Service derzeit nicht als verfügbare Task-Aktion.
                 Neue Restart-Aufgaben werden deshalb nicht angelegt.
+              </div>
+            )}
+            {data.remote.actionSupported === null && (
+              <div role="status" className="rounded-lg border border-border/60 bg-bg-elev/35 p-3 text-sm text-muted">
+                Der Nitrado-Aktionskatalog konnte nicht bestätigt werden. Vorhandene Restart-Aufgaben bleiben sichtbar und löschbar;
+                neue Aufgaben können erst gespeichert werden, wenn Nitrado die Restart-Aktion wieder bestätigt.
               </div>
             )}
             {data.plan && !data.plan.serviceBindingMatches && (
@@ -341,7 +347,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => save.mutate()}
-                disabled={!canWrite || save.isPending || clear.isPending || preview.length === 0 || !data.remote.actionSupported}
+                disabled={!canWrite || save.isPending || clear.isPending || preview.length === 0 || data.remote.actionSupported !== true}
               >
                 {save.isPending ? 'Speichere…' : 'Bei Nitrado speichern'}
               </Button>
