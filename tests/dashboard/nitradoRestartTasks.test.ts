@@ -219,6 +219,26 @@ describe('Nitrado restart task dashboard API', () => {
     expect(listTasks).not.toHaveBeenCalled();
   });
 
+  it('keeps confirmed remote tasks visible when only the action catalog is temporarily unavailable', async () => {
+    listTasks.mockResolvedValue([
+      {
+        id: 10, hour: '4', minute: '0', day: '*', month: '*', weekday: '*',
+        action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin',
+      },
+    ]);
+    getTaskActionCatalog.mockRejectedValue(new MockNitradoApiError('catalog down', 503, '/tasks/list'));
+
+    const res = await request(app()).get(
+      `/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.remote.actionSupported).toBeNull();
+    expect(res.body.remote.restartTasks).toEqual([
+      expect.objectContaining({ id: 10, time: '04:00' }),
+    ]);
+  });
+
   it('fails closed when Nitrado task reads are unavailable', async () => {
     listTasks.mockRejectedValue(new MockNitradoApiError('remote down', 503, '/tasks'));
 
