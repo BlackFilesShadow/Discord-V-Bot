@@ -70,6 +70,30 @@ export interface NitradoFileEntry {
   path?: string;
 }
 
+export interface NitradoTask {
+  id: number;
+  minute: string;
+  hour: string;
+  day: string;
+  month: string;
+  weekday: string;
+  next_run?: string | null;
+  last_run?: string | null;
+  timezone?: string | null;
+  action_method: string;
+  action_data?: unknown;
+}
+
+export interface NitradoTaskCreate {
+  minute: string;
+  hour: string;
+  day?: string;
+  month?: string;
+  weekday?: string;
+  actionMethod: string;
+  actionData?: string;
+}
+
 export type TokenValidationResult =
   | { kind: 'VALID' }
   | { kind: 'INVALID'; status: 401 | 403 | null }
@@ -609,6 +633,81 @@ export class NitradoClient {
       if (!this.isSeekDownloadFallbackError(error, seekPath, fullPath)) throw error;
       return this.downloadFileRangeViaDownload(serviceId, fullPath, offset, length);
     }
+  }
+
+  async listTasks(serviceId: string): Promise<NitradoTask[]> {
+    const path = `/services/${serviceId}/tasks`;
+    const res = await this.request<{
+      data?: { tasks?: unknown };
+      tasks?: unknown;
+    }>('GET', path);
+    const raw = res.data?.tasks ?? res.tasks;
+    if (!Array.isArray(raw)) {
+      throw new NitradoApiError('Unerwartetes Nitrado-Task-Format', null, path);
+    }
+
+    const out: NitradoTask[] = [];
+    for (const row of raw) {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        throw new NitradoApiError('Ungueltiger Nitrado-Task-Eintrag', null, path);
+      }
+      const task = row as Record<string, unknown>;
+      const id = Number(task.id);
+      const actionMethod = typeof task.action_method === 'string' ? task.action_method.trim() : '';
+      if (!Number.isSafeInteger(id) || id <= 0 || !actionMethod) {
+        throw new NitradoApiError('Nitrado-Task ohne gueltige ID/Aktion', null, path);
+      }
+      const asField = (name: string, fallback: string): string => {
+        const value = task[name];
+        if (value == null) return fallback;
+        if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+        throw new NitradoApiError(`Ungueltiges Nitrado-Task-Feld: ${name}`, null, path);
+      };
+      out.push({
+        id,
+        minute: asField('minute', '*'),
+        hour: asField('hour', '*'),
+        day: asField('day', '*'),
+        month: asField('month', '*'),
+        weekday: asField('weekday', '*'),
+        next_run: typeof task.next_run === 'string' ? task.next_run : null,
+        last_run: typeof task.last_run === 'string' ? task.last_run : null,
+        timezone: typeof task.timezone === 'string' ? task.timezone : null,
+        action_method: actionMethod,
+        action_data: task.action_data,
+      });
+    }
+    return out;
+  }
+
+  async getTaskActionCatalog(serviceId: string): Promise<unknown> {
+    const path = `/services/${serviceId}/tasks/list`;
+    const res = await this.request<{ data?: { tasks?: unknown }; tasks?: unknown }>('GET', path);
+    return res.data?.tasks ?? res.tasks ?? null;
+  }
+
+  async createTask(serviceId: string, task: NitradoTaskCreate): Promise<void> {
+    const path = `/services/${serviceId}/tasks`;
+    const fields: Record<string, string> = {
+      minute: task.minute,
+      hour: task.hour,
+      day: task.day ?? '*',
+      month: task.month ?? '*',
+      weekday: task.weekday ?? '*',
+      action_method: task.actionMethod,
+    };
+    if (task.actionData != null) fields.action_data = task.actionData;
+    await this.request<unknown>('POST', path, {
+      data: new URLSearchParams(fields).toString(),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+  }
+
+  async deleteTask(serviceId: string, taskId: number): Promise<void> {
+    if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+      throw new NitradoApiError('Ungueltige Nitrado-Task-ID', null, `/services/${serviceId}/tasks`);
+    }
+    await this.request<unknown>('DELETE', `/services/${serviceId}/tasks/${taskId}`);
   }
 
   async restart(serviceId: string, message?: string): Promise<void> {
