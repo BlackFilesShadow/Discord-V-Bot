@@ -186,4 +186,44 @@ describe('ADM live safe Nitrado ranges', () => {
       null,
     );
   });
+
+  it('markiert nur die erste Range einer same-size Rotation als kontrollierten Cursor-Reset', async () => {
+    const rotatedCursor = {
+      lastModifiedAt: 100,
+      lastKnownSize: 10_000n,
+      processedByteOffset: 10_000n,
+      fileName: 'DayZServer.ADM',
+    };
+    cursorFindFirst.mockResolvedValue(rotatedCursor);
+    cursorFindUnique.mockResolvedValue(rotatedCursor);
+    listDir.mockResolvedValue([{
+      name: 'DayZServer.ADM',
+      type: 'file',
+      modified_at: 101,
+      size: 10_000,
+      path: '/profiles/DayZServer.ADM',
+    }]);
+    downloadFileRange.mockImplementation(async (
+      _service: string,
+      _path: string,
+      _offset: number,
+      length: number,
+    ) => `${'x'.repeat(Math.max(0, length - 1))}\n`);
+
+    await runAdmLiveSyncOnce();
+
+    expect(persistAdmEvents).toHaveBeenCalledTimes(3);
+    expect(persistAdmEvents.mock.calls[0][3]).toEqual(expect.objectContaining({
+      newOffset: 4_048,
+      wasReset: true,
+    }));
+    expect(persistAdmEvents.mock.calls[1][3]).toEqual(expect.objectContaining({
+      newOffset: 8_096,
+      wasReset: false,
+    }));
+    expect(persistAdmEvents.mock.calls[2][3]).toEqual(expect.objectContaining({
+      newOffset: 10_000,
+      wasReset: false,
+    }));
+  });
 });
