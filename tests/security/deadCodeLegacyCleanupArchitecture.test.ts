@@ -89,6 +89,7 @@ describe('Stage 57 dead code legacy cleanup', () => {
       'KEEPALIVE',
       'DOWNLOAD_ADM',
       'RESTART_IF_DOWN',
+      'RESTART_PLAN_SYNC',
     ]) {
       expect(worker).toContain(`'${op}'`);
     }
