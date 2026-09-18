@@ -152,17 +152,27 @@ function embed(kind: CatalogKind, names: string[], page: number, query?: string)
   const pages = Math.max(1, Math.ceil(names.length / PAGE_SIZE));
   const safePage = Math.max(0, Math.min(page, pages - 1));
   const rows = names.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
-  const intro = kind === 'whitelist'
-    ? 'Aktuell freigeschaltete Spielernamen. Die Liste wird alle 3 Minuten direkt von Nitrado aktualisiert.'
-    : 'Aktuell gebannte Spielernamen. Die Liste wird alle 3 Minuten direkt von Nitrado aktualisiert.';
-  const heading = query
-    ? `${kind === 'whitelist' ? '✅' : '🔨'} ${meta.title} · Suche`
-    : kind === 'whitelist' ? '✅ Whitelist-Katalog' : '🔨 Bann-Katalog';
   const entries = rows.length
     ? rows.map((name, index) => `${safePage * PAGE_SIZE + index + 1}. \`${name.replace(/`/g, "'")}\``).join('\n')
     : '_Keine Einträge._';
+
+  if (kind === 'whitelist') {
+    const heading = query ? '🔎 Whitelist-Suche' : '✅ Whitelist-Katalog';
+    const description = query
+      ? `**${heading}**\n\nGefundene Spieler für **${query}**:\n\n${entries}`
+      : `**${heading}**\n\nHier siehst du alle aktuell freigeschalteten Spieler.\n\n${entries}`;
+    const footer = query
+      ? `${names.length} Treffer · Seite ${safePage + 1}/${pages}`
+      : `${names.length} Spieler · Seite ${safePage + 1}/${pages}`;
+    return compactEmbed(Colors.Success, footer)
+      .setDescription(description)
+      .setTimestamp();
+  }
+
+  const intro = 'Aktuell gebannte Spielernamen. Die Liste wird alle 3 Minuten direkt von Nitrado aktualisiert.';
+  const heading = query ? `🔨 ${meta.title} · Suche` : '🔨 Bann-Katalog';
   return compactEmbed(
-    kind === 'whitelist' ? Colors.Success : Colors.Error,
+    Colors.Error,
     `${names.length} Einträge · Seite ${safePage + 1}/${pages} · ${meta.source}${query ? ` · Suche: ${query}` : ''}`,
   )
     .setDescription(compactDescription(heading, [intro, entries]))
@@ -378,7 +388,9 @@ export async function handleServerListCatalogButton(interaction: ButtonInteracti
       await interaction.editReply(catalogPayload(state.row, kind, state.names, 0));
     } catch (error) {
       logger.warn(`${fields(kind).title}-Aktualisierung fehlgeschlagen: ${error instanceof Error ? error.message : String(error)}`);
-      await replyCatalogButtonError(interaction, 'Aktualisierung bei Nitrado fehlgeschlagen. Die bisherige Katalogansicht bleibt erhalten.');
+      await replyCatalogButtonError(interaction, kind === 'whitelist'
+        ? 'Die Whitelist konnte gerade nicht aktualisiert werden. Die bisherige Ansicht bleibt erhalten.'
+        : 'Aktualisierung bei Nitrado fehlgeschlagen. Die bisherige Katalogansicht bleibt erhalten.');
     }
     return;
   }
@@ -424,7 +436,9 @@ export async function handleServerListCatalogSearch(interaction: ModalSubmitInte
 
   const filtered = filterAndRankNames(state.names, query);
   if (!filtered.length) {
-    await interaction.editReply('Kein passender Eintrag gefunden.');
+    await interaction.editReply(kind === 'whitelist'
+      ? `Für **${query}** wurde kein Spieler gefunden.`
+      : 'Kein passender Eintrag gefunden.');
     return;
   }
 
