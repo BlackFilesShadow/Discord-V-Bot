@@ -26,9 +26,11 @@ function normalize(value: string): string {
 }
 
 function components(kind: DriftKind, noticeId: string) {
+  const acceptLabel = kind === 'WHITELIST' ? 'Entfernung übernehmen' : 'Nitrado-Zustand übernehmen';
+  const restoreLabel = kind === 'WHITELIST' ? 'Spieler wieder freigeben' : 'V-Bot-Zustand wiederherstellen';
   return [new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`ndrift:accept:${kind}:${noticeId}`).setLabel('Nitrado-Zustand übernehmen').setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`ndrift:restore:${kind}:${noticeId}`).setLabel('V-Bot-Zustand wiederherstellen').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(`ndrift:accept:${kind}:${noticeId}`).setLabel(acceptLabel).setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`ndrift:restore:${kind}:${noticeId}`).setLabel(restoreLabel).setStyle(ButtonStyle.Primary),
   )];
 }
 
@@ -65,14 +67,25 @@ async function sendNotice(client: Client, args: { guildId: string; nitradoConnId
     return;
   }
 
-  const label = args.kind === 'WHITELIST' ? `Whitelist-Eintrag \`${args.subjectKey.replace(/`/g, "'")}\`` : 'Ban-Eintrag';
   try {
-    const message = await (channel as TextChannel).send({
-      embeds: [compactEmbed(Colors.Warning, 'V-Bot • Nitrado')
+    const embed = args.kind === 'WHITELIST'
+      ? compactEmbed(Colors.Warning, 'V-Bot • Whitelist')
+        .setDescription([
+          '**⚠️ Whitelist-Änderung erkannt**',
+          '',
+          `Der Spieler **${args.subjectKey.replace(/[*_`~|>]/g, '')}** wurde außerhalb von V-Bot von der Whitelist entfernt.`,
+          '',
+          'Welcher Zustand soll übernommen werden?',
+        ].join('\n'))
+        .setTimestamp()
+      : compactEmbed(Colors.Warning, 'V-Bot • Nitrado')
         .setDescription(compactDescription('⚠️ Manuelle Nitrado-Abweichung erkannt', [
-          `${label} wurde direkt bei Nitrado entfernt. Entscheide bewusst, welcher Zustand gelten soll.`,
+          'Ban-Eintrag wurde direkt bei Nitrado entfernt. Entscheide bewusst, welcher Zustand gelten soll.',
         ]))
-        .setTimestamp()],
+        .setTimestamp();
+
+    const message = await (channel as TextChannel).send({
+      embeds: [embed],
       components: components(args.kind, notice.id),
       allowedMentions: { parse: [] },
     });
@@ -158,7 +171,7 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
     where: { id: noticeId, guildId: interaction.guildId, kind, channelId: interaction.channelId, messageId: interaction.message.id },
   });
   if (!notice) {
-    await interaction.editReply('Diese Drift-Meldung ist nicht mehr aktuell.');
+    await interaction.editReply(kind === 'WHITELIST' ? 'Diese Meldung ist nicht mehr aktuell.' : 'Diese Drift-Meldung ist nicht mehr aktuell.');
     return;
   }
 
@@ -167,18 +180,22 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
     names = await remoteNames(notice.guildId, notice.nitradoConnId, kind);
   } catch (error) {
     logger.warn(`Nitrado-Driftaktion Remote-Read fehlgeschlagen: ${(error as Error).message}`);
-    await interaction.editReply('Nitrado konnte nicht frisch gelesen werden. Es wurde nichts geändert.');
+    await interaction.editReply(kind === 'WHITELIST'
+      ? 'Der Gameserver konnte gerade nicht geprüft werden. Es wurde nichts geändert.'
+      : 'Nitrado konnte nicht frisch gelesen werden. Es wurde nichts geändert.');
     return;
   }
   if (!names) {
-    await interaction.editReply('Die Nitrado-Verbindung ist nicht aktiv. Es wurde nichts geändert.');
+    await interaction.editReply(kind === 'WHITELIST'
+      ? 'Der Gameserver ist aktuell nicht verfügbar. Es wurde nichts geändert.'
+      : 'Die Nitrado-Verbindung ist nicht aktiv. Es wurde nichts geändert.');
     return;
   }
 
   if (kind === 'WHITELIST') {
     if (names.some(name => normalize(name) === normalize(notice.subjectKey))) {
       await clearNitradoDriftNotice(interaction.client, notice.guildId, notice.nitradoConnId, kind, notice.subjectKey);
-      await finish(interaction, 'Der Whitelist-Eintrag ist bei Nitrado wieder vorhanden. Die Meldung wurde geschlossen.');
+      await finish(interaction, 'Der Spieler ist wieder auf der Whitelist. Die Meldung wurde geschlossen.');
       return;
     }
     if (action === 'accept') {
@@ -189,9 +206,9 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
         await tx.nitradoDriftNotice.deleteMany({ where: { id: notice.id, guildId: notice.guildId } });
         return true;
       });
-      if (!result) { await interaction.editReply('Der lokale Whitelist-Eintrag wurde bereits geändert.'); return; }
+      if (!result) { await interaction.editReply('Die Whitelist wurde inzwischen bereits geändert.'); return; }
       logAudit('NITRADO_WHITELIST_DRIFT_RESOLVED', 'WHITELIST', { guildId: notice.guildId, actorUserId: interaction.user.id, details: { nitradoConnId: notice.nitradoConnId, gameId: notice.subjectKey, decision: 'ACCEPT_NITRADO' } });
-      await finish(interaction, 'Nitrado-Zustand übernommen: Die lokale Whitelist-Freigabe wurde entfernt.');
+      await finish(interaction, 'Die Entfernung wurde übernommen. Der Spieler bleibt von der Whitelist entfernt.');
       return;
     }
     const result = await prisma.$transaction(async tx => {
@@ -201,9 +218,9 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
       await tx.nitradoDriftNotice.deleteMany({ where: { id: notice.id, guildId: notice.guildId } });
       return true;
     });
-    if (!result) { await interaction.editReply('Der lokale Whitelist-Eintrag wurde bereits geändert.'); return; }
+    if (!result) { await interaction.editReply('Die Whitelist wurde inzwischen bereits geändert.'); return; }
     logAudit('NITRADO_WHITELIST_DRIFT_RESOLVED', 'WHITELIST', { guildId: notice.guildId, actorUserId: interaction.user.id, details: { nitradoConnId: notice.nitradoConnId, gameId: notice.subjectKey, decision: 'RESTORE_VBOT' } });
-    await finish(interaction, 'V-Bot-Zustand wird wiederhergestellt: Der Whitelist-Add wurde eingereiht.');
+    await finish(interaction, 'Der Spieler wird wieder für die Whitelist freigegeben.');
     return;
   }
 

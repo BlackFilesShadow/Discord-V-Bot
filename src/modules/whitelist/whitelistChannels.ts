@@ -129,17 +129,17 @@ export async function ensureWhitelistInfoEmbed(guildId: string, nitradoConnId: s
   const embed = vEmbed(Colors.Info)
     .setTitle('Whitelist')
     .setDescription([
-      'Du möchtest Zugang zum Server? Hier kannst du deinen Whitelist-Antrag stellen.',
+      'Du möchtest auf unserem Server spielen? Dann kannst du hier ganz einfach einen Whitelist-Antrag stellen.',
       '',
       '**So funktioniert es:**',
       '1. Nutze `/whitelist-antrag` in diesem Kanal.',
-      '2. Trage deinen **exakten Spielernamen** ein (1–64 Zeichen).',
-      '3. Sind mehrere aktive Server verbunden, wähle den gewünschten Server über seinen Alias aus. Bei nur einem aktiven Server ist keine Serverauswahl nötig.',
-      '4. Dein Antrag wird automatisch an das zuständige Server-Team zur Prüfung weitergeleitet.',
+      '2. Gib deinen exakten Spielernamen ein.',
+      '3. Falls mehrere Gameserver verfügbar sind, wähle den gewünschten Server aus.',
+      '4. Dein Antrag wird anschließend vom Server-Team geprüft.',
       '',
-      'Nach der Entscheidung wirst du über Annahme oder Ablehnung benachrichtigt.',
+      'Nach der Entscheidung wirst du automatisch informiert.',
       '',
-      '**Wichtig:** Der Spielername muss exakt so angegeben werden, wie er im Spiel angezeigt wird. Achte auf Groß-/Kleinschreibung und Sonderzeichen.',
+      '**Wichtig:** Achte darauf, deinen Spielernamen genauso einzugeben, wie er im Spiel angezeigt wird.',
     ].join('\n'))
     .setFooter({ text: 'V-Bot • Whitelist' })
     .setTimestamp(new Date());
@@ -200,13 +200,6 @@ export async function postWhitelistApprovalEmbed(args: {
       .setEmoji('❌')
       .setStyle(ButtonStyle.Danger),
   ];
-  // "Universal Whitelist" ergibt nur bei mehreren verbundenen Gameservern einen
-  // Sinn (Fan-out auf alle aktiven Connections). Bei nur einem verbundenen
-  // Server ist Annehmen/Ablehnen bereits die vollstaendige Aktion. Dieselbe
-  // Zaehlung (status=ACTIVE, nitradoServerId gesetzt) wie im Button-Handler
-  // selbst - dadurch verschwindet der Button automatisch (selbstheilend) bei
-  // jeder neuen Anfrage, sobald wieder nur ein Server verbunden ist, ohne dass
-  // bereits gesendete Embeds nachtraeglich editiert werden muessen.
   const universalTargetCount = await prisma.nitradoConnection.count({
     where: { guildId: args.guildId, status: 'ACTIVE', nitradoServerId: { not: null } },
   });
@@ -214,7 +207,7 @@ export async function postWhitelistApprovalEmbed(args: {
     buttons.push(
       new ButtonBuilder()
         .setCustomId(`wlreq:u:${args.requestId}`)
-        .setLabel('Universal Whitelist')
+        .setLabel('Für alle Server freigeben')
         .setEmoji('🌐')
         .setStyle(ButtonStyle.Primary),
     );
@@ -237,8 +230,8 @@ export async function notifyRequesterPending(guildId: string, requesterDiscordId
     const user = await c.users.fetch(requesterDiscordId);
     const embed = vEmbed(Colors.Info)
       .setTitle('Whitelist-Anfrage eingegangen')
-      .setDescription('Deine Anfrage wurde dem zustaendigen Server-Team weitergeleitet. Bitte warte auf die Entscheidung.')
-      .addFields({ name: 'Beantragter Name', value: `\`${gameId}\`` })
+      .setDescription('Dein Whitelist-Antrag ist bei uns angekommen und wird vom Server-Team geprüft.\n\nDu erhältst automatisch eine Nachricht, sobald eine Entscheidung getroffen wurde.')
+      .addFields({ name: 'Beantragter Spielername', value: `\`${gameId}\`` })
       .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
     await user.send({ embeds: [embed] });
@@ -257,19 +250,15 @@ export async function notifyRequesterDecision(args: {
     const user = await c.users.fetch(args.requesterDiscordId);
     const embed = vEmbed(args.approved ? Colors.Success : Colors.Error)
       .setTitle(args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt')
-      .addFields({ name: 'Beantragter Name', value: `\`${args.gameId}\`` })
+      .addFields({ name: 'Beantragter Spielername', value: `\`${args.gameId}\`` })
       .setFooter({ text: 'V-Bot • Whitelist' })
       .setTimestamp(new Date());
-    if (args.reason) embed.addFields({ name: 'Begruendung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
-    // Die eigentliche Nitrado-Synchronisierung laeuft asynchron ueber die
-    // Job-Queue (bis zu ~10s Poll-Intervall) und kann danach noch dauerhaft
-    // fehlschlagen. Diese DM darf deshalb niemals einen bereits abgeschlossenen
-    // Fakt behaupten ("du wurdest gesetzt") - sonst glaubt der Nutzer
-    // faelschlich, bereits whitelisted zu sein, obwohl der Sync noch aussteht
-    // oder spaeter permanent scheitert. Dieselbe ehrliche "eingereiht"-Sprache
-    // wie ueberall sonst in diesem Modul (z.B. Universal-Whitelist-Fanout).
-    if (args.approved) embed.setDescription(args.description ?? 'Deine Whitelist-Anfrage wurde angenommen und zur Synchronisierung mit dem Gameserver eingereiht. Du wirst automatisch freigeschaltet, sobald der Sync abgeschlossen ist.');
-    else embed.setDescription(args.description ?? 'Dein Antrag wurde abgelehnt.');
+    if (args.reason) embed.addFields({ name: 'Begründung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
+    if (args.approved) {
+      embed.setDescription(args.description ?? 'Dein Antrag wurde erfolgreich angenommen.\n\nDu wurdest für den Gameserver freigeschaltet und kannst dem Server nun beitreten.');
+    } else {
+      embed.setDescription(args.description ?? 'Dein Whitelist-Antrag wurde leider nicht angenommen.');
+    }
     await user.send({ embeds: [embed] });
   } catch (e) {
     logger.warn(`Whitelist: Entscheidungs-DM an ${args.requesterDiscordId} fehlgeschlagen: ${(e as Error).message}`);
@@ -291,12 +280,17 @@ async function postTemporaryDecisionNotice(args: {
   const embed = vEmbed(args.approved ? Colors.Success : Colors.Error)
     .setTitle(args.approved ? 'Whitelist-Anfrage angenommen' : 'Whitelist-Anfrage abgelehnt')
     .setDescription(args.approved
-      ? 'Deine Whitelist-Anfrage wurde angenommen. Bei Fragen oder für weitere Informationen wende dich bitte an den Support.'
-      : 'Deine Whitelist-Anfrage wurde abgelehnt. Bei Fragen oder für weitere Informationen wende dich bitte an den Support.')
+      ? 'Dein Antrag wurde erfolgreich angenommen.\n\nDu wurdest für den Gameserver freigeschaltet und kannst dem Server nun beitreten.'
+      : 'Dein Antrag wurde leider nicht angenommen.')
     .addFields({ name: 'Beantragter Spielername', value: `\`${args.gameId}\`` })
-    .setFooter({ text: 'V-Bot • Whitelist • temporäre Information' })
+    .setFooter({ text: 'V-Bot • Whitelist • Information' })
     .setTimestamp(args.decidedAt);
-  if (args.reason) embed.addFields({ name: 'Begründung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
+  if (args.reason) {
+    embed.addFields({
+      name: args.approved ? 'Hinweis' : 'Begründung',
+      value: safeEmbedField(args.reason, WHITELIST_REASON_MAX),
+    });
+  }
 
   const sent = await ch.send({
     content: `<@${args.requesterDiscordId}>`,
@@ -330,14 +324,19 @@ async function postPermanentDecisionArchive(args: {
     .setTitle(args.approved ? 'Whitelist-Antrag angenommen' : 'Whitelist-Antrag abgelehnt')
     .addFields(
       { name: 'Discord-Name', value: requesterName, inline: false },
-      { name: 'Beantragter Spielername', value: `\`${args.gameId}\``, inline: false },
+      { name: 'Spielername', value: `\`${args.gameId}\``, inline: false },
       { name: args.approved ? 'Genehmigt von' : 'Abgelehnt von', value: adminName, inline: false },
       { name: 'Datum', value: when.date, inline: false },
       { name: 'Uhrzeit', value: when.time, inline: false },
     )
     .setFooter({ text: 'V-Bot • Whitelist • Archiv' })
     .setTimestamp(args.decidedAt);
-  if (args.reason) embed.addFields({ name: 'Begründung', value: safeEmbedField(args.reason, WHITELIST_REASON_MAX) });
+  if (args.reason) {
+    embed.addFields({
+      name: args.approved ? 'Notiz' : 'Begründung',
+      value: safeEmbedField(args.reason, WHITELIST_REASON_MAX),
+    });
+  }
 
   await ch.send({ embeds: [embed], allowedMentions: { parse: [] } });
 }

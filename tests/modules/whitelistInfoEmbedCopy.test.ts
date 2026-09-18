@@ -7,13 +7,13 @@ describe('Whitelist-Info-Embed', () => {
     'utf8',
   );
 
-  it('erklaert Whitelist und verweist auf den produktiven Antrag-Command ohne technische Slot-/ID-Sprache', () => {
+  it('erklaert Whitelist in einfacher Sprache und verweist auf den produktiven Antrag-Command', () => {
     expect(source).toContain("vEmbed(Colors.Info)");
     expect(source).toContain(".setTitle('Whitelist')");
     expect(source).toContain('`/whitelist-antrag`');
-    expect(source).toContain('Trage deinen **exakten Spielernamen** ein');
-    expect(source).toContain('wähle den gewünschten Server über seinen Alias aus');
-    expect(source).toContain('Bei nur einem aktiven Server ist keine Serverauswahl nötig.');
+    expect(source).toContain('Gib deinen exakten Spielernamen ein.');
+    expect(source).toContain('Falls mehrere Gameserver verfügbar sind, wähle den gewünschten Server aus.');
+    expect(source).toContain('Dein Antrag wird anschließend vom Server-Team geprüft.');
     expect(source).not.toContain('bei `slot` den gewünschten Server');
     expect(source).not.toContain('Request-ID: ${args.requestId}');
   });

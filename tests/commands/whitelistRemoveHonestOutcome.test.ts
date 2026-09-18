@@ -83,15 +83,16 @@ describe('/whitelist-remove (intern wl-remove) meldet den Ausgang ehrlich', () =
     resolveSelectedOrAllServers.mockResolvedValue([{ id: 'conn-1', slot: 1, alias: 'Chernarus', status: 'ACTIVE' }]);
   });
 
-  it('meldet echte Erfolgs-Einreihung, wenn eine lokale Whitelist-Zeile existiert', async () => {
+  it('meldet eine einfache Entfernung, wenn eine lokale Whitelist-Zeile existiert', async () => {
     entryUpdateCount = 1;
     const { interaction, reply } = removeInteraction();
     await wlRemoveCommand.execute(interaction);
 
     expect(enqueueWhitelistRemove).toHaveBeenCalledTimes(1);
     const description = (reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }> }).embeds[0].data.description;
-    expect(description).toContain('Remove-Sync eingereiht');
-    expect(description).not.toContain('Kein lokaler Eintrag');
+    expect(description).toContain('wurde von der Whitelist entfernt');
+    expect(description).not.toContain('Sync');
+    expect(description).not.toContain('lokaler Eintrag');
     expect(logAudit).toHaveBeenCalledWith('WL_REMOVE', 'WHITELIST', expect.objectContaining({ hadLocalEntry: true }));
   });
 
@@ -100,14 +101,11 @@ describe('/whitelist-remove (intern wl-remove) meldet den Ausgang ehrlich', () =
     const { interaction, reply } = removeInteraction();
     await wlRemoveCommand.execute(interaction);
 
-    // Der Job wird weiterhin eingereiht (fuer den Fall einer verifizierten
-    // Verlassen-Bereinigung), aber die Nachricht darf keinen falschen Erfolg
-    // suggerieren, da whitelistIntent.ts einen UNTRACKED-Remove ausserhalb
-    // dieses Sonderfalls absichtlich nicht ausfuehrt.
     expect(enqueueWhitelistRemove).toHaveBeenCalledTimes(1);
     const description = (reply.mock.calls[0][0] as { embeds: Array<{ data: { description?: string } }> }).embeds[0].data.description;
-    expect(description).toContain('Kein lokaler Eintrag gefunden');
-    expect(description).not.toContain('Remove-Sync eingereiht');
+    expect(description).toContain('nicht eindeutig in der Whitelist gefunden');
+    expect(description).not.toContain('Sync');
+    expect(description).not.toContain('lokaler Eintrag');
     expect(logAudit).toHaveBeenCalledWith('WL_REMOVE', 'WHITELIST', expect.objectContaining({ hadLocalEntry: false }));
   });
 });

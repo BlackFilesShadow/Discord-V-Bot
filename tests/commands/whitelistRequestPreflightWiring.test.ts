@@ -26,8 +26,8 @@ describe('/whitelist request preflight wiring', () => {
   it('erkennt Remote-only Nitrado-Eintraege und erstellt bei Preflight-Fehler fail-closed keinen Antrag', () => {
     expect(source).toContain("import { isAlreadyOnRemoteWhitelist } from '../../modules/whitelist/whitelistRequestPreflight';");
     expect(source).toContain('if (remoteAlreadyWhitelisted) {');
-    expect(source).toContain('steht auf **${targetLabel(target)}** bereits auf der Nitrado-Whitelist');
-    expect(source).toContain("'Whitelist-Status nicht pruefbar'");
+    expect(source).toContain('ist auf **${targetLabel(target)}** bereits für die Whitelist freigeschaltet');
+    expect(source).toContain("'Whitelist-Status nicht prüfbar'");
     expect(source).toContain('Es wurde kein Antrag erstellt. Bitte versuche es erneut.');
   });
 

@@ -43,7 +43,7 @@ function responseEmbed(
   title: string,
   description: string,
 ): EmbedBuilder {
-  const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : 0x5865F2;
+  const color = state === 'SUCCESS' ? Colors.Success : state === 'ERROR' ? Colors.Error : Colors.Info;
   return vEmbed(color)
     .setTitle(title)
     .setDescription(description)
@@ -280,7 +280,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     if (universalTargets.length === 0) {
       await replyEphemeral(
         btn,
-        responseEmbed('ERROR', 'Keine aktiven Gameserver', 'Es ist aktuell kein aktiver, vollständig verbundener Gameserver für die Universal-Whitelist verfügbar.'),
+        responseEmbed('ERROR', 'Kein Gameserver verfügbar', 'Aktuell ist kein verfügbarer Gameserver verbunden, auf dem der Spieler freigeschaltet werden kann.'),
       );
       return;
     }
@@ -291,7 +291,10 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     { guildId: reqRow.guildId, nitradoConnId: reqRow.nitradoConnId },
     reqRow.gameId,
   )) {
-    await replyEphemeral(btn, responseEmbed('ERROR', 'Whitelist durch Bann gesperrt', ACTIVE_BAN_WHITELIST_WARNING));
+    await replyEphemeral(
+      btn,
+      responseEmbed('ERROR', 'Whitelist nicht möglich', 'Dieser Spieler ist auf diesem Gameserver aktuell gesperrt und kann deshalb nicht zur Whitelist hinzugefügt werden.'),
+    );
     return;
   }
 
@@ -313,7 +316,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
       if (claim.claimLost) {
         await followUpEphemeral(
           btn,
-          responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
+          responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Whitelist-Anfrage wurde bereits von einem anderen Teammitglied bearbeitet.'),
         );
         return;
       }
@@ -339,15 +342,12 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
           by: btn.user.id,
           targets: results.map(result => ({ id: result.id, alias: result.alias, slot: result.slot, error: result.error })),
         });
+        const allBanned = results.length > 0 && results.every(result => result.error === ACTIVE_BAN_WHITELIST_WARNING);
         await followUpEphemeral(
           btn,
-          responseEmbed(
-            'ERROR',
-            'Universal Whitelist fehlgeschlagen',
-            results.length > 0 && results.every(result => result.error === ACTIVE_BAN_WHITELIST_WARNING)
-              ? ACTIVE_BAN_WHITELIST_WARNING
-              : 'Keiner der aktiven Gameserver konnte sicher eingereiht werden. Die Anfrage bleibt offen und kann erneut bearbeitet werden.',
-          ),
+          allBanned
+            ? responseEmbed('ERROR', 'Whitelist nicht möglich', 'Dieser Spieler ist auf den ausgewählten Gameservern aktuell gesperrt und kann deshalb nicht zur Whitelist hinzugefügt werden.')
+            : responseEmbed('ERROR', 'Aktion fehlgeschlagen', 'Die Whitelist-Anfrage konnte nicht vollständig verarbeitet werden.\n\nBitte versuche es erneut. Sollte das Problem bestehen bleiben, wende dich an einen Administrator.'),
         );
         return;
       }
@@ -368,8 +368,8 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
           gameId: reqRow.gameId,
           approved: true,
           description: failed.length === 0
-            ? `Deine Universal-Whitelist wurde für alle ${succeeded.length} aktiven Gameserver zur Synchronisierung eingereiht.`
-            : `Dein Antrag wurde angenommen. Die Universal-Whitelist konnte für ${succeeded.length} von ${results.length} aktiven Gameservern eingereiht werden; das Server-Team wurde über die fehlgeschlagenen Ziele informiert.`,
+            ? 'Dein Antrag wurde erfolgreich angenommen.\n\nDu wurdest für alle verfügbaren Gameserver freigeschaltet.'
+            : 'Dein Antrag wurde angenommen.\n\nDu wurdest bereits für einen Teil unserer Gameserver freigeschaltet. Bei mindestens einem Server konnte die Freigabe noch nicht durchgeführt werden.\n\nDas Server-Team wurde darüber informiert.',
         }),
         postDecisionLog({
           guildId: reqRow.guildId,
@@ -393,10 +393,10 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         btn,
         responseEmbed(
           failed.length === 0 ? 'SUCCESS' : 'INFO',
-          failed.length === 0 ? 'Universal Whitelist eingereiht' : 'Universal Whitelist teilweise eingereiht',
+          failed.length === 0 ? 'Whitelist aktualisiert' : 'Whitelist teilweise freigeschaltet',
           failed.length === 0
-            ? `Der Spieler wurde für alle ${succeeded.length} aktiven Gameserver unabhängig eingereiht: ${successNames}.`
-            : `Erfolgreich (${succeeded.length}): ${successNames}.\nFehlgeschlagen (${failed.length}): ${failedNames}. ${failed.some(result => result.error === ACTIVE_BAN_WHITELIST_WARNING) ? '⚠️ Mindestens ein Ziel ist aktiv gebannt; dafür wurde keine Whitelist-Freigabe eingereiht.' : 'Die erfolgreichen Server werden dadurch nicht blockiert.'}`,
+            ? `Der Spieler wurde für alle verfügbaren Gameserver freigeschaltet.\n\n**Server:** ${successNames}`
+            : `Der Spieler wurde für folgende Server freigegeben: ${successNames}.\n\nNicht möglich: ${failedNames}. Das Server-Team kann die betroffenen Server separat prüfen.`,
         ),
       );
       return;
@@ -455,7 +455,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     if (claimed === 'BANNED') {
       await followUpEphemeral(
         btn,
-        responseEmbed('ERROR', 'Whitelist durch Bann gesperrt', ACTIVE_BAN_WHITELIST_WARNING),
+        responseEmbed('ERROR', 'Whitelist nicht möglich', 'Dieser Spieler ist auf diesem Gameserver aktuell gesperrt und kann deshalb nicht zur Whitelist hinzugefügt werden.'),
       );
       return;
     }
@@ -463,7 +463,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     if (!claimed) {
       await followUpEphemeral(
         btn,
-        responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Anfrage wurde bereits von jemand anderem entschieden.'),
+        responseEmbed('INFO', 'Anfrage bereits bearbeitet', 'Diese Whitelist-Anfrage wurde bereits von einem anderen Teammitglied bearbeitet.'),
       );
       await removeRequestMessage(btn);
       return;
@@ -485,8 +485,6 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
       });
     }
 
-    // Das offene Button-Embed verschwindet nach der Entscheidung. Die dauerhafte
-    // Historie wird getrennt im konfigurierten Annahme-/Ablehnungs-Archiv erzeugt.
     await removeRequestMessage(btn);
 
     await Promise.allSettled([
@@ -517,7 +515,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
         isApprove ? 'SUCCESS' : 'ERROR',
         isApprove ? 'Antrag angenommen' : 'Antrag abgelehnt',
         isApprove
-          ? 'Der Whitelist-Sync zu Nitrado wurde sicher eingereiht.'
+          ? 'Der Spieler wurde für den Gameserver freigeschaltet.'
           : 'Die Whitelist-Anfrage wurde abgelehnt.',
       ),
     );
@@ -525,7 +523,7 @@ export async function handleWhitelistApprovalButton(btn: ButtonInteraction): Pro
     logger.error('Whitelist-Button: Fehler', e as Error);
     await followUpEphemeral(
       btn,
-      responseEmbed('ERROR', 'Verarbeitung fehlgeschlagen', 'Die Anfrage wurde nicht vollstaendig verarbeitet. Bitte erneut versuchen.'),
+      responseEmbed('ERROR', 'Aktion fehlgeschlagen', 'Die Whitelist-Anfrage konnte nicht vollständig verarbeitet werden.\n\nBitte versuche es erneut. Sollte das Problem bestehen bleiben, wende dich an einen Administrator.'),
     );
   }
 }
