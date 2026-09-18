@@ -69,6 +69,7 @@ describe('Stage 57 dead code legacy cleanup', () => {
     const ai = r('src/modules/ai/toolRuntime.ts');
     const nitradoRuntime = r('src/modules/nitrado/runtime.ts');
     const worker = r('src/modules/nitrado/jobWorker.ts');
+    const restartPlanStore = r('src/modules/nitrado/restartTaskPlanStore.ts');
 
     expect(ai).toContain('function registerProductionTools(executor: AiToolExecutor)');
     expect(ai).toContain('registerProductionTools(executor)');
@@ -89,10 +90,11 @@ describe('Stage 57 dead code legacy cleanup', () => {
       'KEEPALIVE',
       'DOWNLOAD_ADM',
       'RESTART_IF_DOWN',
-      'RESTART_PLAN_SYNC',
     ]) {
       expect(worker).toContain(`'${op}'`);
     }
+    expect(worker).toContain('RESTART_PLAN_SYNC_OPERATION');
+    expect(restartPlanStore).toContain("export const RESTART_PLAN_SYNC_OPERATION = 'RESTART_PLAN_SYNC'");
   });
 
   it('crosschecks audited coupling-map runtime evidence and keeps proven removals removed', () => {
