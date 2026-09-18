@@ -19,7 +19,7 @@ describe('ADM live-sync chronology fence', () => {
     );
     expect(source).toContain('.sort((a, b) => a.modified_at - b.modified_at || a.name.localeCompare(b.name))');
     expect(source).toContain('const fileComplete = await ingestFile(');
-    expect(source).toContain('if (!fileComplete) break;');
+    expect(source).toMatch(/if \(!fileComplete\) \{[\s\S]*sourceCaughtUp = false;[\s\S]*break;[\s\S]*\}/);
     expect(source).toMatch(/catch \(error\)[\s\S]*firstFileError[\s\S]*break;/);
   });
 });
