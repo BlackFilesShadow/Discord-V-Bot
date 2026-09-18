@@ -730,6 +730,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             if (!freshConn?.nitradoServerId) {
               throw new PermanentJobError('Nitrado-Servicebindung ist nicht mehr aktuell.');
             }
+            const freshServiceId = freshConn.nitradoServerId;
 
             const desiredTimes = plan.enabled ? parsePlanTimes(plan.times) : [];
             const taskClient = new NitradoClient(
@@ -743,7 +744,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
                   guildId: job.guildId,
                   nitradoConnId: conn.id,
                   revision: Number(revision),
-                  nitradoServerId: freshConn.nitradoServerId,
+                  nitradoServerId: freshServiceId,
                 },
                 select: { revision: true },
               });
@@ -753,7 +754,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             try {
               await reconcileRestartTasks({
                 api: taskClient,
-                serviceId: freshConn.nitradoServerId,
+                serviceId: freshServiceId,
                 desiredTimes,
                 beforeMutation: assertCurrentRevision,
               });
