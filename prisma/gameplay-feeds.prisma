@@ -43,6 +43,8 @@ model GameplayFeedConfig {
   kind                      GameplayFeedKind
   channelId                 String           @db.VarChar(32)
   isActive                  Boolean          @default(true)
+  autoPausedReason          String?          @db.VarChar(64)
+  autoPausedAt              DateTime?
   categories                String[]
   showActorCoords           Boolean          @default(true)
   showTargetCoords          Boolean          @default(false)
@@ -69,6 +71,7 @@ model GameplayFeedConfig {
 
   @@unique([guildId, nitradoConnId, kind, channelId])
   @@index([guildId, nitradoConnId, kind, isActive])
+  @@index([guildId, nitradoConnId, autoPausedReason])
 }
 
 model GameplayFeedDelivery {
