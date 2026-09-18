@@ -258,7 +258,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
             <div className="grid gap-4 md:grid-cols-2">
               <label className="text-sm">
                 <span className="text-muted">Planungsart</span>
-                <Select value={mode} onChange={event => {
+                <Select aria-label="Planungsart" value={mode} onChange={event => {
                   setMode(event.target.value as PlanMode);
                   setDirty(true);
                 }}>
@@ -270,7 +270,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
               {mode === 'INTERVAL' && (
                 <label className="text-sm">
                   <span className="text-muted">Intervall</span>
-                  <Select value={String(intervalHours)} onChange={event => {
+                  <Select aria-label="Intervall" value={String(intervalHours)} onChange={event => {
                     setIntervalHours(Number(event.target.value));
                     setDirty(true);
                   }}>
@@ -286,7 +286,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
               {mode === 'INTERVAL' && (
                 <label className="text-sm">
                   <span className="text-muted">Erste Uhrzeit</span>
-                  <Input type="time" step={60} value={startTime} onChange={event => {
+                  <Input aria-label="Erste Uhrzeit" type="time" step={60} value={startTime} onChange={event => {
                     setStartTime(event.target.value);
                     setDirty(true);
                   }} />
@@ -297,7 +297,7 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
                 <div className="text-sm">
                   <span className="text-muted">Uhrzeit hinzufügen</span>
                   <div className="flex gap-2">
-                    <Input type="time" step={60} value={newTime} onChange={event => setNewTime(event.target.value)} />
+                    <Input aria-label="Uhrzeit hinzufügen" type="time" step={60} value={newTime} onChange={event => setNewTime(event.target.value)} />
                     <Button type="button" variant="secondary" onClick={addFixedTime} disabled={times.length >= 24}>
                       <Plus className="h-4 w-4" /> Hinzufügen
                     </Button>
