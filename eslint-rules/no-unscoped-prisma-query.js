@@ -18,7 +18,7 @@ const STRICT_MODELS = [
   'nitradoConnection', 'guildPermissionGrant', 'serverSettings', 'faction',
   'factionMember', 'whitelistEntry', 'whitelistRequest', 'economyConfig',
   'economyAccount', 'economyTransaction', 'gameIdentityLink', 'casinoGame',
-  'casinoRound', 'idempotencyKey', 'nitradoJob', 'killfeedConfig', 'killfeedEvent',
+  'casinoRound', 'idempotencyKey', 'nitradoJob', 'nitradoRestartPlan', 'killfeedConfig', 'killfeedEvent',
 ];
 
 function deriveGuildModels() {
