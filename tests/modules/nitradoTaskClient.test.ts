@@ -119,7 +119,6 @@ describe('Nitrado task scheduler client', () => {
     };
     expect(call.method).toBe('POST');
     expect(call.url).toBe('/services/12345/tasks');
-    expect(new URLSearchParams(call.data)).toEqual(expect.objectContaining({}));
     const params = new URLSearchParams(call.data);
     expect(Object.fromEntries(params.entries())).toEqual({
       minute: '15',
