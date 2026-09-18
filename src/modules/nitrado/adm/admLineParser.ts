@@ -6,7 +6,7 @@
  * IANA-Zeitzone konfiguriert ist, werden sie DST-sicher nach UTC aufgeloest.
  */
 
-export const ADM_PARSER_VERSION = 8;
+export const ADM_PARSER_VERSION = 9;
 
 export type AdmParsedType =
   | 'PLAYER_CONNECTED'
@@ -430,12 +430,22 @@ export function parseAdmLine(line: string, ctx: AdmDateContext): ParsedAdmEvent 
 
     const killerIsPlayer = /Player\s*"|"[^"]+"\s*\(id=/i.test(killerSegment);
     if (killerIsPlayer) {
-      event.eventType = 'PLAYER_KILLED';
       const killer = extractActor(killerSegment);
+      event.toolOrWeapon = extractWeapon(killerSegment);
+
+      // DayZ kann selbst verursachte Explosiv-/Projektil-Tode als PlayerKilled
+      // mit derselben Spieleridentitaet auf Opfer- und Quellseite schreiben.
+      // Nur die exakte, beidseitig vorhandene ID-Gleichheit gilt als sichere
+      // Self-Kill-Evidenz; gleiche Namen/Positionen werden bewusst nicht geraten.
+      if (victim.id && killer.id && victim.id === killer.id) {
+        event.eventType = 'PLAYER_SUICIDE';
+        return finalize(event);
+      }
+
+      event.eventType = 'PLAYER_KILLED';
       event.targetName = killer.name;
       event.targetGameId = killer.id;
       event.targetPosition = killer.pos;
-      event.toolOrWeapon = extractWeapon(killerSegment);
       const distance = DISTANCE_RE.exec(killerSegment);
       event.distanceMeters = distance ? Number(distance[1]) : null;
     } else {
