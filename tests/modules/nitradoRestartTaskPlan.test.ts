@@ -5,6 +5,7 @@ import {
   RestartPlanValidationError,
   RestartTaskActionUnsupportedError,
   RESTART_ACTION_METHOD,
+  taskCatalogSupportsRestart,
 } from '../../src/modules/nitrado/restartTaskPlan';
 import type { NitradoTask, NitradoTaskCreate } from '../../src/modules/nitrado/nitradoClient';
 
@@ -110,6 +111,12 @@ describe('Nitrado restart task planner', () => {
     expect(api.getTaskActionCatalog).not.toHaveBeenCalled();
     expect(final.filter(row => row.action_method === RESTART_ACTION_METHOD)).toHaveLength(0);
     expect(final).toEqual([expect.objectContaining({ id: 3, action_method: 'game_server_start' })]);
+  });
+
+  it('recognizes the exact restart action whether Nitrado returns it as a value or a keyed catalog entry', () => {
+    expect(taskCatalogSupportsRestart([{ action_method: RESTART_ACTION_METHOD }])).toBe(true);
+    expect(taskCatalogSupportsRestart({ [RESTART_ACTION_METHOD]: { label: 'Restart' } })).toBe(true);
+    expect(taskCatalogSupportsRestart({ game_server_restart_later: true })).toBe(false);
   });
 
   it('failt geschlossen wenn Nitrado die Restart-Aktion nicht im Task-Katalog bestaetigt', async () => {
