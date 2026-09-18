@@ -10,6 +10,8 @@ const WORKER_FILE = path.resolve(SRC_ROOT, 'modules/nitrado/jobWorker.ts');
 const EXPECTED_MUTATORS = [
   'addToBanlist',
   'addToWhitelist',
+  'createTask',
+  'deleteTask',
   'removeFromBanlist',
   'removeFromWhitelist',
   'restart',
@@ -22,6 +24,8 @@ const EXPECTED_MUTATORS = [
 const EXPECTED_WORKER_MUTATORS = [
   'addToBanlist',
   'addToWhitelist',
+  'createTask',
+  'deleteTask',
   'removeFromBanlist',
   'removeFromWhitelist',
   'start',
@@ -181,6 +185,8 @@ function mutationViolations(mutators: ReadonlySet<string>): string[] {
   const uniqueRemoteMethods = new Set([
     'addToBanlist',
     'addToWhitelist',
+    'createTask',
+    'deleteTask',
     'removeFromBanlist',
     'removeFromWhitelist',
   ]);
@@ -199,8 +205,8 @@ function mutationViolations(mutators: ReadonlySet<string>): string[] {
           return;
         }
 
-        // Whitelist/Ban-Methodennamen sind Nitrado-spezifisch und werden auch
-        // bei Interface-Injektion ohne direkten Klassenimport verboten.
+        // Diese Methodennamen sind Nitrado-spezifisch und werden auch bei
+        // Interface-Injektion ohne direkten Klassenimport verboten.
         let directRemoteMutation = uniqueRemoteMethods.has(method);
         if (!directRemoteMutation && usage.hasClientImport) {
           const target = node.expression.expression;
