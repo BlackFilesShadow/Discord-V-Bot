@@ -1,7 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { createHash } from 'node:crypto';
 import { safeEmbedField } from '../../utils/embedSanitize';
-import { compactDescription, compactEmbed } from '../../utils/embedDesign';
+import { compactEmbed } from '../../utils/embedDesign';
 import { izurvivePositionUrl } from './embedBuilder';
 
 export interface PlayerListEntry {
@@ -148,7 +148,7 @@ export function buildPlayerListEmbeds(args: {
       ? `🌐 • Online List · ${entries.length} Players`
       : `🌐 • Online List · ${entries.length} Players · Fortsetzung ${index + 1}`;
     const embed = compactEmbed(parseHex(args.embedColor), serverAlias)
-      .setDescription(compactDescription(heading, [chunks[index]]));
+      .setDescription(`**${heading}**\n\n${chunks[index]}`);
     embeds.push(embed);
   }
 

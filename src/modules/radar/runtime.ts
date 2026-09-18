@@ -7,7 +7,6 @@ import { emitRadarEvent } from '../../dashboard/socket/emitter';
 import { logger } from '../../utils/logger';
 import { forEachBounded } from '../../utils/boundedConcurrency';
 import { safeEmbedField } from '../../utils/embedSanitize';
-import { compactDescription } from '../../utils/embedDesign';
 import { isValidBattleyeGuid } from '../../utils/guid';
 import {
   dayzIzurviveUrl,
@@ -115,15 +114,15 @@ export function buildRadarEmbed(
 
   if (event.functionKey === 'PLAYER_DETECTION') {
     lines.push(
-      `**Koordinaten X/Z:** ${coordinates}`,
-      `**Erkannt durch ADM:** ${admTime(event.admOccurredAt)}`,
+      `**Koordinaten:** ${coordinates}`,
+      `**Erkannt:** ${admTime(event.admOccurredAt)}`,
     );
   } else {
     const definition = radarFunctionByKey(event.functionKey);
     lines.push(
       `**Aktion:** ${safeEmbedField(definition?.label ?? event.functionKey, 128)}`,
-      `**Koordinaten X/Z:** ${coordinates}`,
-      `**ADM-Zeit:** ${admTime(event.admOccurredAt)}`,
+      `**Koordinaten:** ${coordinates}`,
+      `**Erkannt:** ${admTime(event.admOccurredAt)}`,
     );
     if (event.objectType) lines.push(`**Objekt:** ${safeEmbedField(event.objectType, 256)}`);
     if (event.toolOrWeapon) lines.push(`**Werkzeug / Waffe:** ${safeEmbedField(event.toolOrWeapon, 256)}`);
@@ -131,9 +130,10 @@ export function buildRadarEmbed(
     if (event.distanceMeters !== null) lines.push(`**Distanz:** ${Number(event.distanceMeters).toFixed(1)} m`);
   }
 
+  const zoneName = safeEmbedField(zone.name, 256);
   return new EmbedBuilder()
     .setColor(zone.embedColor as ColorResolvable)
-    .setDescription(compactDescription(safeEmbedField(zone.name, 256), lines))
+    .setDescription(`**${zoneName}**\n\n${lines.join('\n')}`)
     .setFooter({ text: 'V-Bot • Radar' });
 }
 
