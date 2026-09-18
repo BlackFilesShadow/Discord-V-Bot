@@ -29,12 +29,38 @@ export interface RestartPlanScope {
   nitradoServerId: string;
 }
 
+export class RestartPlanBindingConflictError extends Error {
+  readonly code = 'NITRADO_TASK_BINDING_CHANGED';
+
+  constructor() {
+    super('Die Nitrado-Servicebindung wurde parallel geaendert. Bitte aktuellen Stand neu laden.');
+    this.name = 'RestartPlanBindingConflictError';
+  }
+}
+
+async function assertExactActiveBinding(
+  tx: Prisma.TransactionClient,
+  scope: RestartPlanScope,
+): Promise<void> {
+  const binding = await tx.nitradoConnection.findFirst({
+    where: {
+      id: scope.nitradoConnId,
+      guildId: scope.guildId,
+      status: 'ACTIVE',
+      nitradoServerId: scope.nitradoServerId,
+    },
+    select: { id: true },
+  });
+  if (!binding) throw new RestartPlanBindingConflictError();
+}
+
 export async function saveRestartPlan(
   scope: RestartPlanScope,
   actorDiscordId: UserDiscordId,
   plan: CanonicalRestartPlan,
 ) {
   return serializableRestartPlanMutation(async tx => {
+    await assertExactActiveBinding(tx, scope);
     const current = await tx.nitradoRestartPlan.findUnique({
       where: {
         guildId_nitradoConnId: {
@@ -118,6 +144,7 @@ export async function clearRestartPlan(
   actorDiscordId: UserDiscordId,
 ) {
   return serializableRestartPlanMutation(async tx => {
+    await assertExactActiveBinding(tx, scope);
     const current = await tx.nitradoRestartPlan.findUnique({
       where: {
         guildId_nitradoConnId: {
