@@ -38,7 +38,7 @@ describe('Whitelist channel + archive flow regression', () => {
     expect(dashboardRoute).toContain('postDecisionLog({');
   });
 
-  it('keeps the user decision notice temporary, points the user to support, and never auto-deletes the archive entry', () => {
+  it('keeps the user decision notice temporary, uses simple user-facing copy, and never auto-deletes the archive entry', () => {
     const noticeStart = channels.indexOf('async function postTemporaryDecisionNotice');
     const archiveStart = channels.indexOf('async function postPermanentDecisionArchive');
     const commonStart = channels.indexOf('export async function postDecisionLog');
@@ -52,17 +52,18 @@ describe('Whitelist channel + archive flow regression', () => {
 
     expect(noticeBody).toContain('DECISION_NOTICE_TTL_MS');
     expect(noticeBody).toContain('sent.delete()');
-    expect(noticeBody).toContain('Bei Fragen oder für weitere Informationen wende dich bitte an den Support.');
-    expect(noticeBody).not.toContain('Weitere Informationen findest du in deiner DM.');
+    expect(noticeBody).toContain('Du wurdest für den Gameserver freigeschaltet und kannst dem Server nun beitreten.');
+    expect(noticeBody).toContain(".setFooter({ text: 'V-Bot • Whitelist • Information' })");
+    expect(noticeBody).not.toContain('Synchronisierung');
     expect(archiveBody).not.toContain('.delete(');
     expect(archiveBody).toContain(".setFooter({ text: 'V-Bot • Whitelist • Archiv' })");
   });
 
-  it('archives readable Discord names, requested player name, decision actor, date and time without raw-id fallback fields', () => {
+  it('archives readable Discord names, player name, decision actor, date and time without raw-id fallback fields', () => {
     expect(channels).toContain('resolveDiscordDisplayName(args.guildId, args.requesterDiscordId)');
     expect(channels).toContain('resolveDiscordDisplayName(args.guildId, args.decidedByDiscordId)');
     expect(channels).toContain("{ name: 'Discord-Name', value: requesterName");
-    expect(channels).toContain("{ name: 'Beantragter Spielername', value: `\\`${args.gameId}\\``");
+    expect(channels).toContain("{ name: 'Spielername', value: `\\`${args.gameId}\\``");
     expect(channels).toContain("args.approved ? 'Genehmigt von' : 'Abgelehnt von'");
     expect(channels).toContain("{ name: 'Datum', value: when.date");
     expect(channels).toContain("{ name: 'Uhrzeit', value: when.time");
