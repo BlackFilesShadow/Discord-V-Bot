@@ -62,7 +62,8 @@ describe('PAGE 2 Nitrado restart planner production architecture', () => {
     expect(store).toContain('await assertExactActiveBinding(tx, scope);');
     expect(store).toContain('RestartPlanBindingConflictError');
     expect(worker).toContain('revision: Number(revision)');
-    expect(worker).toContain('nitradoServerId: freshConn.nitradoServerId!');
+    expect(worker).toContain('const freshServiceId = freshConn.nitradoServerId;');
+    expect(worker).toContain('nitradoServerId: freshServiceId');
     expect(worker).toContain('if (!freshPlan) throw new SupersededRestartPlanError();');
     expect(worker).toContain('beforeMutation: assertCurrentRevision');
   });
