@@ -56,10 +56,11 @@ const POST_STAGE_PUBLIC_ROUTES = [
   '<Route path="/legal/privacy" element={<Privacy />} />',
   '<Route path="/legal/terms" element={<Terms />} />',
 ] as const;
-const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino', 'radar'] as const;
+const POST_STAGE_SLOT_TABS = ['virtual-accounts', 'bank-casino', 'radar', 'restart-tasks'] as const;
 const POST_STAGE_BOT_ADMIN_VIEWS = ['tickets'] as const;
 const POST_STAGE_V2_MOUNTS = [
   '/guilds/:guildId/nitrado-drift',
+  '/guilds/:guildId/nitrado-tasks',
   '/guilds/:guildId/radar',
   '/guilds/:guildId/economy/rewards',
   '/bot-admin/feedback',
@@ -69,6 +70,7 @@ const POST_STAGE_V2_MOUNTS = [
 ] as const;
 const POST_STAGE_V2_APIS = [
   '/api/v2/guilds/:guildId/nitrado-drift',
+  '/api/v2/guilds/:guildId/nitrado-tasks',
   '/api/v2/guilds/:guildId/radar',
   '/api/v2/guilds/:guildId/economy/rewards',
   '/api/v2/bot-admin/feedback',
