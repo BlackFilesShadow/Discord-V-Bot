@@ -89,7 +89,7 @@ describe('Nitrado restart task planner', () => {
     expect(deleted).toContain(2);
     expect(final.some(row => row.action_method === 'game_server_stop' && row.id === 3)).toBe(true);
     expect(final.filter(row => row.action_method === RESTART_ACTION_METHOD).map(row => row.hour + ':' + row.minute).sort())
-      .toEqual(['0:0', '04:00']);
+      .toEqual(['04:00', '0:0']);
   });
 
   it('bereinigt alle Restart-Tasks inklusive Sonderregeln, ohne Start/Stop zu loeschen', async () => {
