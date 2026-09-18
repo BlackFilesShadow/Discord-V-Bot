@@ -8,6 +8,7 @@ CREATE TYPE "NitradoRestartPlanSyncStatus" AS ENUM ('PENDING', 'SYNCED', 'ERROR'
 CREATE TABLE "NitradoRestartPlan" (
     "guildId" TEXT NOT NULL,
     "nitradoConnId" TEXT NOT NULL,
+    "nitradoServerId" TEXT NOT NULL,
     "enabled" BOOLEAN NOT NULL DEFAULT false,
     "mode" "NitradoRestartPlanMode" NOT NULL DEFAULT 'INTERVAL',
     "intervalHours" INTEGER,
