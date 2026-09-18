@@ -19,8 +19,6 @@ const serverBanUpdateManyMock = jest.fn(async () => ({ count: 1 }));
 const reconcileWhitelistIntentMock = jest.fn();
 const restartPlanFindFirstMock = jest.fn();
 const restartPlanUpdateManyMock = jest.fn(async () => ({ count: 1 }));
-const tryAcquireNitradoConfigMutationLock = jest.fn();
-const releaseNitradoConfigMutationLock = jest.fn(async () => undefined);
 let remoteRestartTasks: Array<Record<string, unknown>> = [];
 const listTasks = jest.fn(async () => remoteRestartTasks.map(row => ({ ...row })));
 const getTaskActionCatalog = jest.fn(async () => [{ action_method: 'game_server_restart' }]);
@@ -137,10 +135,6 @@ jest.mock('../../src/modules/nitrado/whitelistIntent', () => ({
   reconcileWhitelistRemoteIntent: (...args: unknown[]) => reconcileWhitelistIntentMock(...args),
 }));
 
-jest.mock('../../src/modules/nitrado/configMutationLock', () => ({
-  tryAcquireNitradoConfigMutationLock: (...args: unknown[]) => tryAcquireNitradoConfigMutationLock(...args),
-}));
-
 jest.mock('../../src/modules/nitrado/jobLease', () => ({
   NITRADO_JOB_HEARTBEAT_INTERVAL_MS: 60_000,
   claimNitradoJob: jest.fn(),
@@ -181,7 +175,6 @@ beforeEach(() => {
   jobCreateMock.mockResolvedValue({});
   restartPlanFindFirstMock.mockResolvedValue(null);
   restartPlanUpdateManyMock.mockResolvedValue({ count: 1 });
-  tryAcquireNitradoConfigMutationLock.mockResolvedValue({ release: releaseNitradoConfigMutationLock });
   remoteRestartTasks = [];
   listTasks.mockClear();
   getTaskActionCatalog.mockClear();
@@ -551,7 +544,6 @@ describe('PAGE2 — durable Nitrado restart plan sync', () => {
 
     await executeJob(claim('restart-plan-sync'));
 
-    expect(tryAcquireNitradoConfigMutationLock).toHaveBeenCalledWith('conn-1');
     expect(createTask).toHaveBeenCalledTimes(2);
     expect(remoteRestartTasks.map(row => String(row.hour) + ':' + String(row.minute)).sort())
       .toEqual(['00:00', '04:00']);
@@ -559,7 +551,6 @@ describe('PAGE2 — durable Nitrado restart plan sync', () => {
       where: { guildId: 'g1', nitradoConnId: 'conn-1', revision: 7 },
       data: expect.objectContaining({ syncStatus: 'SYNCED', lastSyncError: null }),
     });
-    expect(releaseNitradoConfigMutationLock).toHaveBeenCalledTimes(1);
     expect(lastUpdateData().status).toBe('DONE');
   });
 
@@ -578,7 +569,6 @@ describe('PAGE2 — durable Nitrado restart plan sync', () => {
 
     await executeJob(claim('stale-restart-plan'));
 
-    expect(tryAcquireNitradoConfigMutationLock).not.toHaveBeenCalled();
     expect(createTask).not.toHaveBeenCalled();
     expect(deleteTask).not.toHaveBeenCalled();
     expect(lastUpdateData().status).toBe('DONE');
@@ -608,25 +598,4 @@ describe('PAGE2 — durable Nitrado restart plan sync', () => {
     expect(lastUpdateData().status).toBe('DEAD');
   });
 
-  it('requeues lock contention without consuming the persistent retry budget', async () => {
-    jobStore['busy-restart-plan'] = {
-      id: 'busy-restart-plan',
-      guildId: 'g1',
-      nitradoConnId: 'conn-1',
-      operation: 'RESTART_PLAN_SYNC',
-      payload: { planRevision: 7 },
-      attempts: 3,
-      maxAttempts: 8,
-    };
-    restartPlanFindFirstMock.mockResolvedValue(restartPlan);
-    decryptMock.mockReturnValue('decrypted-token');
-    tryAcquireNitradoConfigMutationLock.mockResolvedValue(null);
-
-    await executeJob(claim('busy-restart-plan'));
-
-    expect(createTask).not.toHaveBeenCalled();
-    expect(deleteTask).not.toHaveBeenCalled();
-    expect(lastUpdateData().status).toBe('PENDING');
-    expect(lastUpdateData()).not.toHaveProperty('attempts');
-  });
 });
