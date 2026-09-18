@@ -64,7 +64,6 @@ import {
   markRestartPlanSyncPendingError,
   parsePlanTimes,
 } from './restartTaskPlanStore';
-import { tryAcquireNitradoConfigMutationLock } from './configMutationLock';
 
 const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
@@ -710,89 +709,83 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
               throw new PermanentJobError(message);
             }
 
-            const configLock = await tryAcquireNitradoConfigMutationLock(conn.id);
-            if (!configLock) {
-              // Lock-Contention ist kein Remote-Fehler und darf das Retry-Budget
-              // des persistenten Jobs nicht verbrauchen.
-              await requeueForConnectionLock(claim);
-              return;
+            // executeJob haelt an dieser Stelle bereits den kanonischen
+            // per-Connection Advisory-Lock. configMutationLock.ts verwendet
+            // absichtlich exakt denselben Lock-Key; ein zweites Acquire ueber
+            // eine weitere PG-Session wuerde den Worker gegen sich selbst
+            // blockieren. Deshalb hier nur unter dem bereits gehaltenen Lock
+            // den exakten Service-/Token-Snapshot erneut lesen.
+            const freshConn = await prisma.nitradoConnection.findFirst({
+              where: {
+                id: conn.id,
+                guildId: job.guildId,
+                status: 'ACTIVE',
+                nitradoServerId: plan.nitradoServerId,
+              },
+              select: {
+                encryptedToken: true,
+                nitradoServerId: true,
+              },
+            });
+            if (!freshConn?.nitradoServerId) {
+              throw new PermanentJobError('Nitrado-Servicebindung ist nicht mehr aktuell.');
             }
 
-            try {
-              const freshConn = await prisma.nitradoConnection.findFirst({
+            const desiredTimes = plan.enabled ? parsePlanTimes(plan.times) : [];
+            const taskClient = new NitradoClient(
+              decrypt(freshConn.encryptedToken, config.security.encryptionKey),
+            );
+
+            const assertCurrentRevision = async (): Promise<void> => {
+              await ensureClaimOwned();
+              const freshPlan = await prisma.nitradoRestartPlan.findFirst({
                 where: {
-                  id: conn.id,
-                  guildId: job.guildId,
-                  status: 'ACTIVE',
-                  nitradoServerId: plan.nitradoServerId,
-                },
-                select: {
-                  encryptedToken: true,
-                  nitradoServerId: true,
-                },
-              });
-              if (!freshConn?.nitradoServerId) {
-                throw new PermanentJobError('Nitrado-Servicebindung ist nicht mehr aktuell.');
-              }
-
-              const desiredTimes = plan.enabled ? parsePlanTimes(plan.times) : [];
-              const taskClient = new NitradoClient(
-                decrypt(freshConn.encryptedToken, config.security.encryptionKey),
-              );
-
-              const assertCurrentRevision = async (): Promise<void> => {
-                await ensureClaimOwned();
-                const freshPlan = await prisma.nitradoRestartPlan.findFirst({
-                  where: {
-                    guildId: job.guildId,
-                    nitradoConnId: conn.id,
-                    revision: Number(revision),
-                    nitradoServerId: freshConn.nitradoServerId!,
-                  },
-                  select: { revision: true },
-                });
-                if (!freshPlan) throw new SupersededRestartPlanError();
-              };
-
-              try {
-                await reconcileRestartTasks({
-                  api: taskClient,
-                  serviceId: freshConn.nitradoServerId,
-                  desiredTimes,
-                  beforeMutation: assertCurrentRevision,
-                });
-              } catch (error) {
-                if (error instanceof SupersededRestartPlanError) {
-                  logger.info(`Nitrado Restart-Plan ${job.id}: waehrend Sync durch neuere Revision ersetzt.`);
-                  break;
-                }
-                await markRestartPlanSyncPendingError({
                   guildId: job.guildId,
                   nitradoConnId: conn.id,
                   revision: Number(revision),
-                  message: error instanceof Error ? error.message : String(error),
-                });
-                throw error;
-              }
+                  nitradoServerId: freshConn.nitradoServerId,
+                },
+                select: { revision: true },
+              });
+              if (!freshPlan) throw new SupersededRestartPlanError();
+            };
 
-              await assertCurrentRevision();
-              await markRestartPlanSynced({
+            try {
+              await reconcileRestartTasks({
+                api: taskClient,
+                serviceId: freshConn.nitradoServerId,
+                desiredTimes,
+                beforeMutation: assertCurrentRevision,
+              });
+            } catch (error) {
+              if (error instanceof SupersededRestartPlanError) {
+                logger.info(`Nitrado Restart-Plan ${job.id}: waehrend Sync durch neuere Revision ersetzt.`);
+                break;
+              }
+              await markRestartPlanSyncPendingError({
                 guildId: job.guildId,
                 nitradoConnId: conn.id,
                 revision: Number(revision),
+                message: error instanceof Error ? error.message : String(error),
               });
-              logAudit('NITRADO_RESTART_PLAN_SYNCED', 'NITRADO', {
-                guildId: job.guildId,
-                jobId: job.id,
-                details: {
-                  nitradoConnId: conn.id,
-                  revision: Number(revision),
-                  restartCount: desiredTimes.length,
-                },
-              });
-            } finally {
-              await configLock.release();
+              throw error;
             }
+
+            await assertCurrentRevision();
+            await markRestartPlanSynced({
+              guildId: job.guildId,
+              nitradoConnId: conn.id,
+              revision: Number(revision),
+            });
+            logAudit('NITRADO_RESTART_PLAN_SYNCED', 'NITRADO', {
+              guildId: job.guildId,
+              jobId: job.id,
+              details: {
+                nitradoConnId: conn.id,
+                revision: Number(revision),
+                restartCount: desiredTimes.length,
+              },
+            });
             break;
           }
           default:
