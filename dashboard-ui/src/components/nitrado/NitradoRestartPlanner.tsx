@@ -125,14 +125,14 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
     || meta.data?.permissions.includes('nitrado.write'),
   );
 
+  const loadedPlan = query.data?.plan ?? null;
   useEffect(() => {
-    if (dirty || !query.data?.plan) return;
-    const plan = query.data.plan;
-    setMode(plan.mode);
-    setIntervalHours(plan.intervalHours ?? 4);
-    setStartTime(plan.startTime ?? '00:00');
-    setTimes(plan.times);
-  }, [dirty, query.data?.plan?.revision]);
+    if (dirty || !loadedPlan) return;
+    setMode(loadedPlan.mode);
+    setIntervalHours(loadedPlan.intervalHours ?? 4);
+    setStartTime(loadedPlan.startTime ?? '00:00');
+    setTimes(loadedPlan.times);
+  }, [dirty, loadedPlan]);
 
   const preview = useMemo(
     () => mode === 'INTERVAL' ? intervalTimes(intervalHours, startTime) : fixedTimes(times),
