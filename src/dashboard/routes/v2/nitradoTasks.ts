@@ -20,6 +20,10 @@ import {
   RestartPlanBindingConflictError,
 } from '../../../modules/nitrado/restartTaskPlanStore';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
+import {
+  tryAcquireNitradoConfigMutationLock,
+  type HeldNitradoConfigLock,
+} from '../../../modules/nitrado/configMutationLock';
 
 export const nitradoTasksRouter = Router({ mergeParams: true });
 
@@ -75,6 +79,31 @@ function remoteError(res: Response, error: unknown): void {
     return;
   }
   throw error;
+}
+
+
+function respondTaskMutationBusy(res: Response): void {
+  res.status(409).json({
+    error: 'Der Nitrado-Server wird gerade von einer anderen Konfigurations- oder Sync-Aktion verwendet. Bitte erneut versuchen.',
+    code: 'NITRADO_CONNECTION_BUSY',
+  });
+}
+
+async function acquireTaskMutationLock(
+  nitradoConnId: NitradoConnId,
+  res: Response,
+): Promise<HeldNitradoConfigLock | null> {
+  try {
+    const lock = await tryAcquireNitradoConfigMutationLock(nitradoConnId);
+    if (!lock) respondTaskMutationBusy(res);
+    return lock;
+  } catch {
+    res.status(503).json({
+      error: 'Der Nitrado-Konfigurationslock ist derzeit nicht verfügbar.',
+      code: 'NITRADO_LOCK_UNAVAILABLE',
+    });
+    return null;
+  }
 }
 
 nitradoTasksRouter.get('/restart-plan', requireGuildPermission('nitrado.view'), async (req, res) => {
@@ -167,6 +196,9 @@ nitradoTasksRouter.put('/restart-plan', requireGuildPermission('nitrado.write'),
     return;
   }
 
+  const mutationLock = await acquireTaskMutationLock(binding.id, res);
+  if (!mutationLock) return;
+
   let saved;
   try {
     saved = await saveRestartPlan(
@@ -184,6 +216,8 @@ nitradoTasksRouter.put('/restart-plan', requireGuildPermission('nitrado.write'),
       return;
     }
     throw error;
+  } finally {
+    await mutationLock.release();
   }
 
   logAuditDb('NITRADO_RESTART_PLAN_QUEUED', 'NITRADO', {
@@ -213,6 +247,9 @@ nitradoTasksRouter.delete('/restart-tasks', requireGuildPermission('nitrado.writ
   const binding = await resolveBinding(scope, req.query.slot, res);
   if (!binding) return;
 
+  const mutationLock = await acquireTaskMutationLock(binding.id, res);
+  if (!mutationLock) return;
+
   let saved;
   try {
     saved = await clearRestartPlan(
@@ -229,6 +266,8 @@ nitradoTasksRouter.delete('/restart-tasks', requireGuildPermission('nitrado.writ
       return;
     }
     throw error;
+  } finally {
+    await mutationLock.release();
   }
 
   logAuditDb('NITRADO_RESTART_TASKS_CLEAR_QUEUED', 'NITRADO', {
