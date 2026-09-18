@@ -94,10 +94,17 @@ nitradoTasksRouter.get('/restart-plan', requireGuildPermission('nitrado.view'), 
   try {
     const token = decrypt(binding.encryptedToken, config.security.encryptionKey);
     const api = new NitradoClient(token);
-    const [allTasks, catalog] = await Promise.all([
-      api.listTasks(binding.nitradoServerId),
-      api.getTaskActionCatalog(binding.nitradoServerId),
-    ]);
+    const allTasks = await api.listTasks(binding.nitradoServerId);
+    let actionSupported: boolean | null = null;
+    try {
+      const catalog = await api.getTaskActionCatalog(binding.nitradoServerId);
+      actionSupported = taskCatalogSupportsRestart(catalog);
+    } catch (error) {
+      // Der Katalog ist nur ein Capability-Preflight fuer neue Tasks. Ein
+      // separater Katalogfehler darf einen erfolgreich gelesenen Taskbestand
+      // nicht als unbekannt verwerfen; Speichern bleibt bei null fail-closed.
+      if (!(error instanceof NitradoApiError)) throw error;
+    }
     const restartTasks = allTasks.filter(isRestartTask);
     const desiredTimes = plan?.enabled ? parsePlanTimes(plan.times) : [];
     const remoteConcreteTimes = restartTasks
@@ -123,7 +130,7 @@ nitradoTasksRouter.get('/restart-plan', requireGuildPermission('nitrado.view'), 
         serviceBindingMatches: plan.nitradoServerId === binding.nitradoServerId,
       } : null,
       remote: {
-        actionSupported: taskCatalogSupportsRestart(catalog),
+        actionSupported,
         synchronized,
         restartTasks: restartTasks.map(task => ({
           id: task.id,
