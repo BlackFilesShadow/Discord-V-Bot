@@ -58,6 +58,27 @@ describe('approved gameplay feed spacing', () => {
     expect(description).not.toContain('Self Kill Report**\n\n\n');
   });
 
+  it('keeps flag action, flag data and positions in the approved separated blocks', () => {
+    const description = buildGameplayFeedEmbed(baseView({
+      kind: 'FLAG',
+      category: 'RAISED',
+      eventType: 'FLAG_RAISED',
+      actorName: 'Flag Player',
+      targetName: 'TerritoryFlag',
+      objectType: 'Flag_RSTA',
+      toolOrWeapon: null,
+      distanceMeters: null,
+      actorPosition: '100, 20, 200',
+      targetPosition: '101, 21, 201',
+    }), '#22c55e', 'Chernarus Main').toJSON().description ?? '';
+
+    expect(description).toContain('**🚩 Flagge hochgezogen**\n\n**Aktion:** Hochgezogen\n**Spieler:** Flag Player');
+    expect(description).toContain('**Spieler:** Flag Player\n\n**Flagge**\nRSTA\nClassname: `Flag_RSTA`');
+    expect(description).toContain('**Flagge**\nRSTA\nClassname: `Flag_RSTA`\n\n**Flaggen-Position**');
+    expect(description).toContain('**Flaggen-Position**\nX: 101 • Z: 201\nHöhe: 21\n\n**Spieler-Position**');
+    expect(description).toContain('**Spieler-Position**\nX: 100 • Z: 200\nHöhe: 20\n\n**Ereigniszeit:**');
+  });
+
   it('keeps the online-list heading separated from the roster by one blank line', () => {
     const description = buildPlayerListEmbeds({
       serverAlias: 'Chernarus Main',
