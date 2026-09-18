@@ -338,10 +338,15 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
               <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6">
                 {preview.map(time => (
                   <div key={time} className="rounded-md border border-border/60 bg-bg-elev/40 px-2 py-2 text-center font-mono text-sm text-white">
-                    {time}
+                    {displayClock(time)}
                   </div>
                 ))}
               </div>
+              <p className="mt-3 text-xs text-muted">
+                {timezone
+                  ? `Nitrado-Zeitzone: ${timezone}. Die Vorschau wird nicht im Browser umgerechnet.`
+                  : 'Die Uhrzeiten werden unverändert an Nitrado übergeben. Eine von Nitrado bestätigte Zeitzone wird angezeigt, sobald sie in einem gespeicherten Task vorhanden ist.'}
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
