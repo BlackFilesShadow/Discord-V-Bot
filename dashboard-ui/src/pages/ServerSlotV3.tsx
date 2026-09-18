@@ -161,7 +161,7 @@ function SlotV3Shell({ tab, children }: { tab: Tab; children: React.ReactNode })
   const sidebar = (
     <nav className="space-y-1 text-sm" aria-label="Slot-Funktionen">
       {NAV.map(([key, label, Icon], index) => (
-        <div key={key} className={index === 4 ? 'pt-4 mt-3 border-t border-border/60' : ''}>
+        <div key={key} className={index === 5 ? 'pt-4 mt-3 border-t border-border/60' : ''}>
           <button
             type="button"
             onClick={() => changeTab(key)}
