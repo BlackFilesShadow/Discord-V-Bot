@@ -704,10 +704,20 @@ export class NitradoClient {
   }
 
   async deleteTask(serviceId: string, taskId: number): Promise<void> {
+    const path = `/services/${serviceId}/tasks/${taskId}`;
     if (!Number.isSafeInteger(taskId) || taskId <= 0) {
       throw new NitradoApiError('Ungueltige Nitrado-Task-ID', null, `/services/${serviceId}/tasks`);
     }
-    await this.request<unknown>('DELETE', `/services/${serviceId}/tasks/${taskId}`);
+    try {
+      await this.request<unknown>('DELETE', path);
+    } catch (error) {
+      // DELETE ist fuer unseren Reconcile-Zielzustand idempotent: wenn Nitrado
+      // nach einem unklaren ersten Versuch bereits 404 liefert, ist der Task
+      // nachweislich nicht mehr vorhanden. Die abschliessende listTasks-Pruefung
+      // bestaetigt den Gesamtzustand trotzdem nochmals remote.
+      if (error instanceof NitradoApiError && error.status === 404) return;
+      throw error;
+    }
   }
 
   async restart(serviceId: string, message?: string): Promise<void> {
