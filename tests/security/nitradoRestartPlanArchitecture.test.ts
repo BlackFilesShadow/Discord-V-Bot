@@ -47,6 +47,17 @@ describe('PAGE 2 Nitrado restart planner production architecture', () => {
     expect(routes).not.toContain('.deleteTask(');
   });
 
+  it('serializes dashboard plan writes against the canonical worker connection lock', () => {
+    expect(routes).toContain("import {\n  tryAcquireNitradoConfigMutationLock,");
+    expect(routes).toContain('const mutationLock = await acquireTaskMutationLock(binding.id, res);');
+    expect(routes).toContain('const lock = await tryAcquireNitradoConfigMutationLock(nitradoConnId);');
+    expect(routes).toContain('await mutationLock.release();');
+    expect(routes).toContain("code: 'NITRADO_CONNECTION_BUSY'");
+    expect(routes).toContain("code: 'NITRADO_LOCK_UNAVAILABLE'");
+    expect(worker).toContain('tryAcquireConnectionLock(job.nitradoConnId)');
+    expect(worker).not.toContain('tryAcquireNitradoConfigMutationLock(conn.id)');
+  });
+
   it('fences stale plan revisions and service rebinds before each remote mutation', () => {
     expect(store).toContain('await assertExactActiveBinding(tx, scope);');
     expect(store).toContain('RestartPlanBindingConflictError');
