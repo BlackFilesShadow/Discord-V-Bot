@@ -39,7 +39,8 @@ describe('PAGE 2 Nitrado restart planner production architecture', () => {
     expect(worker).toContain('RESTART_PLAN_SYNC_OPERATION');
     expect(worker).toContain('claimNitradoJob');
     expect(worker).toContain('heartbeatNitradoJobClaim');
-    expect(worker).toContain('tryAcquireNitradoConfigMutationLock(conn.id)');
+    expect(worker).toContain('tryAcquireConnectionLock(job.nitradoConnId)');
+    expect(worker).not.toContain('tryAcquireNitradoConfigMutationLock(conn.id)');
     expect(worker).toContain('reconcileRestartTasks({');
     expect(worker).toContain('markRestartPlanSynced({');
     expect(routes).not.toContain('.createTask(');
