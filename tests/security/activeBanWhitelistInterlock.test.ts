@@ -80,7 +80,7 @@ describe('Whitelist approval active-ban interlock', () => {
     );
     expect(reply).toHaveBeenCalledTimes(1);
     const replyOptions = reply.mock.calls[0]?.[0] as { embeds: Array<{ data: { description: string } }> } | undefined;
-    expect(replyOptions?.embeds[0]?.data.description).toContain('aktiven Bannliste');
+    expect(replyOptions?.embeds[0]?.data.description).toContain('aktuell gesperrt');
     expect(deferUpdate).not.toHaveBeenCalled();
     expect(mockTransaction).not.toHaveBeenCalled();
   });
