@@ -402,6 +402,7 @@ interface WhitelistChannelsState {
 
 function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [syncDirection, setSyncDirection] = useState<'pull' | 'push' | 'merge'>('merge');
   const [syncDiff, setSyncDiff] = useState<SyncDiff | null>(null);
   const [syncResult, setSyncResult] = useState<string | null>(null);
@@ -438,7 +439,11 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
     mutationFn: (gameId: string) => api.del(`/api/v2/guilds/${guildId}/whitelist/${gameId}${qs}`, {
       confirm: true, reason: `Whitelist-Eintrag entfernt: ${gameId}`,
     }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] }),
+    onSuccess: (_data, gameId) => {
+      toast.push({ variant: 'success', title: 'Entfernt', desc: `Whitelist-Eintrag ${gameId} wurde entfernt.` });
+      void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
+    },
+    onError: (err: Error) => toast.push({ variant: 'danger', title: 'Fehler', desc: err.message }),
   });
 
   const decide = useMutation({
@@ -448,10 +453,12 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
         reason: vars.reason?.trim() || (vars.approve ? 'Whitelist-Request genehmigt' : undefined),
         confirm: true,
       }),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
+      toast.push({ variant: 'success', title: vars.approve ? 'Genehmigt' : 'Abgelehnt', desc: `Whitelist-Anfrage wurde ${vars.approve ? 'genehmigt' : 'abgelehnt'}.` });
       void qc.invalidateQueries({ queryKey: ['whitelist-requests', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
     },
+    onError: (err: Error) => toast.push({ variant: 'danger', title: 'Fehler', desc: err.message }),
   });
 
   const sync = useMutation({
@@ -503,7 +510,7 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
                   <span className="font-mono text-white">{e.gameId}</span>
                   <span className="text-muted text-xs ml-3">{e.source} · {new Date(e.approvedAt).toLocaleString()}</span>
                 </div>
-                <Button size="sm" variant="danger" onClick={() => remove.mutate(e.gameId)} loading={remove.isPending} aria-label={`Whitelist-Eintrag ${e.gameId} entfernen`}>
+                <Button size="sm" variant="danger" onClick={() => { if (confirm(`Whitelist-Eintrag ${e.gameId} wirklich entfernen?`)) remove.mutate(e.gameId); }} loading={remove.isPending} aria-label={`Whitelist-Eintrag ${e.gameId} entfernen`}>
                   <Trash2 className="h-3 w-3" />
                 </Button>
               </div>
@@ -866,6 +873,7 @@ interface EconomyLink {
 
 function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const qs = `?slot=${slot}`;
   const [grant, setGrant] = useState({ user: '', playerName: '' });
 
@@ -887,7 +895,11 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
 
   const unlink = useMutation({
     mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/economy-links/${user}${qs}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['economy-links', guildId, slot] }),
+    onSuccess: (_data, user) => {
+      toast.push({ variant: 'success', title: 'Entfernt', desc: `Economy-Link fuer ${user} wurde entfernt.` });
+      void qc.invalidateQueries({ queryKey: ['economy-links', guildId, slot] });
+    },
+    onError: (err: Error) => toast.push({ variant: 'danger', title: 'Fehler', desc: err.message }),
   });
 
   return (
@@ -907,7 +919,7 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
               <p className="mt-1 text-xs text-muted break-all">Spielername: <span className="font-mono text-white">{l.playerName}</span></p>
               <p className="mt-0.5 text-xs text-muted break-all">DayZ-GUID: <span className="font-mono text-white">{l.gameId}</span></p>
             </div>
-            <Button size="sm" variant="danger" onClick={() => unlink.mutate(l.userDiscordId)} loading={unlink.isPending} aria-label={`Economy-Link ${l.userDiscordId} entfernen`}>
+            <Button size="sm" variant="danger" onClick={() => { if (confirm(`Economy-Link fuer ${l.userDiscordId} wirklich entfernen?`)) unlink.mutate(l.userDiscordId); }} loading={unlink.isPending} aria-label={`Economy-Link ${l.userDiscordId} entfernen`}>
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>

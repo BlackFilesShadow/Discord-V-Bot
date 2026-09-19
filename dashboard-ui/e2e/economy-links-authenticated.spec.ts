@@ -93,6 +93,7 @@ test.describe('Authenticated Economy-Links', () => {
     expect(forceWrite?.body).not.toHaveProperty('gameId');
 
     const linkedRow = page.getByText(LINKED_USER, { exact: true }).locator('xpath=ancestor::div[.//button][1]');
+    page.once('dialog', dialog => dialog.accept());
     await linkedRow.getByRole('button').click();
     await expect.poll(() => find(mutations, 'DELETE', `/api/v2/guilds/${GUILD_ID}/economy-links/${LINKED_USER}`)).toBeTruthy();
     expect(find(mutations, 'DELETE', `/api/v2/guilds/${GUILD_ID}/economy-links/${LINKED_USER}`)?.query).toBe(`?slot=${SLOT}`);
