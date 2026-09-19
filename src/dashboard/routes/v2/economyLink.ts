@@ -23,6 +23,7 @@ import {
   applySuccessfulLinkEconomyEffects,
   deactivateLinkRewardState,
 } from '../../../modules/linking/linkRewards';
+import { clearProvisionalForcedPlayerName } from '../../../modules/linking/adminForceLink';
 import {
   publishLinkingInfoEmbed,
   repostConfiguredLinkingInfoEmbed,
@@ -129,6 +130,10 @@ economyLinkRouter.delete('/:userDiscordId', requireGuildPermission('economy.mana
   const linkScope = { guildId: scope.guildId, nitradoConnId: connId };
   const removed = await unlinkUser(prisma as unknown as LinkClient, linkScope, target);
   if (removed) await deactivateLinkRewardState(linkScope, target);
+  // Reste-Fix: sonst ueberlebt ein frueherer forcedPlayerName diese Trennung
+  // und blockiert spaeter faelschlich einen Force-Link desselben Namens auf
+  // einen anderen Discord-Account.
+  await clearProvisionalForcedPlayerName(linkScope, target);
   logAuditDb('ECONOMY_LINK_REMOVED', 'ECONOMY', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slotId: connId, target } });
   res.json({ ok: true, deleted: removed ? 1 : 0 });
 });

@@ -285,14 +285,32 @@ export async function reconcileAdminForcedLinks(args: {
   return out;
 }
 
-/** ForceUnlink kennt keine PlayerSession-Voraussetzung und entfernt auch den provisional Namen. */
-export async function forceAdminUnlinkUser(scope: LinkScope, userDiscordId: string, now: Date = new Date()): Promise<boolean> {
-  const unlinked = await unlinkUser(prisma as unknown as LinkClient, scope, userDiscordId, now);
+/**
+ * Entfernt einen stehengebliebenen `forcedPlayerName` fuer genau diesen Discord-
+ * User+Server. `forcedPlayerName` lebt ausserhalb des Prisma-Schemas (nur
+ * Rohmigration, siehe 20260828214500) und wird deshalb vom normalen, typisierten
+ * `unlinkUser`-Upsert/Update NICHT mitgeloescht. Ohne diesen expliziten Aufruf
+ * ueberlebt ein alter Force-Link-Name eine ganz normale `/unlink` und taucht bei
+ * einem spaeteren regulaeren `/link` (auf einen komplett anderen Spieler) wieder
+ * als VERIFIED+forcedPlayerName auf. Das belegt dann faelschlich den
+ * server-eindeutigen `GameIdentityLink_scope_forced_player_name_verified_key`-
+ * Index und blockiert einen legitimen Force-Link dieses alten Namens auf einen
+ * anderen Discord-Account mit PLAYER_NAME_TAKEN. Muss daher bei JEDER Trennung
+ * aufgerufen werden, nicht nur bei Force-Unlink.
+ */
+export async function clearProvisionalForcedPlayerName(scope: LinkScope, userDiscordId: string): Promise<boolean> {
   const cleared = await rawDb().$executeRawUnsafe(
     'UPDATE "GameIdentityLink" SET "forcedPlayerName"=NULL, "updatedAt"=CURRENT_TIMESTAMP WHERE "guildId"=$1 AND "nitradoConnId"=$2 AND "userDiscordId"=$3 AND "forcedPlayerName" IS NOT NULL',
     scope.guildId,
     scope.nitradoConnId,
     userDiscordId,
   );
-  return unlinked || cleared > 0;
+  return cleared > 0;
+}
+
+/** ForceUnlink kennt keine PlayerSession-Voraussetzung und entfernt auch den provisional Namen. */
+export async function forceAdminUnlinkUser(scope: LinkScope, userDiscordId: string, now: Date = new Date()): Promise<boolean> {
+  const unlinked = await unlinkUser(prisma as unknown as LinkClient, scope, userDiscordId, now);
+  const cleared = await clearProvisionalForcedPlayerName(scope, userDiscordId);
+  return unlinked || cleared;
 }
