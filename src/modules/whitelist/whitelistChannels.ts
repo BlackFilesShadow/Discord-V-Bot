@@ -24,7 +24,7 @@ import { Colors, vEmbed } from '../../utils/embedDesign';
 
 /** Max-Laenge fuer Whitelist-Reason (Eingabe + Anzeige, einheitlich). */
 export const WHITELIST_REASON_MAX = 500;
-const DECISION_NOTICE_TTL_MS = 15_000;
+const DECISION_NOTICE_TTL_MS = 5 * 60_000;
 
 let warnedClientMissing = false;
 function client(): Client | null {
