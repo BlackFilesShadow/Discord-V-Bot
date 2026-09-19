@@ -31,6 +31,7 @@ import { newDateContext, resolveBaseDate, startsWithAdmSessionHeader, type AdmDa
 import { verifyLinkChallengesInAdmText } from '../../linking/admChallengeVerifier';
 import type { LinkClient } from '../../linking/linkService';
 import { resumeAutoPausedGameplayFeeds } from '../../gameplayFeeds/autoPauseRecovery';
+import { kickRadarRuntime } from '../../radar/runtime';
 import {
   admBindingFileIdentity,
   admBindingFileIdentityPrefix,
@@ -360,6 +361,9 @@ async function ingestFile(
 
     if (result.events.length > 0) {
       logger.info(`ADM-Live-Sync ${conn.id}: ${result.events.length} Event(s) aus ${file.name} verarbeitet (Bytes ${offset}-${result.newOffset}, Binding ${conn.bindingVersion}).`);
+      // Nur nach erfolgreicher, binding-gefenceter Persistenz. Der regulaere
+      // 15s-Radar-Scheduler bleibt als Fallback unveraendert bestehen.
+      kickRadarRuntime();
     }
 
     if (result.newOffset <= offset) {
