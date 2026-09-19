@@ -12,6 +12,7 @@ import { addBan, isBanActive, type BanClient } from '../bans/banRegistry';
 import { hashBanIdentifier } from '../bans/banTarget';
 import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';
 import { admBindingFileIdentityPrefix } from '../nitrado/adm/bindingState';
+import { kickNitradoJobWorker } from '../nitrado/jobWorker';
 import { upsertRadarAutoBanFence } from './banFence';
 import { radarFunctionByKey, type RadarAdmEvent } from './catalog';
 import { resolveRadarCandidates } from './evidence';
@@ -34,10 +35,12 @@ const RETRY_BASE_MS = 15_000;
 const AUTO_BAN_SAFETY_MARGIN_METERS = 10;
 const MAX_FUTURE_ADM_SKEW_MS = 5 * 60_000;
 const DISCORD_SNOWFLAKE_RE = /^\d{17,20}$/;
+const REMOTE_BAN_IDENTIFIER_RE = /^[^\r\n\t]{1,128}$/;
 const POSITION_EPSILON_METERS = 0.05;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let kickQueued = false;
 
 type JsonValue = Prisma.JsonValue;
 
@@ -97,9 +100,12 @@ type EventForAutoBan = {
 type ValidationResult =
   | {
     ok: true;
-    identifier: string;
+    /** Eindeutige interne Identitaet fuer HMAC, Allowlist und Evidence-Fence. */
+    subjectIdentifier: string;
+    /** Sichtbarer Identifier, der tatsaechlich in Nitrados Banliste landet. */
+    remoteIdentifier: string;
     reason: string;
-    actorName: string | null;
+    actorName: string;
     serviceId: string;
     bindingVersion: number;
   }
@@ -185,6 +191,7 @@ async function matchingCandidate(
   const armedAt = event.autoBanEnabledAtSnapshot;
   if (!armedAt) return false;
 
+  const eventActorName = event.actorName?.trim() ?? '';
   const matches = candidates.filter(candidate => {
     if (!candidate.evidenceOccurredAt
       || candidate.evidenceOccurredAt.getTime() <= zone.updatedAt.getTime()
@@ -195,6 +202,7 @@ async function matchingCandidate(
       : candidate.position.altitude !== null
         && near(candidate.position.altitude, eventAltitude, POSITION_EPSILON_METERS);
     return candidate.gameId === event.actorGameId
+      && (candidate.playerName?.trim() ?? '') === eventActorName
       && near(candidate.position.x, eventX, POSITION_EPSILON_METERS)
       && near(candidate.position.y, eventZ, POSITION_EPSILON_METERS)
       && altitudeMatches;
@@ -216,6 +224,10 @@ async function validateInsideTransaction(
     return { ok: false, code: 'AUTOBAN_AUTHORIZER_INVALID' };
   }
   if (!isValidBattleyeGuid(event.actorGameId)) return { ok: false, code: 'ACTOR_GUID_INVALID_OR_MISSING' };
+  const actorName = event.actorName?.trim() ?? '';
+  if (!REMOTE_BAN_IDENTIFIER_RE.test(actorName)) {
+    return { ok: false, code: 'ACTOR_NAME_INVALID_OR_MISSING' };
+  }
   if (!event.admOccurredAt) return { ok: false, code: 'ADM_OCCURRED_AT_MISSING' };
   if (event.admOccurredAt.getTime() <= event.autoBanEnabledAtSnapshot.getTime()) {
     return { ok: false, code: 'ADM_EVENT_PREDATES_AUTOBAN_ARM' };
@@ -340,8 +352,9 @@ async function validateInsideTransaction(
 
   return {
     ok: true,
-    identifier: event.actorGameId,
-    actorName: event.actorName,
+    subjectIdentifier: event.actorGameId,
+    remoteIdentifier: actorName,
+    actorName,
     reason: `Radar Auto-Ban: ${zone.name} / ${definition.label}`.slice(0, 300),
     serviceId: binding.currentServiceId,
     bindingVersion: binding.bindingVersion,
@@ -393,7 +406,7 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
       }
 
       const scope = { guildId: event.guildId, nitradoConnId: event.nitradoConnId };
-      const identityHash = hashBanIdentifier(validation.identifier, config.security.encryptionKey);
+      const identityHash = hashBanIdentifier(validation.subjectIdentifier, config.security.encryptionKey);
       const existing = await tx.serverBanEntry.findUnique({
         where: { guildId_nitradoConnId_identityHash: { ...scope, identityHash } },
         select: { id: true, active: true, expiresAt: true },
@@ -413,14 +426,14 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
       }
 
       await tx.whitelistEntry.updateMany({
-        where: { guildId: event.guildId, nitradoConnId: event.nitradoConnId, gameId: validation.identifier },
+        where: { guildId: event.guildId, nitradoConnId: event.nitradoConnId, gameId: validation.subjectIdentifier },
         data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
       });
       await tx.whitelistRequest.updateMany({
         where: {
           guildId: event.guildId,
           nitradoConnId: event.nitradoConnId,
-          gameId: validation.identifier,
+          gameId: validation.subjectIdentifier,
           status: { in: ['PENDING', 'APPROVED'] },
         },
         data: { status: 'CANCELLED' },
@@ -456,8 +469,9 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
         tx as unknown as BanOutboxClient,
         scope,
         ban.id,
-        validation.identifier,
+        validation.subjectIdentifier,
         config.security.encryptionKey,
+        { remoteIdentifier: validation.remoteIdentifier },
       );
       await tx.radarZoneEvent.updateMany({
         where: { id: event.id, autoBanStatus: RadarAutoBanStatus.PROCESSING },
@@ -486,6 +500,11 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
         remoteQueued: outcome.kind === 'APPLIED' ? outcome.queued : false,
         safetyMarginMeters: AUTO_BAN_SAFETY_MARGIN_METERS,
       });
+      // Der 10s-Nitrado-Worker bleibt als Fallback bestehen. Ein frisch
+      // committeter Radar-Ban bekommt aber sofort einen best-effort Fast-Path,
+      // damit keine kuenstliche Poll-Wartezeit zwischen Policy-Entscheidung und
+      // Remote-Durchsetzung entsteht.
+      if (outcome.kind === 'APPLIED' && outcome.queued) kickNitradoJobWorker();
     } else if (outcome.kind === 'SKIPPED') {
       logAudit('RADAR_AUTO_BAN_SKIPPED', 'MODERATION', {
         guildId: outcome.event.guildId,
@@ -563,6 +582,21 @@ export async function runRadarAutoBanOnce(): Promise<void> {
   } finally {
     running = false;
   }
+}
+
+/**
+ * Event-getriebener Best-Effort-Kick. Der 15s-Scheduler bleibt unveraendert als
+ * Recovery-/Fallback-Pfad; mehrere gleichzeitige Radar-Treffer werden zu einem
+ * Immediate-Lauf zusammengefasst und der bestehende `running`-Guard verhindert
+ * parallele Worker-Laeufe.
+ */
+export function kickRadarAutoBanRuntime(): void {
+  if (kickQueued) return;
+  kickQueued = true;
+  setImmediate(() => {
+    kickQueued = false;
+    void runRadarAutoBanOnce();
+  });
 }
 
 export function startRadarAutoBanRuntime(): void {
