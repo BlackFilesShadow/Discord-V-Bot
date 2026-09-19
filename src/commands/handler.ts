@@ -170,6 +170,15 @@ export async function loadCommands(client: ExtendedClient): Promise<void> {
     nextCommands.set(cmd.data.name, cmd);
   };
 
+  // `admin/` existiert aktuell nicht mehr: Die alten `admin-*`-Commands wurden
+  // ins Web-Dashboard migriert (siehe MOVED_TO_DASHBOARD in inventory.ts).
+  // Guild-lokale Admin-Funktionen laufen seitdem ausschliesslich ueber
+  // `src/commands/dashboard/*` + `withGuildScope({ requirePerm })`. Der
+  // Verzeichnis-Scan bleibt trotzdem generisch (inkl. `admin/`) erhalten,
+  // fs.existsSync() ueberspringt ihn dann folgenlos — siehe
+  // `docs/dead-code-legacy-cleanup-matrix.json` (Stage 57): der Loader nutzt
+  // dynamisches `fs.readdirSync()`/`require()`, ein rein statischer
+  // Import-Graph wuerde diesen Pfad faelschlich als unreachable werten.
   const commandDirs = [
     path.join(__dirname, 'user'),
     path.join(__dirname, 'admin'),

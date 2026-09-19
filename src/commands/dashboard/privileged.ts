@@ -145,6 +145,11 @@ export const removeMoneyCommand: Command = {
   }),
 };
 
+// Bewusst ohne `requireSlotToggle: 'economyActive'` (anders als add-money/
+// remove-money): Force-Link/-Unlink verknuepfen nur die Discord<->DayZ-
+// Identitaet und loesen selbst keine Economy-Buchung aus. Sie muessen daher
+// auch dann funktionieren, wenn das Economy-System fuer den Slot deaktiviert
+// ist (z. B. reine Whitelist-/Moderationsserver ohne Economy).
 export const forceLinkCommand: Command = {
   data: slotOption(new SlashCommandBuilder()
     .setName('force-link')
