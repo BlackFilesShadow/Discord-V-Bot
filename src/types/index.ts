@@ -11,6 +11,18 @@ import {
 
 /**
  * Command-Interface für Slash-Commands.
+ *
+ * `permissions`/`adminOnly` sind generische Gate-Optionen des zentralen
+ * Dispatchers (`src/events/interactionCreate.ts`) fuer Commands ausserhalb
+ * des Guild-Scope-Systems. Aktuell setzt kein Command sie: Guild-lokale
+ * Admin-Rechte laufen ausschliesslich ueber `withGuildScope({ requirePerm })`
+ * (`src/commands/middleware/withGuildScope.ts`) mit den `PermissionScope`-
+ * Grants aus `src/types/scope.ts`. `adminOnly`/`permissions` bleiben als
+ * getesteter, bewusst erhaltener Dispatcher-Pfad fuer einen kuenftigen
+ * Command ausserhalb dieses Scope-Systems (siehe
+ * `docs/dead-code-legacy-cleanup-matrix.json`, Stage 57) — fuer neue
+ * guild-gescopte Admin-Commands ist `withGuildScope({ requirePerm })` der
+ * Standardweg, nicht diese beiden Felder.
  */
 export interface Command {
   data: SlashCommandBuilder

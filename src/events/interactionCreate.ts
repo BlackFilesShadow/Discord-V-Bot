@@ -338,6 +338,12 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // `adminOnly` wird aktuell von keinem Command gesetzt: Guild-lokale
+    // Admin-Rechte laufen ausschliesslich ueber `withGuildScope({ requirePerm })`
+    // (siehe src/commands/middleware/withGuildScope.ts). Dieser Zweig bleibt als
+    // getesteter Dispatcher-Pfad fuer `devOnly`/`manufacturerOnly` (beide aktiv
+    // genutzt) sowie als vorbereiteter Gate fuer einen kuenftigen Command
+    // ausserhalb des Guild-Scope-Systems erhalten.
     if (command.adminOnly || command.devOnly || command.manufacturerOnly) {
       const userId = i.user.id;
 
@@ -440,6 +446,13 @@ const interactionCreateEvent: BotEvent = {
       }
     }
 
+    // `permissions` (Discord PermissionResolvable[]) wird aktuell von keinem
+    // Command gesetzt. Discord-native Rechte kommen stattdessen ueber
+    // `.setDefaultMemberPermissions()` direkt am SlashCommandBuilder (z. B.
+    // kick/ban/mute/warn/case), guild-lokale Delegation ueber
+    // `withGuildScope({ requirePerm })`. Dieser Block bleibt als getesteter,
+    // generischer Dispatcher-Pfad erhalten (siehe Kommentar an `Command.permissions`
+    // in src/types/index.ts).
     if (command.permissions && command.permissions.length > 0) {
       if (!i.inGuild()) {
         await i.reply({

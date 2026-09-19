@@ -34,6 +34,28 @@ async function dmGuard(interaction: ChatInputCommandInteraction): Promise<boolea
   return false;
 }
 
+/**
+ * Re-Pruefung im Backend, konsistent mit `/case`
+ * (`src/commands/user/caseManagement.ts`): `.setDefaultMemberPermissions()`
+ * allein wird von Discord serverseitig durchgesetzt, kann von Gilden-Admins
+ * aber per Command-Permission-Override auf Rollen ohne das eigentliche
+ * Rechte-Bit ausgeweitet werden. Muss nach `dmGuard()` (Guild vorhanden)
+ * aufgerufen werden.
+ */
+async function hasModerationPermission(
+  interaction: ChatInputCommandInteraction,
+  permission: bigint,
+): Promise<boolean> {
+  if (interaction.guild!.ownerId === interaction.user.id || interaction.memberPermissions?.has(permission)) {
+    return true;
+  }
+  await interaction.reply({
+    content: '❌ Du hast nicht die noetige Berechtigung fuer diesen Command.',
+    flags: MessageFlags.Ephemeral,
+  });
+  return false;
+}
+
 /** Einheitliche Ziel-Anzeige: Mention + Username (auch für migrierte Discord-Accounts). */
 function targetDisplay(userId: string, username: string): string {
   return `${userMention(userId)} (${inlineCode(username)})`;
@@ -74,6 +96,7 @@ export const kickCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!await dmGuard(interaction)) return;
+    if (!await hasModerationPermission(interaction, PermissionFlagsBits.KickMembers)) return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const targetUser = interaction.options.getUser('user', true);
@@ -131,6 +154,7 @@ export const banCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!await dmGuard(interaction)) return;
+    if (!await hasModerationPermission(interaction, PermissionFlagsBits.BanMembers)) return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const targetUser = interaction.options.getUser('user', true);
@@ -192,6 +216,7 @@ export const muteCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!await dmGuard(interaction)) return;
+    if (!await hasModerationPermission(interaction, PermissionFlagsBits.ModerateMembers)) return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const targetUser = interaction.options.getUser('user', true);
@@ -247,6 +272,7 @@ export const warnCommand: Command = {
 
   execute: async (interaction: ChatInputCommandInteraction) => {
     if (!await dmGuard(interaction)) return;
+    if (!await hasModerationPermission(interaction, PermissionFlagsBits.ModerateMembers)) return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const targetUser = interaction.options.getUser('user', true);
