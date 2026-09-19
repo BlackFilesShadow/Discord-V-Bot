@@ -96,10 +96,16 @@ export function isPositionInsideMap(map: RadarMap, position: Pick<DayzPosition, 
     && position.y <= calibration.heightMeters;
 }
 
+/**
+ * DayZ world Z grows northward, while image/screen pixels grow downward.
+ * MapLibre latitude grows northward as well, so canonical DayZ Z must map to
+ * positive/northern Mercator Y. Keeping this sign explicit prevents the map
+ * image and ADM evidence from becoming vertical mirror images of each other.
+ */
 export function dayzToMapLibre(map: RadarMap, position: Pick<DayzPosition, 'x' | 'y'>): readonly [number, number] {
   const calibration = RADAR_MAP_CALIBRATIONS[map];
   const mercatorX = position.x - calibration.widthMeters / 2;
-  const mercatorY = calibration.heightMeters / 2 - position.y;
+  const mercatorY = position.y - calibration.heightMeters / 2;
   const longitude = (mercatorX / EARTH_RADIUS) * (180 / Math.PI);
   const latitude = Math.atan(Math.sinh(mercatorY / EARTH_RADIUS)) * (180 / Math.PI);
   return [longitude, latitude];
@@ -111,13 +117,29 @@ export function mapLibreToDayz(map: RadarMap, longitude: number, latitude: numbe
   const mercatorX = EARTH_RADIUS * longitude * Math.PI / 180;
   const mercatorY = EARTH_RADIUS * Math.log(Math.tan(Math.PI / 4 + (latitude * Math.PI / 180) / 2));
   const x = mercatorX + calibration.widthMeters / 2;
-  const y = calibration.heightMeters / 2 - mercatorY;
+  const y = mercatorY + calibration.heightMeters / 2;
   const position = {
     x: Math.abs(x) <= COORDINATE_EPSILON ? 0 : Math.abs(x - calibration.widthMeters) <= COORDINATE_EPSILON ? calibration.widthMeters : x,
     y: Math.abs(y) <= COORDINATE_EPSILON ? 0 : Math.abs(y - calibration.heightMeters) <= COORDINATE_EPSILON ? calibration.heightMeters : y,
     altitude: null,
   };
   return isPositionInsideMap(map, position) ? position : null;
+}
+
+/**
+ * MapLibre ImageSource expects image corners clockwise from top-left.
+ * The bundled DayZ basemaps are north-up, therefore their top edge is max-Z
+ * and their bottom edge is Z=0 in canonical DayZ coordinates.
+ */
+export function radarImageCoordinates(map: RadarMap): [[number, number], [number, number], [number, number], [number, number]] {
+  const calibration = RADAR_MAP_CALIBRATIONS[map];
+  const toMutable = (point: readonly [number, number]): [number, number] => [point[0], point[1]];
+  return [
+    toMutable(dayzToMapLibre(map, { x: 0, y: calibration.heightMeters })),
+    toMutable(dayzToMapLibre(map, { x: calibration.widthMeters, y: calibration.heightMeters })),
+    toMutable(dayzToMapLibre(map, { x: calibration.widthMeters, y: 0 })),
+    toMutable(dayzToMapLibre(map, { x: 0, y: 0 })),
+  ];
 }
 
 export function dayzIzurviveUrl(map: RadarMap, position: Pick<DayzPosition, 'x' | 'y'>, zoom = 6): string | null {
