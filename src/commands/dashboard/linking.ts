@@ -24,6 +24,7 @@ import {
   applySuccessfulLinkEconomyEffects,
   deactivateLinkRewardState,
 } from '../../modules/linking/linkRewards';
+import { clearProvisionalForcedPlayerName } from '../../modules/linking/adminForceLink';
 import { buildStatusEmbed, type EmbedStatus } from '../../utils/statusEmbed';
 import { Colors, vEmbed } from '../../utils/embedDesign';
 import { logAudit } from '../../utils/logger';
@@ -211,6 +212,10 @@ export const unlinkCommand: Command = {
       return;
     }
     await deactivateLinkRewardState(rewardScope, scope.actorDiscordId);
+    // Reste-Fix: ein frueherer /force-link hinterlaesst sonst einen
+    // stehenden forcedPlayerName, der bei einem spaeteren normalen Re-Link
+    // (auf einen anderen Spieler) faelschlich wieder als belegt gilt.
+    await clearProvisionalForcedPlayerName(rewardScope, scope.actorDiscordId);
     logAudit('LINK_DELETED', 'LINKING', {
       guildId: scope.guildId,
       nitradoConnId: scope.nitradoConnId,
