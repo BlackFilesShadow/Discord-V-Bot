@@ -306,16 +306,21 @@ nitradoRouter.delete('/:slot', requireGuildPermission('dashboard.access'), async
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
-  let id;
+  let deleted;
   try {
-    id = await deleteSlot(scope.guildId, slot);
+    deleted = await deleteSlot(scope.guildId, slot);
   } catch (e) {
     if (e instanceof NitradoConnectionBusyError) { respondConnectionBusy(res); return; }
     throw e;
   }
-  if (!id) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
-  logAuditDb('NITRADO_SLOT_DELETED', 'NITRADO', { actorUserId: req.auth!.userId, guildId: scope.guildId, details: { slot, id } });
-  res.json({ ok: true, deletedId: id });
+  if (!deleted) { res.status(404).json({ error: 'Slot nicht gefunden.' }); return; }
+  const { id, orphanSummary } = deleted;
+  logAuditDb('NITRADO_SLOT_DELETED', 'NITRADO', {
+    actorUserId: req.auth!.userId,
+    guildId: scope.guildId,
+    details: { slot, id, orphanSummary },
+  });
+  res.json({ ok: true, deletedId: id, orphanSummary });
 });
 
 nitradoRouter.get('/:slot/services', requireGuildPermission('dashboard.access'), async (req, res) => {

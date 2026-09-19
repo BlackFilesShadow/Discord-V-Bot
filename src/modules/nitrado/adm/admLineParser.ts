@@ -83,6 +83,20 @@ const COORDINATE_TRIPLET_RE = /^\s*[+-]?(?:\d+(?:\.\d+)?|\.\d+)\s*,\s*[+-]?(?:\d
 // distinguishable from display-name based explosive/other-object causes.
 const VANILLA_WILD_SOURCE_RE = /^(?:Animal_[A-Za-z0-9_]+|Zmb[MF]_[A-Za-z0-9_]+)$/i;
 
+/**
+ * Erkennt, ob ein Textabschnitt mit der literalen DayZ-Session-Kopfzeile
+ * beginnt ("AdminLog started on <date> at <time>"). Jede neue ADM-Session
+ * beginnt deterministisch mit genau dieser Zeile; sie kann innerhalb einer
+ * laufenden Session nicht erneut auftreten. Dient als Rotations-Signal, wenn
+ * eine gleichnamige Datei anhand von Groesse/mtime allein nicht sicher von
+ * organischem Wachstum derselben Session unterschieden werden kann (siehe
+ * admLiveSyncCron.ingestFile).
+ */
+export function startsWithAdmSessionHeader(text: string): boolean {
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
+  return HEADER_DATE_RE.test(firstLine);
+}
+
 export function resolveBaseDate(text: string, fileName?: string): Date | null {
   for (const line of text.split(/\r?\n/, 8)) {
     const match = HEADER_DATE_RE.exec(line);

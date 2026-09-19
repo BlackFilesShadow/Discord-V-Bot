@@ -199,7 +199,19 @@ async function runSnapshot(
           },
         });
         totalDirs++;
-      } catch { /* duplicate directory row can be ignored */ }
+      } catch (e) {
+        // Nur ein Unique-Constraint-Konflikt (derselbe Ordner wurde bereits
+        // ueber einen anderen Pfad in die Queue aufgenommen) ist erwartbar und
+        // darf schweigend uebersprungen werden. Jeder andere Fehler (DB-Hänger,
+        // ungueltige Daten) wurde bisher ebenfalls verschluckt, ohne errorCount
+        // zu erhoehen -- ein Snapshot konnte dadurch `status: 'OK'` melden,
+        // obwohl ein echter Verzeichnis-Metadaten-Write stillschweigend
+        // fehlgeschlagen ist.
+        if ((e as { code?: string }).code === 'P2002') continue;
+        errorCount++;
+        lastError = `nitradoSnapshotFile.create ${dir}: ${(e as Error).message}`;
+        logger.warn('[NitradoMirror] Verzeichnis-Metadaten-Write fehlgeschlagen', { dir, err: (e as Error).message });
+      }
 
       for (const entry of entries) {
         await heartbeat();

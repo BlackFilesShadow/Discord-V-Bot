@@ -183,27 +183,17 @@ function shouldWriteCursor(
   // Rueckwaerts-/Gleichstand-Schreiben sind nur erlaubt, wenn der Ingestor den
   // Lauf ausdruecklich als Quellen-Reset markiert hat. Damit kann ein normaler
   // paralleler Append-Poll mit nur neuerem mtime niemals den Cursor rebasen.
-  if (!result.wasReset) return false;
-
-  const incomingSize = BigInt(meta.fileSize);
-
-  // Nitrado same-name/same-size Rotation: die alte Generation war komplett
-  // gelesen, Groesse bleibt identisch, mtime ist neuer. Auch ein exakt gleich
-  // grosser kleiner Log muss die Metadaten aktualisieren duerfen, sonst wird er
-  // bei jedem Poll erneut als Rotation erkannt.
-  const sameSizeReplacement = meta.lastModifiedAt > existing.lastModifiedAt
-    && incomingSize === existing.lastKnownSize
-    && existing.processedByteOffset >= existing.lastKnownSize;
-  if (sameSizeReplacement) return true;
-
-  // Truncation/kleinere Ersatzdatei: `wasReset` bestaetigt, dass der Aufrufer
-  // bewusst wieder bei Byte 0 begonnen hat. Die Groesse allein reicht nicht,
-  // damit ein gleichsekundiger langsamer Poll niemals einen neueren Cursor
-  // zuruecksetzen kann.
-  const truncatedReplacement = incomingSize < existing.lastKnownSize;
-  if (truncatedReplacement) return true;
-
-  return false;
+  //
+  // Der Aufrufer (admLiveSyncCron.ts) setzt `wasReset` ausschliesslich, wenn er
+  // die neue Generation bereits selbst verifiziert hat: exakte
+  // Groessenuebereinstimmung nach vollstaendiger alter Konsumption (gleiche
+  // Groesse), eine kleiner gewordene Ersatzdatei (Truncation), oder eine
+  // frische "AdminLog started on"-Kopfzeile im ersten Read eines eigentlich
+  // fortsetzenden Bytebereichs (startsWithAdmSessionHeader). Eine zusaetzliche
+  // Groessen-Nachpruefung hier wuerde genau den letztgenannten -- in der
+  // Praxis haeufigsten -- Fall (gleichnamige, aber GROESSERE Ersatzdatei)
+  // verwerfen und den Cursor dauerhaft auf der alten Generation haengen lassen.
+  return result.wasReset;
 }
 
 async function persistRowsInBatches(

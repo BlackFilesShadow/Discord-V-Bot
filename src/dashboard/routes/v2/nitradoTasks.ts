@@ -141,9 +141,17 @@ nitradoTasksRouter.get('/restart-plan', requireGuildPermission('nitrado.view'), 
       .filter((value): value is string => value !== null)
       .sort((a, b) => a.localeCompare(b));
     const sortedDesired = desiredTimes.slice().sort((a, b) => a.localeCompare(b));
+    // Nitrado erlaubt das Setzen einer Zeitzone bei Task-Erstellung nicht --
+    // ein Task uebernimmt stillschweigend den jeweils aktuellen Konto-Default.
+    // Zwei Tasks mit identischer HH:MM-Anzeige koennen dadurch real zu
+    // unterschiedlichen Zeitpunkten feuern, wenn sich dieser Default zwischen
+    // zwei Anlagen verschoben hat. Ohne diese Pruefung wuerde "synchronized"
+    // eine solche Zeitzonen-Drift verschweigen (siehe restartTaskPlan.ts).
+    const remoteTimezones = new Set(restartTasks.map(task => task.timezone ?? null));
     const synchronized = restartTasks.length === sortedDesired.length
       && remoteConcreteTimes.length === sortedDesired.length
-      && remoteConcreteTimes.every((time, index) => time === sortedDesired[index]);
+      && remoteConcreteTimes.every((time, index) => time === sortedDesired[index])
+      && remoteTimezones.size <= 1;
 
     res.json({
       plan: plan ? {

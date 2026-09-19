@@ -24,6 +24,8 @@ import {
   type BanOutboxClient,
 } from '../../../modules/bans/banOutbox';
 import { matchesBanIdentifier } from '../../../modules/bans/banTarget';
+import { isWhitelistBlockedByActiveServerBan } from '../../../modules/bans/whitelistBanGuard';
+import type { BanClient } from '../../../modules/bans/banRegistry';
 import { notifyNitradoBanDrift, notifyNitradoWhitelistDrift } from '../../../modules/nitrado/driftDiscord';
 import { resolveDashboardGameServer, sendDashboardServerResolutionError } from './serverScope';
 import type { GuildScope, NitradoConnId } from '../../../types/scope';
@@ -226,7 +228,11 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
   }
 
   try {
-    const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async tx => {
+    const result = await withFreshAdmBinding(binding, () => prisma.$transaction(async (tx): Promise<{
+      resolved: boolean;
+      queued: boolean;
+      blockedByBan?: boolean;
+    }> => {
       const row = await tx.whitelistEntry.findFirst({
         where: {
           guildId: scope.guildId,
@@ -254,10 +260,23 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
         return { resolved: true, queued: false };
       }
 
-      await tx.whitelistEntry.updateMany({
+      // Ein Drift kann genau dadurch entstehen, dass ein Bann den Spieler
+      // remote von der Whitelist entfernt hat (SERVER_BAN_ADD in jobWorker.ts
+      // aendert dabei nie WhitelistEntry.syncState). Ohne diese Pruefung wuerde
+      // "Wiederherstellen" einen aktiv gebannten Spieler erneut whitelisten.
+      const blockedByBan = await isWhitelistBlockedByActiveServerBan(
+        tx as unknown as BanClient,
+        { guildId: scope.guildId, nitradoConnId: connId },
+        row.gameId,
+      );
+      if (blockedByBan) return { resolved: false, queued: false, blockedByBan: true };
+
+      const updated = await tx.whitelistEntry.updateMany({
         where: { id: row.id, guildId: scope.guildId, nitradoConnId: connId, syncState: 'SYNCED' },
         data: { syncState: 'LOCAL_ONLY', lastSyncedAt: null },
       });
+      if (updated.count === 0) return { resolved: false, queued: false };
+
       const queued = await enqueueWhitelistAdd(
         tx as unknown as WhitelistOutboxClient,
         { guildId: scope.guildId, nitradoConnId: connId },
@@ -267,6 +286,10 @@ nitradoDriftRouter.post('/whitelist/resolve', requireGuildPermission('whitelist.
     }));
 
     if (!result.resolved) {
+      if (result.blockedByBan) {
+        res.status(409).json({ error: 'Dieser Identifier ist auf diesem Server aktuell gebannt. Wiederherstellung wurde verhindert.' });
+        return;
+      }
       res.status(409).json({ error: 'Lokaler Drift-Eintrag wurde zwischenzeitlich geaendert. Bitte neu laden.' });
       return;
     }
@@ -494,10 +517,14 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
       // ausstehenden Soll-Add um. Der Worker hat bereits die Sicherheitsregel
       // `appliedRemotely === true -> ADD no-op`; deshalb muss dieses Flag vor
       // dem bewusst eingereihten Restore atomar auf false wechseln.
-      await tx.serverBanEntry.updateMany({
+      const flagged = await tx.serverBanEntry.updateMany({
         where: { id: banId, guildId: scope.guildId, nitradoConnId: connId, active: true, appliedRemotely: true },
         data: { appliedRemotely: false },
       });
+      // Ein zwischenzeitlicher Doppelklick/Concurrent-Moderator kann diese
+      // Zeile bereits veraendert haben (siehe fresh-Check oben) -- ohne diesen
+      // Count-Check wuerde hier trotzdem ein doppelter Restore-Job eingereiht.
+      if (flagged.count === 0) return { resolved: false, queued: false };
       const queued = await enqueueServerBanAdd(
         tx as unknown as BanOutboxClient,
         { guildId: scope.guildId, nitradoConnId: connId },

@@ -24,9 +24,31 @@ export interface BanTargetClient {
   };
 }
 
-/** HMAC eines exakten Gameserver-Identifiers; Klartext wird nicht persistiert. */
+/**
+ * HMAC eines exakten Gameserver-Identifiers; Klartext wird nicht persistiert.
+ * Normalisiert auf Kleinschreibung: Nitrado/DayZ behandeln Whitelist- und
+ * Bannlisten-Identitaeten durchgaengig case-insensitiv (siehe nitradoClient.ts
+ * addToWhitelist/addToBanlist sowie die case-insensitive WhitelistEntry-Updates
+ * in serverBan.ts), daher muss derselbe Identifier unabhaengig von Gross-/
+ * Kleinschreibung immer denselben Hash ergeben.
+ */
 export function hashBanIdentifier(rawIdentifier: string, secret: string): string {
-  return identityHash(rawIdentifier.trim(), secret);
+  return identityHash(rawIdentifier.trim().toLowerCase(), secret);
+}
+
+/**
+ * Alle Hash-Varianten, unter denen derselbe Identifier gespeichert sein kann:
+ * die aktuelle, case-normalisierte Form (canonical) sowie — fuer Eintraege aus
+ * der Zeit vor dieser Normalisierung — die exakte Original-Schreibweise
+ * (legacy). Der Hash ist bewusst nicht umkehrbar, ein Klartext-Backfill auf
+ * die neue Form ist daher nicht moeglich; ohne diesen Fallback wuerden vor dem
+ * Fix gespeicherte Banns/Links bei erneuter Pruefung unverifizierbar.
+ */
+export function candidateBanIdentifierHashes(rawIdentifier: string, secret: string): string[] {
+  const trimmed = rawIdentifier.trim();
+  const canonical = identityHash(trimmed.toLowerCase(), secret);
+  const legacyExact = identityHash(trimmed, secret);
+  return canonical === legacyExact ? [canonical] : [canonical, legacyExact];
 }
 
 /**
@@ -54,7 +76,10 @@ export async function resolveVerifiedBanIdentityHash(
 
 /**
  * Prueft einen nur zur Laufzeit vorhandenen Gameserver-Identifier gegen einen
- * gespeicherten HMAC. Timing-safe, damit keine Hash-Information ueber
+ * gespeicherten HMAC. Prueft sowohl die aktuelle case-normalisierte Form als
+ * auch die Legacy-Exaktschreibweise (siehe candidateBanIdentifierHashes), damit
+ * ein vor der Normalisierung gespeicherter Bann durch exakte Neueingabe weiter
+ * verifizierbar bleibt. Timing-safe, damit keine Hash-Information ueber
  * Vergleichszeiten abgeleitet werden kann.
  */
 export function matchesBanIdentifier(
@@ -63,7 +88,9 @@ export function matchesBanIdentifier(
   secret: string,
 ): boolean {
   if (!/^[0-9a-f]{64}$/i.test(expectedIdentityHash)) return false;
-  const actual = Buffer.from(hashBanIdentifier(rawIdentifier, secret), 'hex');
   const expected = Buffer.from(expectedIdentityHash, 'hex');
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  return candidateBanIdentifierHashes(rawIdentifier, secret).some(candidate => {
+    const actual = Buffer.from(candidate, 'hex');
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  });
 }

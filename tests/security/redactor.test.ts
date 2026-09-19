@@ -144,4 +144,38 @@ describe('redactor.redactValue / redactObject', () => {
     expect(redactValue('maxPlayers', 60)).toBe(60);
     expect(redactValue('mission', 'dayzOffline.chernarusplus')).toBe('dayzOffline.chernarusplus');
   });
+
+  // Regression: die reale Nitrado-API liefert die Service-ID unter dem
+  // schlichten Feldnamen "id" (ServiceMeta.id), nicht "serviceId"/"service_id".
+  // Ohne 'id' in SENSITIVE_KEYS lief die echte Server-ID unredigiert durch
+  // z.B. /api/v2/dev/nitrado-mirror/:id/settings.
+  test('redigiert das reale Nitrado-Feld "id" (ServiceMeta.id) als Service-Kennung', () => {
+    expect(isSensitiveKey('id')).toBe(true);
+    const serviceMeta = { id: 123456, type: 'gameservers', status: 'started' };
+    const r = redactObject(serviceMeta);
+    expect(r.id).toBe(PLACEHOLDER.serviceId);
+    expect(r.type).toBe('gameservers');
+    expect(r.status).toBe('started');
+  });
+
+  test('redigiert weiterhin "serviceId"/"service_id" als Service-Kennung', () => {
+    expect(redactValue('serviceId', 123456)).toBe(PLACEHOLDER.serviceId);
+    expect(redactValue('service_id', 123456)).toBe(PLACEHOLDER.serviceId);
+  });
+
+  // Regression: redactObject() nutzte fuer freie Stringwerte den einfachen
+  // Basis-Textredactor statt der allowlist-geschuetzten Variante aus
+  // redactorProtected.ts -- ein verifizierter DayZ-1.29-Identifier innerhalb
+  // eines Settings-Objekts wurde dadurch anders (staerker) maskiert als
+  // derselbe Wert in einer rohen Datei.
+  test('redactObject nutzt denselben allowlist-geschuetzten Textredactor wie redactText', () => {
+    const modClassname = 'MyCustomModItem_LongVariant';
+    const viaFile = redactText(`Wert: ${modClassname}`, { protectedIdentifiers: [modClassname] });
+    const viaObject = redactObject(
+      { mission: `Wert: ${modClassname}` },
+      { protectedIdentifiers: [modClassname] },
+    );
+    expect(viaFile).toContain(modClassname);
+    expect(String(viaObject.mission)).toContain(modClassname);
+  });
 });

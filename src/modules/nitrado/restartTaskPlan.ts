@@ -187,6 +187,19 @@ function assertExactRestartSet(tasks: NitradoTask[], desiredTimes: string[]): vo
   if (sorted.some((time, index) => time !== desiredTimes[index])) {
     throw new RestartTaskVerificationError('Die bei Nitrado gespeicherten Restart-Uhrzeiten weichen vom Sollzustand ab.');
   }
+  // Nitrado erlaubt das Setzen einer Zeitzone bei createTask() nicht; ein
+  // Task uebernimmt beim Anlegen stillschweigend den aktuellen Konto-Default.
+  // Zwei Tasks mit identischer HH:MM-Anzeige koennen dadurch real zu
+  // unterschiedlichen Zeitpunkten feuern, wenn sich dieser Default zwischen
+  // zwei Anlagen verschoben hat. Da wir die Zeitzone nicht aktiv setzen
+  // koennen, ist die einzig pruefbare Garantie interne Konsistenz aller von
+  // uns verwalteten Restart-Tasks.
+  const timezones = new Set(restart.map(task => task.timezone ?? null));
+  if (timezones.size > 1) {
+    throw new RestartTaskVerificationError(
+      'Die bei Nitrado gespeicherten Restart-Tasks verwenden unterschiedliche Zeitzonen.',
+    );
+  }
 }
 
 export interface ReconcileRestartTasksOptions {
@@ -209,9 +222,19 @@ export async function reconcileRestartTasks(options: ReconcileRestartTasksOption
   const initial = await options.api.listTasks(options.serviceId);
   const initialRestart = initial.filter(isRestartTask);
   const firstByTime = new Map<string, NitradoTask>();
+  // Alle von uns verwalteten Restart-Tasks muessen dieselbe Zeitzone teilen
+  // (siehe assertExactRestartSet); die zuerst gesehene Zeitzone unter den
+  // bereits passenden Tasks wird zur Referenz fuer diesen Reconcile-Lauf. Ein
+  // Task mit abweichender Zeitzone gilt als nicht passend und wird unten wie
+  // eine fehlende Zeit behandelt (neu angelegt) bzw. als Extra entfernt.
+  let referenceTimezone: string | null | undefined;
   for (const task of initialRestart) {
     const time = concreteDailyRestartClock(task);
-    if (time && desiredTimes.includes(time) && !firstByTime.has(time)) firstByTime.set(time, task);
+    if (!time || !desiredTimes.includes(time) || firstByTime.has(time)) continue;
+    const taskTimezone = task.timezone ?? null;
+    if (referenceTimezone === undefined) referenceTimezone = taskTimezone;
+    else if (taskTimezone !== referenceTimezone) continue;
+    firstByTime.set(time, task);
   }
 
   const missing = desiredTimes.filter(time => !firstByTime.has(time));
@@ -237,8 +260,17 @@ export async function reconcileRestartTasks(options: ReconcileRestartTasksOption
   const extras: NitradoTask[] = [];
   for (const task of afterCreates.filter(isRestartTask)) {
     const time = concreteDailyRestartClock(task);
-    if (time && desiredTimes.includes(time) && !seenDesired.has(time)) {
-      seenDesired.add(time);
+    const taskTimezone = task.timezone ?? null;
+    const matchesTime = Boolean(time) && desiredTimes.includes(time as string) && !seenDesired.has(time as string);
+    // Falls Phase 1 noch keine Referenz-Zeitzone etablieren konnte (z.B. ein
+    // komplett neuer Plan ohne vorhandene Tasks), legt der erste tatsaechliche
+    // Treffer hier die Referenz fest -- alle in diesem Lauf frisch angelegten
+    // Tasks teilen sich denselben Konto-Default und sind damit konsistent.
+    const matchesTimezone = matchesTime
+      && (referenceTimezone === undefined || taskTimezone === referenceTimezone);
+    if (matchesTime && matchesTimezone) {
+      if (referenceTimezone === undefined) referenceTimezone = taskTimezone;
+      seenDesired.add(time as string);
       keepIds.add(task.id);
     } else {
       extras.push(task);

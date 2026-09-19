@@ -25,8 +25,15 @@ export const SENSITIVE_KEYS: ReadonlySet<string> = new Set([
   // Listen
   'whitelist', 'priority', 'admins', 'admin', 'bans', 'banlist',
   // Service
-  'serviceId', 'service_id', 'username', 'owner',
+  // 'id' ist das tatsaechliche Feld, das die reale Nitrado ServiceMeta (GET
+  // /services) fuer die Server-ID verwendet (readClient.ts: ServiceMeta.id) --
+  // 'serviceId'/'service_id' kommen in keiner echten API-Antwort vor und
+  // haetten die ID nie erfasst.
+  'serviceId', 'service_id', 'id', 'username', 'owner',
 ]);
+
+/** Settings-Keys, deren (nicht-string) Wert konkret die Service-Identitaet ist. */
+const SERVICE_ID_KEYS: ReadonlySet<string> = new Set(['id', 'serviceId', 'service_id']);
 
 /** Felder, die schon im Schlüsselnamen sensibel klingen (Substring-Match). */
 const SENSITIVE_KEY_HINTS = ['password', 'token', 'secret', 'key', 'whitelist', 'priority', 'admin', 'ban', 'ip', 'port', 'rcon'];
@@ -69,6 +76,15 @@ export interface RedactOptions {
    * der aufrufenden Schutzschicht, bevor dieser Basis-Redactor laeuft.
    */
   protectedIdentifiers?: readonly string[];
+  /**
+   * Optional: alternative Textredaktion fuer freie Stringwerte innerhalb
+   * redactValue()/redactObject() (z.B. die allowlist-geschuetzte Variante aus
+   * redactorProtected.ts). Faellt redactorBase mangels eigener Abhaengigkeit
+   * auf redactorProtected sonst auf die einfache Basis-Heuristik zurueck, was
+   * zu inkonsistentem Masking zwischen dem Settings-JSON-Pfad (redactObject)
+   * und dem Datei-Pfad (direkter redactText-Aufruf) fuehrt.
+   */
+  textRedactor?: (input: string, opts: RedactOptions) => string;
 }
 
 /**
@@ -131,10 +147,11 @@ export function redactValue(key: string, value: unknown, opts: RedactOptions = {
       if (/port/i.test(key)) return PLACEHOLDER.port;
       return PLACEHOLDER.generic;
     }
-    return redactText(value, opts);
+    return (opts.textRedactor ?? redactText)(value, opts);
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     if (sens && /port/i.test(key)) return PLACEHOLDER.port;
+    if (sens && SERVICE_ID_KEYS.has(key)) return PLACEHOLDER.serviceId;
     if (sens) return PLACEHOLDER.generic;
     return value;
   }

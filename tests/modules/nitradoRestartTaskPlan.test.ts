@@ -9,7 +9,13 @@ import {
 } from '../../src/modules/nitrado/restartTaskPlan';
 import type { NitradoTask, NitradoTaskCreate } from '../../src/modules/nitrado/nitradoClient';
 
-function task(id: number, hour: string, minute: string, action = RESTART_ACTION_METHOD): NitradoTask {
+function task(
+  id: number,
+  hour: string,
+  minute: string,
+  action = RESTART_ACTION_METHOD,
+  timezone: string | null = 'Europe/Berlin',
+): NitradoTask {
   return {
     id,
     hour,
@@ -20,7 +26,7 @@ function task(id: number, hour: string, minute: string, action = RESTART_ACTION_
     action_method: action,
     next_run: null,
     last_run: null,
-    timezone: 'Europe/Berlin',
+    timezone,
   };
 }
 
@@ -151,5 +157,72 @@ describe('Nitrado restart task planner', () => {
 
     await reconcileRestartTasks({ api, serviceId: '123', desiredTimes: ['04:00'] });
     expect(rows.filter(row => row.action_method === RESTART_ACTION_METHOD)).toHaveLength(1);
+  });
+
+  // Regression (FIX-8): Nitrado erlaubt keine explizite Zeitzone bei
+  // createTask() -- ein Task uebernimmt beim Anlegen stillschweigend den
+  // aktuellen Konto-Default. Zwei Restart-Tasks mit identischer HH:MM-Anzeige
+  // koennen dadurch real zu unterschiedlichen Zeitpunkten feuern, wenn sich
+  // dieser Default zwischen zwei Anlagen verschoben hat. Der Reconciler muss
+  // das erkennen statt "synchronisiert" zu melden.
+  it('heilt einen bestehenden Zeitzonen-Ausreisser statt ihn als synchronisiert zu akzeptieren', async () => {
+    // 04:00 existiert bereits, aber mit einer anderen Zeitzone als 00:00.
+    let rows: NitradoTask[] = [
+      task(1, '0', '0', RESTART_ACTION_METHOD, 'Europe/Berlin'),
+      task(2, '4', '0', RESTART_ACTION_METHOD, 'UTC'),
+    ];
+    let nextId = 10;
+    const deleted: number[] = [];
+    const api = {
+      listTasks: jest.fn(async () => rows.map(row => ({ ...row }))),
+      getTaskActionCatalog: jest.fn(async () => [RESTART_ACTION_METHOD]),
+      // Der Konto-Default hat sich inzwischen wieder auf Europe/Berlin
+      // "normalisiert" -- die Neuanlage bekommt daher wieder die Referenz-Zeitzone.
+      createTask: jest.fn(async (_serviceId: string, input: NitradoTaskCreate) => {
+        rows.push(task(nextId++, input.hour, input.minute, input.actionMethod, 'Europe/Berlin'));
+      }),
+      deleteTask: jest.fn(async (_serviceId: string, taskId: number) => {
+        deleted.push(taskId);
+        rows = rows.filter(row => row.id !== taskId);
+      }),
+    };
+
+    const final = await reconcileRestartTasks({
+      api,
+      serviceId: '123',
+      desiredTimes: ['00:00', '04:00'],
+    });
+
+    // Der alte 04:00-Ausreisser (id 2, UTC) wird entfernt, nicht behalten.
+    expect(deleted).toContain(2);
+    const restartTasks = final.filter(row => row.action_method === RESTART_ACTION_METHOD);
+    expect(restartTasks).toHaveLength(2);
+    expect(new Set(restartTasks.map(row => row.timezone))).toEqual(new Set(['Europe/Berlin']));
+  });
+
+  it('failt geschlossen statt eine Zeitzonen-Drift zwischen zwei Neuanlagen als synchronisiert zu melden', async () => {
+    let rows: NitradoTask[] = [];
+    let nextId = 1;
+    let createCount = 0;
+    const api = {
+      listTasks: jest.fn(async () => rows.map(row => ({ ...row }))),
+      getTaskActionCatalog: jest.fn(async () => [RESTART_ACTION_METHOD]),
+      // Simuliert eine Konto-Zeitzonen-Aenderung genau zwischen den beiden
+      // Neuanlagen (ein enges, aber reales Zeitfenster).
+      createTask: jest.fn(async (_serviceId: string, input: NitradoTaskCreate) => {
+        createCount += 1;
+        const timezone = createCount === 1 ? 'Europe/Berlin' : 'UTC';
+        rows.push(task(nextId++, input.hour, input.minute, input.actionMethod, timezone));
+      }),
+      deleteTask: jest.fn(async (_serviceId: string, taskId: number) => {
+        rows = rows.filter(row => row.id !== taskId);
+      }),
+    };
+
+    await expect(reconcileRestartTasks({
+      api,
+      serviceId: '123',
+      desiredTimes: ['00:00', '04:00'],
+    })).rejects.toThrow(/unterschiedliche Zeitzonen|Nitrado bestaetigt/);
   });
 });

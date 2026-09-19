@@ -187,6 +187,59 @@ describe('ADM cursor generation fence', () => {
     expect(holder.cursor.processedByteOffset).toBe(84_048n);
   });
 
+  // Regression (FIX-3): eine gleichnamige, aber GROESSER gewordene Ersatzdatei
+  // (der haeufigste reale Fall -- eine neue Session wird i.d.R. schnell
+  // groesser als die alte) wurde bisher trotz explizitem wasReset-Signal
+  // blockiert, weil shouldWriteCursor nur exakte Groessenuebereinstimmung
+  // oder Schrumpfung akzeptierte. Der Cursor blieb dann dauerhaft auf der
+  // alten Generation haengen. admLiveSyncCron erkennt diesen Fall inzwischen
+  // inhaltsbasiert (startsWithAdmSessionHeader) und setzt wasReset=true;
+  // shouldWriteCursor muss dieses Signal jetzt unabhaengig von der
+  // Groessenbeziehung respektieren.
+  it('rebased eine gleichnamige, groesser gewordene Ersatzdatei bei explizitem Reset-Signal', async () => {
+    const holder = makeClient({
+      processedByteOffset: 10_000n,
+      lastModifiedAt: 100,
+      lastKnownSize: 10_000n,
+    });
+
+    await persistAdmEvents(
+      holder.client,
+      { guildId: 'guild', nitradoConnId: 'conn' },
+      sourceMeta(101, 12_500),
+      ingestResult(4_048, true),
+      'larger-new-generation-fingerprint',
+    );
+
+    expect(holder.upserts).toHaveLength(1);
+    expect(holder.cursor).toEqual({
+      processedByteOffset: 4_048n,
+      lastModifiedAt: 101,
+      lastKnownSize: 12_500n,
+    });
+  });
+
+  it('blockiert eine groessere gleichnamige Datei weiterhin ohne explizites Reset-Signal (normales Wachstum)', async () => {
+    const holder = makeClient({
+      processedByteOffset: 10_000n,
+      lastModifiedAt: 100,
+      lastKnownSize: 10_000n,
+    });
+
+    // Kein wasReset -- das ist der normale Append-Fall (organisches Wachstum),
+    // der weiterhin ausschliesslich ueber einen groesseren newOffset laufen muss.
+    await persistAdmEvents(
+      holder.client,
+      { guildId: 'guild', nitradoConnId: 'conn' },
+      sourceMeta(101, 12_500),
+      ingestResult(4_048, false),
+      'organic-growth-first-chunk-fingerprint',
+    );
+
+    expect(holder.upserts).toHaveLength(0);
+    expect(holder.cursor.processedByteOffset).toBe(10_000n);
+  });
+
   it('verhindert dass ein alter Generationslauf nach einem bereits erfolgten Reset wieder nach vorne schreibt', async () => {
     const holder = makeClient({
       processedByteOffset: 4_048n,

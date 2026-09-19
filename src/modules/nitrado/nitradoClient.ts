@@ -396,7 +396,10 @@ export class NitradoClient {
   async addToWhitelist(serviceId: string, identifier: string): Promise<void> {
     const id = identifier.trim();
     if (!id) throw new NitradoApiError('Leerer Identifier', null, 'whitelist');
-    await this.mutateGeneralList(serviceId, 'whitelist', true, list => list.includes(id) ? list : [...list, id]);
+    const normalized = id.toLocaleLowerCase('en-US');
+    await this.mutateGeneralList(serviceId, 'whitelist', true, list =>
+      list.some(entry => entry.toLocaleLowerCase('en-US') === normalized) ? list : [...list, id],
+    );
     await this.verifyWhitelistMembership(serviceId, id, true);
   }
 

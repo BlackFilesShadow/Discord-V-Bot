@@ -101,6 +101,13 @@ describe('F-002 — Webhook replay delivery semantics', () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
     expect(prismaMock.idempotencyKey.delete).not.toHaveBeenCalled();
+    // Regression (FIX-13): ohne stabilen Discord-Nonce koennte ein Retry nach
+    // einer Netzwerk-Ambiguitaet (Antwort verloren, Nachricht aber evtl.
+    // bereits erstellt) denselben Webhook-Post duplizieren.
+    const call = send.mock.calls[0][0] as { nonce?: string; enforceNonce?: boolean };
+    expect(typeof call.nonce).toBe('string');
+    expect(call.nonce!.length).toBeGreaterThan(0);
+    expect(call.enforceNonce).toBe(true);
   });
 
   it('blockiert einen bereits geclaimten Replay vor jeder Discord-Zustellung', async () => {

@@ -24,6 +24,7 @@ interface RebindLifecycleClient extends NitradoOutboxTxClient {
   };
   whitelistEntry: {
     updateMany(args: unknown): Promise<{ count: number }>;
+    deleteMany(args: unknown): Promise<{ count: number }>;
   };
   serverBanEntry: {
     updateMany(args: unknown): Promise<{ count: number }>;
@@ -54,6 +55,7 @@ export interface NitradoRebindLifecycleResult {
   radarBansDeactivated: number;
   radarBanSecretsDeleted: number;
   radarBanAddJobsCancelled: number;
+  whitelistPendingRemovalsFinalized: number;
 }
 
 function payloadBanId(value: unknown): string | null {
@@ -177,6 +179,23 @@ export async function prepareNitradoRemoteStateForServiceRebind(
     },
   });
 
+  // PENDING_REMOVE ist eine lokale Absicht und darf laut demselben Prinzip wie
+  // in whitelistSyncCron.ts niemals zu LOCAL_ONLY zurueckgeschrieben werden
+  // (das wuerde die Absicht in "sollte whitelisted sein" umkehren). Der neue
+  // physische Service enthaelt diesen Identifier garantiert nicht -- die
+  // Entfernung ist damit trivial bestaetigt und der lokale Spiegel wird wie
+  // beim regulaeren Remote-Confirm geloescht. Der zugehoerige WHITELIST_REMOVE-
+  // Job wird unten (CANCEL_ON_REBIND_OPERATIONS) ohnehin cancelled und wuerde
+  // diese Zeile sonst dauerhaft verwaist zuruecklassen und ein sofortiges
+  // Re-Add fuer den neuen Service als "superseded" blockieren.
+  const whitelistPendingRemovalsFinalized = await tx.whitelistEntry.deleteMany({
+    where: {
+      guildId: scope.guildId,
+      nitradoConnId: scope.nitradoConnId,
+      syncState: 'PENDING_REMOVE',
+    },
+  });
+
   const bans = await tx.serverBanEntry.updateMany({
     where: {
       guildId: scope.guildId,
@@ -210,6 +229,7 @@ export async function prepareNitradoRemoteStateForServiceRebind(
         radarBansDeactivated: radarBans.count,
         radarBanSecretsDeleted: deletedRadarSecrets.count,
         radarBanAddJobsCancelled: 0,
+        whitelistPendingRemovalsFinalized: whitelistPendingRemovalsFinalized.count,
       };
     }
 
@@ -294,6 +314,7 @@ export async function prepareNitradoRemoteStateForServiceRebind(
         radarBansDeactivated: radarBans.count,
         radarBanSecretsDeleted: deletedRadarSecrets.count,
         radarBanAddJobsCancelled,
+        whitelistPendingRemovalsFinalized: whitelistPendingRemovalsFinalized.count,
       };
     }
 
@@ -308,6 +329,7 @@ export async function prepareNitradoRemoteStateForServiceRebind(
       radarBansDeactivated: radarBans.count,
       radarBanSecretsDeleted: deletedRadarSecrets.count,
       radarBanAddJobsCancelled,
+      whitelistPendingRemovalsFinalized: whitelistPendingRemovalsFinalized.count,
     };
   });
 }

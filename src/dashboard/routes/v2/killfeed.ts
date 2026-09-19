@@ -368,6 +368,17 @@ killfeedRouter.patch('/:id', requireGuildPermission('killfeed.manage'), async (r
       if (!locked[0]) throw new Error('CONFIG_SCOPE_LOST');
 
       const updateData = { ...parsed.data };
+      // Jede explizite Admin-Aenderung von isActive (an ODER aus) ist per
+      // Definition keine Nitrado-Selbstheilungs-Pause mehr. Ohne diese
+      // Bereinigung bleibt ein Marker aus einer frueheren Auto-Pause auf der
+      // Zeile haengen; eine spaetere, komplett unabhaengige manuelle Pause
+      // sieht dann identisch zu einer Auto-Pause aus und wird vom naechsten
+      // gesunden ADM-Sync automatisch (und ungewollt) wieder aktiviert
+      // (siehe resumeAutoPausedGameplayFeeds).
+      if (parsed.data.isActive !== undefined) {
+        updateData.autoPausedReason = null;
+        updateData.autoPausedAt = null;
+      }
       if (parsed.data.channelId && parsed.data.channelId !== existing.channelId) {
         updateData.lastMessageId = null;
         updateData.lastStateHash = null;

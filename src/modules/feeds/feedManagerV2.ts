@@ -1,4 +1,5 @@
 /* eslint-disable local/no-unscoped-prisma-query -- Stage 64: guild boundary enforced at auth/API or entity-id unique after prior guild check; Prisma update/delete require unique where. */
+import { createHash } from 'crypto';
 import { Client, EmbedBuilder, Guild, PermissionFlagsBits, TextChannel } from 'discord.js';
 import prisma from '../../database/prisma';
 import { logger, logAudit } from '../../utils/logger';
@@ -85,6 +86,21 @@ function setHttpUrl(embed: EmbedBuilder, value: string): void {
   if (/^https?:\/\//i.test(value)) embed.setURL(value);
 }
 
+/**
+ * Ein deterministischer, feed+item-gebundener Discord-Nonce.
+ * deliverFeedItemOnce() schuetzt bereits vor einem erneuten VERSUCH
+ * desselben Items, aber wenn channel.send() selbst wirft (Antwort verloren,
+ * Nachricht aber ggf. bereits erstellt), gibt es seine Idempotenz-Claim frei
+ * -- ein Retry ohne stabilen Nonce koennte dann dasselbe Item doppelt posten.
+ * Mit enforceNonce dedupliziert Discord selbst anhand desselben Nonce.
+ */
+function feedItemNonce(feedId: string, itemId: string): string {
+  return createHash('sha256')
+    .update(`feed-item\u0000${feedId}\u0000${itemId}`)
+    .digest('hex')
+    .slice(0, 25);
+}
+
 async function translateNews(entry: FeedEntry): Promise<FeedEntry> {
   let title = entry.title;
   let description = entry.description;
@@ -114,11 +130,13 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
 
   const roleIds = await resolveMentionableRoles(channel.guild, feed.mentionRoles ?? [], feed.id);
   const pingPrefix = roleIds.map((id) => `<@&${id}>`).join(' ');
-  const send = async (embed: EmbedBuilder): Promise<void> => {
+  const send = async (embed: EmbedBuilder, itemId: string): Promise<void> => {
     await channel.send({
       ...(pingPrefix ? { content: pingPrefix } : {}),
       embeds: [embed],
       allowedMentions: { roles: roleIds, parse: [] },
+      nonce: feedItemNonce(feed.id, itemId),
+      enforceNonce: true,
     });
   };
 
@@ -135,7 +153,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await deliverFeedItemOnce(feed.id, raw.id, () => send(embed));
+      await deliverFeedItemOnce(feed.id, raw.id, () => send(embed, raw.id));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     if (feed.lastItemId && !state.markerFound && toPost.length) {
@@ -164,7 +182,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setFooter({ text: `📡 ${feed.name}` })
         .setTimestamp(validDate(stream.startedAt));
       if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);
-      await deliverFeedItemOnce(feed.id, marker, () => send(embed));
+      await deliverFeedItemOnce(feed.id, marker, () => send(embed, marker));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: marker, lastChecked: new Date() } });
     return;
@@ -187,7 +205,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await deliverFeedItemOnce(feed.id, item.id, () => send(embed));
+      await deliverFeedItemOnce(feed.id, item.id, () => send(embed, item.id));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     return;
@@ -208,7 +226,7 @@ async function processFeedInner(client: Client, feedId: string, allowInactive = 
         .setTimestamp(validDate(item.publishedAt));
       setHttpUrl(embed, item.link);
       if (item.image) embed.setImage(item.image);
-      await deliverFeedItemOnce(feed.id, item.id, () => send(embed));
+      await deliverFeedItemOnce(feed.id, item.id, () => send(embed, item.id));
     }
     await prisma.feed.update({ where: { id: feed.id }, data: { lastItemId: state.latestId, lastChecked: new Date() } });
     return;
