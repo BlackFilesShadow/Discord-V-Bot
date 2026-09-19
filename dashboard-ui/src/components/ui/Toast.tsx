@@ -13,6 +13,7 @@ type ToastExtra = string | number | undefined;
 interface ToastItem {
   id: number;
   message: string;
+  desc?: string;
   kind: ToastKind;
   duration: number;
 }
@@ -34,8 +35,8 @@ const KIND_STYLE: Record<ToastKind, { border: string; text: string; bg: string; 
   info:    { border: 'border-accent/40', text: 'text-accent', bg: 'bg-accent/10', icon: Info },
 };
 
-function withExtra(message: string, extra?: ToastExtra): string {
-  return typeof extra === 'string' && extra.trim() ? `${message}: ${extra}` : message;
+function extraDesc(extra?: ToastExtra): string | undefined {
+  return typeof extra === 'string' && extra.trim() ? extra : undefined;
 }
 function extraDuration(extra?: ToastExtra, durationMs?: number): number | undefined {
   return typeof extra === 'number' ? extra : durationMs;
@@ -45,14 +46,14 @@ export function Toaster({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const idRef = useRef(0);
 
-  const push = useCallback((message: string, kind: ToastKind = 'info', durationMs = 4500): void => {
-    // Dedup: eine identische Meldung (kind+message), die erneut gepusht wird
-    // waehrend sie noch sichtbar ist, stapelt sich nicht erneut. Verhindert
-    // Toast-Fluten bei Polling-Storms (z.B. wiederholte 429/5xx-Fehler).
+  const push = useCallback((message: string, kind: ToastKind = 'info', durationMs = 4500, desc?: string): void => {
+    // Dedup: eine identische Meldung (kind+message+desc), die erneut gepusht
+    // wird waehrend sie noch sichtbar ist, stapelt sich nicht erneut.
+    // Verhindert Toast-Fluten bei Polling-Storms (z.B. wiederholte 429/5xx-Fehler).
     setItems(arr => {
-      if (arr.some(t => t.kind === kind && t.message === message)) return arr;
+      if (arr.some(t => t.kind === kind && t.message === message && (t.desc ?? '') === (desc ?? ''))) return arr;
       const id = ++idRef.current;
-      return [...arr, { id, message, kind, duration: durationMs }];
+      return [...arr, { id, message, desc, kind, duration: durationMs }];
     });
   }, []);
 
@@ -62,10 +63,10 @@ export function Toaster({ children }: { children: ReactNode }) {
 
   const api: ToastApi = {
     push,
-    success: (m, e, d) => push(withExtra(m, e), 'success', extraDuration(e, d)),
-    error:   (m, e, d) => push(withExtra(m, e), 'error', extraDuration(e, d)),
-    warn:    (m, e, d) => push(withExtra(m, e), 'warn', extraDuration(e, d)),
-    info:    (m, e, d) => push(withExtra(m, e), 'info', extraDuration(e, d)),
+    success: (m, e, d) => push(m, 'success', extraDuration(e, d), extraDesc(e)),
+    error:   (m, e, d) => push(m, 'error', extraDuration(e, d), extraDesc(e)),
+    warn:    (m, e, d) => push(m, 'warn', extraDuration(e, d), extraDesc(e)),
+    info:    (m, e, d) => push(m, 'info', extraDuration(e, d), extraDesc(e)),
   };
 
   return (
@@ -89,7 +90,10 @@ function ToastRow({ item, onDismiss }: { item: ToastItem; onDismiss: () => void 
   return (
     <div role="status" className={`pointer-events-auto rounded-md border ${style.border} ${style.bg} shadow-lg backdrop-blur-sm px-3 py-2 flex items-start gap-2 transition-all`} style={{ animation: 'toast-in 180ms ease-out' }}>
       <Icon className={`h-4 w-4 ${style.text} mt-0.5 shrink-0`} aria-hidden="true" />
-      <p className={`flex-1 text-sm ${style.text} break-words`}>{item.message}</p>
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm font-medium ${style.text} break-words`}>{item.message}</p>
+        {item.desc && <p className="text-xs text-muted break-words mt-0.5">{item.desc}</p>}
+      </div>
       <button type="button" onClick={onDismiss} className={`${style.text} opacity-60 hover:opacity-100 shrink-0`} aria-label="Benachrichtigung schliessen"><X className="h-3.5 w-3.5" /></button>
     </div>
   );
