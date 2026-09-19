@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { Bug, Camera, RefreshCw } from 'lucide-react';
 import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { useDevStatus } from '@/lib/useDevStatus';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -58,10 +58,10 @@ export default function Page(): JSX.Element {
     setBusy(true);
     try {
       const r = await api.post<{ ok: boolean; file: string }>('/api/v2/dev/stubs/debug/heap-snapshot', { reason, reAuth });
-      toast.push({ variant: 'success', title: 'Snapshot erstellt', desc: r.file });
+      toast.success('Snapshot erstellt', r.file);
       setStepUp(null);
     } catch (e) {
-      toast.push({ variant: 'danger', title: 'Snapshot fehlgeschlagen', desc: (e as Error).message });
+      toast.error('Snapshot fehlgeschlagen', (e as Error).message);
     } finally { setBusy(false); }
   };
 
