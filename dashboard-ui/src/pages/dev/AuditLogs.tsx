@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { AlertTriangle, ScrollText, Search, RefreshCw } from 'lucide-react';
 import { api, describeApiError } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -89,7 +89,7 @@ export default function Page(): JSX.Element {
       // weiter angezeigt. Das entspricht useDevStatus auf den Diagnose-Seiten.
       setData(null);
       setError(described.desc);
-      toast.push({ variant: 'danger', title: described.title, desc: described.desc });
+      toast.error(described.title, described.desc);
     } finally {
       if (requestId === requestSeq.current) setLoading(false);
     }

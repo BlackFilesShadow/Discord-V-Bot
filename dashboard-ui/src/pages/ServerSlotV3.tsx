@@ -15,7 +15,7 @@ import { SectionTabs, type SectionTabItem } from '@/components/ui/SectionTabs';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { FunctionHelpButton } from '@/components/ui/FunctionHelpButton';
 import { NitradoRestartPlanner } from '@/components/nitrado/NitradoRestartPlanner';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import {
   Banknote,
   Coins,
@@ -226,11 +226,11 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
       qc.setQueryData(['economy', guildId, slot], saved);
       void qc.invalidateQueries({ queryKey: ['economy-overview', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['economy-rewards', guildId, slot] });
-      toast.push({ variant: 'success', title: 'Gespeichert', desc: 'Economy-Konfiguration aktualisiert.' });
+      toast.success('Gespeichert', 'Economy-Konfiguration aktualisiert.');
     },
     onError: err => {
       const d = describeApiError(err);
-      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+      toast.error(d.title, d.desc);
     },
   });
   const updateRewards = useMutation({
@@ -240,11 +240,11 @@ function EconomyV3Page({ guildId, slot }: { guildId: string; slot: string }) {
     ),
     onSuccess: saved => {
       qc.setQueryData(['economy-rewards', guildId, slot], saved);
-      toast.push({ variant: 'success', title: 'Rewards gespeichert', desc: 'Automatische DayZ-Rewards wurden aktualisiert.' });
+      toast.success('Rewards gespeichert', 'Automatische DayZ-Rewards wurden aktualisiert.');
     },
     onError: err => {
       const d = describeApiError(err);
-      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+      toast.error(d.title, d.desc);
     },
   });
 
@@ -470,11 +470,11 @@ function BankCasinoV3Page({ guildId, slot }: { guildId: string; slot: string }) 
     ),
     onSuccess: saved => {
       qc.setQueryData(['economy', guildId, slot], saved);
-      toast.push({ variant: 'success', title: 'Gespeichert', desc: 'Bank-Konfiguration aktualisiert.' });
+      toast.success('Gespeichert', 'Bank-Konfiguration aktualisiert.');
     },
     onError: err => {
       const d = describeApiError(err);
-      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+      toast.error(d.title, d.desc);
     },
   });
 
@@ -569,11 +569,11 @@ function CasinoCards({ guildId, slot, economyEnabled }: { guildId: string; slot:
     ),
     onSuccess: saved => {
       void qc.invalidateQueries({ queryKey: ['casino-games', guildId, slot] });
-      toast.push({ variant: 'success', title: `${saved.emoji} ${saved.label} gespeichert`, desc: 'Casino-Regeln wurden aktualisiert.' });
+      toast.success(`${saved.emoji} ${saved.label} gespeichert`, 'Casino-Regeln wurden aktualisiert.');
     },
     onError: err => {
       const d = describeApiError(err);
-      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+      toast.error(d.title, d.desc);
     },
   });
   const byType = useMemo(() => new Map((games.data?.games ?? []).map(g => [g.type, g] as const)), [games.data]);

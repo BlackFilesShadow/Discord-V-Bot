@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { ShieldOff, Clock, RefreshCw, User as UserIcon } from 'lucide-react';
 import { api } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -56,7 +56,7 @@ export default function ActiveSessions() {
       const r = await api.get<ListResponse>('/api/v2/dev/sessions');
       setRows(r.sessions);
     } catch (e) {
-      toast.push({ variant: 'danger', title: 'Fehler', desc: (e as Error).message });
+      toast.error('Fehler', (e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -82,11 +82,11 @@ export default function ActiveSessions() {
     setBusy(true);
     try {
       await api.post(`/api/v2/dev/sessions/${encodeURIComponent(stepUp.session.id)}/revoke`, { reason, reAuth });
-      toast.push({ variant: 'success', title: 'Session beendet', desc: `Session ${stepUp.session.id.slice(0, 8)}… revoked.` });
+      toast.success('Session beendet', `Session ${stepUp.session.id.slice(0, 8)}… revoked.`);
       setStepUp(null);
       await reload();
     } catch (e) {
-      toast.push({ variant: 'danger', title: 'Force-Revoke fehlgeschlagen', desc: (e as Error).message });
+      toast.error('Force-Revoke fehlgeschlagen', (e as Error).message);
     } finally {
       setBusy(false);
     }

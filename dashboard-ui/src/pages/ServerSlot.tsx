@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/Switch';
 import { Select } from '@/components/ui/Select';
 import { EmojiPicker } from '@/components/ui/EmojiPicker';
 import { useGuildLiveUpdates } from '@/lib/useGuildLiveUpdates';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { VirtualAccountsPanel } from '@/components/economy/VirtualAccountsPanel';
 import { EconomyScopePanel } from '@/components/economy/EconomyScopePanel';
 import { KillfeedTab } from '@/components/KillfeedTab';
@@ -157,11 +157,11 @@ export default function ServerSlot() {
       api.patch(`/api/v2/guilds/${guildId}/dashboard/server/${slot}/settings`, patch),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['settings', guildId, slot] });
-      toast.push({ variant: 'success', title: 'Gespeichert', desc: 'Server-Einstellungen aktualisiert.' });
+      toast.success('Gespeichert', 'Server-Einstellungen aktualisiert.');
     },
     onError: (err) => {
       const described = describeApiError(err);
-      toast.push({ variant: 'danger', title: described.title, desc: described.desc });
+      toast.error(described.title, described.desc);
     },
   });
 
@@ -440,10 +440,10 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
       confirm: true, reason: `Whitelist-Eintrag entfernt: ${gameId}`,
     }),
     onSuccess: (_data, gameId) => {
-      toast.push({ variant: 'success', title: 'Entfernt', desc: `Whitelist-Eintrag ${gameId} wurde entfernt.` });
+      toast.success('Entfernt', `Whitelist-Eintrag ${gameId} wurde entfernt.`);
       void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
     },
-    onError: (err: Error) => toast.push({ variant: 'danger', title: 'Fehler', desc: err.message }),
+    onError: (err: Error) => toast.error('Fehler', err.message),
   });
 
   const decide = useMutation({
@@ -454,11 +454,11 @@ function WhitelistPanel({ guildId, slot }: { guildId: string; slot: string }) {
         confirm: true,
       }),
     onSuccess: (_data, vars) => {
-      toast.push({ variant: 'success', title: vars.approve ? 'Genehmigt' : 'Abgelehnt', desc: `Whitelist-Anfrage wurde ${vars.approve ? 'genehmigt' : 'abgelehnt'}.` });
+      toast.success(vars.approve ? 'Genehmigt' : 'Abgelehnt', `Whitelist-Anfrage wurde ${vars.approve ? 'genehmigt' : 'abgelehnt'}.`);
       void qc.invalidateQueries({ queryKey: ['whitelist-requests', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
     },
-    onError: (err: Error) => toast.push({ variant: 'danger', title: 'Fehler', desc: err.message }),
+    onError: (err: Error) => toast.error('Fehler', err.message),
   });
 
   const sync = useMutation({
@@ -896,10 +896,10 @@ function EconomyLinksPanel({ guildId, slot }: { guildId: string; slot: string })
   const unlink = useMutation({
     mutationFn: (user: string) => api.del(`/api/v2/guilds/${guildId}/economy-links/${user}${qs}`),
     onSuccess: (_data, user) => {
-      toast.push({ variant: 'success', title: 'Entfernt', desc: `Economy-Link fuer ${user} wurde entfernt.` });
+      toast.success('Entfernt', `Economy-Link fuer ${user} wurde entfernt.`);
       void qc.invalidateQueries({ queryKey: ['economy-links', guildId, slot] });
     },
-    onError: (err: Error) => toast.push({ variant: 'danger', title: 'Fehler', desc: err.message }),
+    onError: (err: Error) => toast.error('Fehler', err.message),
   });
 
   return (

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, describeApiError } from '@/lib/api';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -162,15 +162,11 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
       setDirty(false);
       setConfirmClear(false);
       void qc.invalidateQueries({ queryKey: ['nitrado-restart-plan', guildId, slot] });
-      toast.push({
-        variant: 'success',
-        title: 'Synchronisierung gestartet',
-        desc: 'V-Bot gleicht den Plan jetzt mit den echten Nitrado-Aufgaben ab.',
-      });
+      toast.success('Synchronisierung gestartet', 'V-Bot gleicht den Plan jetzt mit den echten Nitrado-Aufgaben ab.');
     },
     onError: error => {
       const d = describeApiError(error);
-      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+      toast.error(d.title, d.desc);
     },
   });
 
@@ -183,15 +179,11 @@ export function NitradoRestartPlanner({ guildId, slot }: { guildId: string; slot
       setConfirmClear(false);
       setTimes([]);
       void qc.invalidateQueries({ queryKey: ['nitrado-restart-plan', guildId, slot] });
-      toast.push({
-        variant: 'success',
-        title: 'Bereinigung gestartet',
-        desc: 'Alle game_server_restart-Aufgaben werden bei Nitrado entfernt und danach remote verifiziert.',
-      });
+      toast.success('Bereinigung gestartet', 'Alle game_server_restart-Aufgaben werden bei Nitrado entfernt und danach remote verifiziert.');
     },
     onError: error => {
       const d = describeApiError(error);
-      toast.push({ variant: 'danger', title: d.title, desc: d.desc });
+      toast.error(d.title, d.desc);
     },
   });
 

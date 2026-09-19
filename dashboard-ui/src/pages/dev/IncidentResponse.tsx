@@ -17,7 +17,7 @@ import {
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useDevStatus } from '@/lib/useDevStatus';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { Card, CardHeader, CardTitle, CardDesc } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -151,23 +151,23 @@ export default function IncidentResponse() {
           action: pending.meta.action, reason, reAuth,
           idempotencyKey: newIdempotencyKey('activate'),
         });
-        toast.push({ variant: 'success', title: 'Aktiviert', desc: pending.meta.title });
+        toast.success('Aktiviert', pending.meta.title);
       } else if (pending.kind === 'deactivate') {
         await api.post('/api/v2/dev/incident/deactivate', {
           action: pending.meta.action, reason, reAuth,
         });
-        toast.push({ variant: 'success', title: 'Aufgehoben', desc: pending.meta.title });
+        toast.success('Aufgehoben', pending.meta.title);
       } else {
         await api.post('/api/v2/dev/incident/oneshot', {
           action: pending.meta.action, reason, reAuth,
           idempotencyKey: newIdempotencyKey('oneshot'),
         });
-        toast.push({ variant: 'success', title: 'Ausgefuehrt', desc: pending.meta.title });
+        toast.success('Ausgefuehrt', pending.meta.title);
       }
       setPending(null);
       await reload();
     } catch (e) {
-      toast.push({ variant: 'danger', title: 'Aktion fehlgeschlagen', desc: (e as Error).message });
+      toast.error('Aktion fehlgeschlagen', (e as Error).message);
     } finally {
       setBusy(false);
     }

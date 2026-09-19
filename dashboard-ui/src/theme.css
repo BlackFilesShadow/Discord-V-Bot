@@ -259,13 +259,6 @@ html[data-theme='ice'] .modal-dialog {
       0 16px 30px -24px rgba(0,0,0,0.82);
   }
 
-  .toast-container {
-    left: max(0.75rem, env(safe-area-inset-left));
-    right: max(0.75rem, env(safe-area-inset-right));
-    bottom: max(0.75rem, env(safe-area-inset-bottom));
-    width: auto;
-  }
-
   /* Mobile controls must keep a true 44px minimum hit area. 42px here had
      higher specificity than Tailwind's min-h-11 utilities for native inputs
      and caused real sub-44px touch targets in the authenticated mobile matrix. */

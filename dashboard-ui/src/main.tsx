@@ -8,7 +8,6 @@ import { DevSessionProvider } from './lib/devSession';
 import { BotAdminSessionProvider } from './lib/botAdminSession';
 import { ThemeProvider } from './lib/theme';
 import { DensityProvider } from './lib/density';
-import { ToastProvider } from './lib/toast';
 import { PinnedToolsProvider } from './lib/pinnedTools';
 import { RecentActionsProvider } from './lib/recentActions';
 import './index.css';
@@ -32,9 +31,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <DensityProvider>
                   <PinnedToolsProvider>
                     <RecentActionsProvider>
-                      <ToastProvider>
-                        <App />
-                      </ToastProvider>
+                      <App />
                     </RecentActionsProvider>
                   </PinnedToolsProvider>
                 </DensityProvider>

@@ -29,7 +29,7 @@ const apiClient = read('dashboard-ui/src/lib/api.ts');
 const server = read('src/dashboard/server.ts');
 const useDevStatus = read('dashboard-ui/src/lib/useDevStatus.ts');
 const auditLogsUi = read('dashboard-ui/src/pages/dev/AuditLogs.tsx');
-const toast = read('dashboard-ui/src/lib/toast.tsx');
+const toast = read('dashboard-ui/src/components/ui/Toast.tsx');
 
 const requiredStatus: Array<keyof StatusClass> = [
   'id', 'class', 'meaning', 'clientBehavior', 'uiExpectation', 'examples', 'status',
@@ -83,7 +83,7 @@ describe('Stage 29 dashboard error state matrix', () => {
     expect(useDevStatus).toContain('setBackoffMs');
     expect(auditLogsUi).toContain('describeApiError');
     expect(auditLogsUi).toContain('setData(null)');
-    expect(auditLogsUi).toContain("variant: 'danger'");
+    expect(auditLogsUi).toContain('toast.error(');
     expect(toast).toContain('Dedup');
   });
 });

@@ -6,7 +6,7 @@ import {
   nitradoDriftRetryDelay,
   shouldRetryNitradoDrift,
 } from '@/lib/nitradoDriftRetry';
-import { useToast } from '@/lib/toast';
+import { useToast } from '@/components/ui/Toast';
 import { Button } from '@/components/ui/Button';
 
 interface WhitelistDriftItem {
@@ -120,17 +120,13 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
       void qc.invalidateQueries({ queryKey: ['nitrado-drift', 'whitelist', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['nitrado-drift', 'bans', guildId, slot] });
       void qc.invalidateQueries({ queryKey: ['whitelist', guildId, slot] });
-      toast.push({
-        variant: 'success',
-        title: 'Abweichung aufgeloest',
-        desc: target.decision === 'ACCEPT_NITRADO'
-          ? 'Der aktuelle Nitrado-Zustand wurde als neue Wahrheit uebernommen.'
-          : 'Der V-Bot-Zustand wurde zur kontrollierten Wiederherstellung eingereiht.',
-      });
+      toast.success('Abweichung aufgeloest', target.decision === 'ACCEPT_NITRADO'
+        ? 'Der aktuelle Nitrado-Zustand wurde als neue Wahrheit uebernommen.'
+        : 'Der V-Bot-Zustand wurde zur kontrollierten Wiederherstellung eingereiht.');
     },
     onError: error => {
       const described = describeApiError(error);
-      toast.push({ variant: 'danger', title: described.title, desc: described.desc });
+      toast.error(described.title, described.desc);
     },
   });
 
@@ -161,7 +157,7 @@ export function NitradoDriftBanner({ guildId, slot }: { guildId: string; slot: s
     const reason = confirmationReason(label, target.decision);
     if (reason === null) return;
     if (reason.length < 3) {
-      toast.push({ variant: 'danger', title: 'Begruendung erforderlich', desc: 'Bitte mindestens 3 Zeichen angeben.' });
+      toast.error('Begruendung erforderlich', 'Bitte mindestens 3 Zeichen angeben.');
       return;
     }
     resolve.mutate({ ...target, reason } as ResolveTarget);

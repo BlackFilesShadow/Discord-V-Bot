@@ -233,23 +233,6 @@ html[data-theme='ice'] .card-premium[data-interactive='true']:hover {
   background: rgb(var(--color-danger) / 0.18);
 }
 
-.toast-item[data-variant='success'] {
-  background: linear-gradient(90deg, rgb(var(--color-ok) / 0.16), rgb(var(--color-bg-card) / 0.98) 40%);
-  border-left-color: rgb(var(--color-ok));
-}
-.toast-item[data-variant='warn'] {
-  background: linear-gradient(90deg, rgb(var(--color-warn) / 0.16), rgb(var(--color-bg-card) / 0.98) 40%);
-  border-left-color: rgb(var(--color-warn));
-}
-.toast-item[data-variant='danger'] {
-  background: linear-gradient(90deg, rgb(var(--color-danger) / 0.18), rgb(var(--color-bg-card) / 0.98) 40%);
-  border-left-color: rgb(var(--color-danger));
-}
-.toast-item[data-variant='info'] {
-  background: linear-gradient(90deg, rgb(var(--color-info) / 0.16), rgb(var(--color-bg-card) / 0.98) 40%);
-  border-left-color: rgb(var(--color-info));
-}
-
 /* Inputs/focus should pick up the new colour instead of falling back to grey. */
 html[data-theme='obsidian'] .input-premium:focus,
 html[data-theme='obsidian'] .input-premium:focus-visible,
