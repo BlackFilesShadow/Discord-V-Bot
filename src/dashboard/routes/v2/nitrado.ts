@@ -8,6 +8,7 @@
  */
 import { Router, type Response } from 'express';
 import { requireGuildPermission } from '../../middleware/auth';
+import { nitradoApiRateLimit } from '../../middleware/nitradoApiRateLimit';
 import {
   listSlots,
   createSlot,
@@ -114,7 +115,7 @@ nitradoRouter.get('/', requireGuildPermission('dashboard.access'), async (req, r
   });
 });
 
-nitradoRouter.post('/', requireGuildPermission('dashboard.access'), async (req, res) => {
+nitradoRouter.post('/', requireGuildPermission('dashboard.access'), nitradoApiRateLimit, async (req, res) => {
   const scope = req.guildScope!;
   const { slot, alias, token, nitradoServerId } = req.body ?? {};
   // Neue Slots sind auf MAX_GAME_SERVERS_PER_GUILD begrenzt (siehe gameServerScope.ts):
@@ -174,7 +175,7 @@ nitradoRouter.post('/', requireGuildPermission('dashboard.access'), async (req, 
   }
 });
 
-nitradoRouter.patch('/:slot/token', requireGuildPermission('dashboard.access'), async (req, res) => {
+nitradoRouter.patch('/:slot/token', requireGuildPermission('dashboard.access'), nitradoApiRateLimit, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -257,7 +258,7 @@ nitradoRouter.patch('/:slot/alias', requireGuildPermission('dashboard.access'), 
   res.json({ ok: true, slot: updated.slot, alias: updated.alias, alias5: updated.alias5 });
 });
 
-nitradoRouter.patch('/:slot/service', requireGuildPermission('dashboard.access'), async (req, res) => {
+nitradoRouter.patch('/:slot/service', requireGuildPermission('dashboard.access'), nitradoApiRateLimit, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
@@ -323,7 +324,7 @@ nitradoRouter.delete('/:slot', requireGuildPermission('dashboard.access'), async
   res.json({ ok: true, deletedId: id, orphanSummary });
 });
 
-nitradoRouter.get('/:slot/services', requireGuildPermission('dashboard.access'), async (req, res) => {
+nitradoRouter.get('/:slot/services', requireGuildPermission('dashboard.access'), nitradoApiRateLimit, async (req, res) => {
   const scope = req.guildScope!;
   const slot = Number(String(req.params.slot));
   if (!Number.isInteger(slot) || slot < 1 || slot > 5) { res.status(400).json({ error: 'slot 1..5' }); return; }
