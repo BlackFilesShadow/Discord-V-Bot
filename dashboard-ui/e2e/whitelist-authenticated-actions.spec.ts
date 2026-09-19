@@ -228,6 +228,7 @@ test.describe('Authenticated Whitelist actions', () => {
     });
 
     const entryRow = page.getByText('AlphaOne', { exact: true }).locator('xpath=ancestor::div[.//button][1]');
+    page.once('dialog', dialog => dialog.accept());
     await entryRow.getByRole('button').click();
     await expect.poll(() => matchingMutation(state.mutations, 'DELETE', `/api/v2/guilds/${GUILD_ID}/whitelist/AlphaOne`)).toBeTruthy();
     expect(matchingMutation(state.mutations, 'DELETE', `/api/v2/guilds/${GUILD_ID}/whitelist/AlphaOne`)).toMatchObject({
