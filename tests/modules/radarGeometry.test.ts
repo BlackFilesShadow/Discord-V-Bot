@@ -7,7 +7,9 @@ import {
   createPolygonGeometry,
   distanceInsideBoundary,
   geometryFitsMap,
+  near,
   polygonSelfIntersects,
+  sameGeometry,
 } from '../../src/modules/radar/geometry';
 
 describe('Radar-Zonengeometrie', () => {
@@ -65,5 +67,23 @@ describe('Radar-Zonengeometrie', () => {
     expect(createPolygonGeometry(bowTie)).toBeNull();
     const circle = createCircleGeometry(10, 10, 20);
     expect(geometryFitsMap('LIVONIA', circle!)).toBe(false);
+  });
+
+  it('erkennt strukturell gleiche Geometrien innerhalb der Toleranz und unterscheidet echte Positionsaenderungen', () => {
+    expect(near(100, 100.0009)).toBe(true);
+    expect(near(100, 100.002)).toBe(false);
+
+    const circleA = createCircleGeometry(100, 200, 50)!;
+    const circleB = createCircleGeometry(100.0005, 200, 50)!;
+    const circleMoved = createCircleGeometry(150, 200, 50)!;
+    expect(sameGeometry(circleA, circleB)).toBe(true);
+    expect(sameGeometry(circleA, circleMoved)).toBe(false);
+
+    const polygonA = createPolygonGeometry([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }])!;
+    const polygonB = createPolygonGeometry([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }])!;
+    const polygonMoved = createPolygonGeometry([{ x: 300, y: 300 }, { x: 400, y: 300 }, { x: 400, y: 400 }, { x: 300, y: 400 }])!;
+    expect(sameGeometry(polygonA, polygonB)).toBe(true);
+    expect(sameGeometry(polygonA, polygonMoved)).toBe(false);
+    expect(sameGeometry(circleA, polygonA)).toBe(false);
   });
 });

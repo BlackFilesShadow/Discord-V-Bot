@@ -201,6 +201,25 @@ export function altitudeContainsWithMargin(
     && altitude - EPSILON <= range.maxAltitudeMeters - marginMeters;
 }
 
+/** Vergleich mit kleiner Tolleranz gegen Gleitkomma-/Decimal-Rundung aus der DB. */
+export function near(a: number, b: number, epsilon = 0.001): boolean {
+  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= epsilon;
+}
+
+/**
+ * Strukturelle Gleichheit zweier Geometrien. Dient als Nachweis, dass eine
+ * Zone tatsächlich neu positioniert wurde, bevor sie z. B. nach einem
+ * Koordinatenrahmen-Wechsel wieder aktiv geschaltet werden darf.
+ */
+export function sameGeometry(a: RadarGeometry, b: RadarGeometry): boolean {
+  if (a.shape !== b.shape) return false;
+  if (a.shape === 'CIRCLE' && b.shape === 'CIRCLE') {
+    return near(a.centerX, b.centerX) && near(a.centerY, b.centerY) && near(a.radiusMeters, b.radiusMeters);
+  }
+  if (a.shape !== 'POLYGON' || b.shape !== 'POLYGON' || a.points.length !== b.points.length) return false;
+  return a.points.every((point, index) => near(point.x, b.points[index].x) && near(point.y, b.points[index].y));
+}
+
 export function geometryFitsMap(map: RadarMap, geometry: RadarGeometry): boolean {
   if (geometry.shape === 'CIRCLE') {
     return isPositionInsideMap(map, { x: geometry.minX, y: geometry.minY })

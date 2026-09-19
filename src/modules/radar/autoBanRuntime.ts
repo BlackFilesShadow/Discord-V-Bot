@@ -19,6 +19,8 @@ import {
   containsPositionWithMargin,
   createCircleGeometry,
   createPolygonGeometry,
+  near,
+  sameGeometry,
   type RadarGeometry,
   type RadarPoint,
 } from './geometry';
@@ -147,21 +149,6 @@ function currentGeometry(zone: ZoneForAutoBan): RadarGeometry | null {
     return createCircleGeometry(asNumber(zone.centerX), asNumber(zone.centerY), asNumber(zone.radiusMeters));
   }
   return createPolygonGeometry(zone.points.map(point => ({ x: asNumber(point.x), y: asNumber(point.y) })));
-}
-
-function near(a: number, b: number, epsilon = 0.001): boolean {
-  return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= epsilon;
-}
-
-function sameGeometry(a: RadarGeometry, b: RadarGeometry): boolean {
-  if (a.shape !== b.shape) return false;
-  if (a.shape === 'CIRCLE' && b.shape === 'CIRCLE') {
-    return near(a.centerX, b.centerX)
-      && near(a.centerY, b.centerY)
-      && near(a.radiusMeters, b.radiusMeters);
-  }
-  if (a.shape !== 'POLYGON' || b.shape !== 'POLYGON' || a.points.length !== b.points.length) return false;
-  return a.points.every((point, index) => near(point.x, b.points[index].x) && near(point.y, b.points[index].y));
 }
 
 function stringArray(value: JsonValue | null): string[] | null {
