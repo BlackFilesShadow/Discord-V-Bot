@@ -79,6 +79,7 @@ function circleZone(overrides: Record<string, unknown> = {}) {
     id: 'zone-1',
     guildId: GUILD_ID,
     nitradoConnId: CONN_ID,
+    coordinateFrameVersion: 2,
     channelId: CHANNEL_ID,
     rolePingEnabled: true,
     roleIds: [ROLE_ID],
@@ -127,6 +128,7 @@ beforeEach(() => {
       zone.guildId === where.guildId
       && zone.nitradoConnId === where.nitradoConnId
       && (!where.map || zone.map === undefined || zone.map === where.map)
+      && (where.coordinateFrameVersion === undefined || zone.coordinateFrameVersion === where.coordinateFrameVersion)
       && (!functionKey || zone.functions.some((entry: { functionKey: string }) => entry.functionKey === functionKey))
     ));
   });
@@ -149,6 +151,15 @@ describe('Radar-Worker', () => {
     expect(radarZoneFind).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ map: 'CHERNARUS', guildId: GUILD_ID, nitradoConnId: CONN_ID }),
     }));
+    expect(radarEventCreate).not.toHaveBeenCalled();
+  });
+
+  it('wertet eine ungepruefte Legacy-Koordinatenzone nie aus', async () => {
+    admEventFind.mockResolvedValue([scannedEvent()]);
+    availableZones = [circleZone({ coordinateFrameVersion: 1 })];
+
+    await runRadarRuntimeOnce();
+
     expect(radarEventCreate).not.toHaveBeenCalled();
   });
 

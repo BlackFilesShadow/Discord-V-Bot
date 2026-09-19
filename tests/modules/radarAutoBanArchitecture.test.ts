@@ -14,6 +14,7 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
   const fence = read('src/modules/radar/banFence.ts');
   const autoBanMigration = read('prisma/migrations/20260906003000_radar_safe_auto_ban/migration.sql');
   const precisionMigration = read('prisma/migrations/20260906213000_radar_precision_policy/migration.sql');
+  const coordinateFrameMigration = read('prisma/migrations/20260919013000_radar_coordinate_frame_v2/migration.sql');
   const route = read('src/dashboard/routes/v2/radar.ts');
   const editor = read('dashboard-ui/src/components/radar/ZoneEditor.tsx');
   const map = read('dashboard-ui/src/components/radar/DayzRadarMap.tsx');
@@ -141,6 +142,23 @@ describe('Radar Auto-Ban Architektur-Invarianten', () => {
     expect(map).toContain("map.addSource('coordinate-grid'");
     expect(map).toContain('gridSpacingForZoom');
     expect(map).toContain('X ${point.x.toFixed(1)} · Z ${point.y.toFixed(1)}');
+  });
+
+  it('korrigiert die Basemap-Z-Achse und laesst keine alte, uneindeutige Zone aktiv', () => {
+    expect(coordinates).toContain('export const RADAR_COORDINATE_FRAME_VERSION = 2');
+    expect(coordinates).toContain('const mercatorY = position.y - calibration.heightMeters / 2;');
+    expect(coordinates).toContain('const y = mercatorY + calibration.heightMeters / 2;');
+    expect(map).toContain('x: 0, y: calibration.heightMeters');
+    expect(map).toContain('x: calibration.widthMeters,\n      y: 0');
+    expect(coordinateFrameMigration).toContain('ADD COLUMN "coordinateFrameVersion" INTEGER NOT NULL DEFAULT 1');
+    expect(coordinateFrameMigration).toContain('"isActive" = FALSE');
+    expect(coordinateFrameMigration).toContain('"autoBanEnabled" = FALSE');
+    expect(coordinateFrameMigration).toContain("'RADAR_COORDINATE_FRAME_REVIEW_REQUIRED'");
+    expect(coordinateFrameMigration).toContain('ALTER COLUMN "coordinateFrameVersion" SET DEFAULT 2');
+    expect(route).toContain('coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION');
+    expect(radarRuntime).toContain('coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION');
+    expect(autoBanRuntime).toContain('ZONE_COORDINATE_FRAME_REVIEW_REQUIRED');
+    expect(editor).toContain('Diese Zone wurde vor der Korrektur der Karten-Z-Achse gespeichert');
   });
 
   it('schreibt den unveraenderlichen Server-Generation-Fence vor dem Ban-Outbox-Enqueue', () => {

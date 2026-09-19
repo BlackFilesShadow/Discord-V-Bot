@@ -1,5 +1,10 @@
 export type RadarMap = 'CHERNARUS' | 'LIVONIA' | 'SAKHAL';
 
+// Version 1 bound the top edge of the north-oriented Bohemia basemaps to
+// DayZ Z=0. Version 2 keeps the DayZ coordinate frame intact: Z=max is north
+// (image top) and Z=0 is south (image bottom).
+export const RADAR_COORDINATE_FRAME_VERSION = 2;
+
 export interface DayzPosition {
   /** Horizontal DayZ world coordinate X. */
   x: number;
@@ -99,7 +104,7 @@ export function isPositionInsideMap(map: RadarMap, position: Pick<DayzPosition, 
 export function dayzToMapLibre(map: RadarMap, position: Pick<DayzPosition, 'x' | 'y'>): readonly [number, number] {
   const calibration = RADAR_MAP_CALIBRATIONS[map];
   const mercatorX = position.x - calibration.widthMeters / 2;
-  const mercatorY = calibration.heightMeters / 2 - position.y;
+  const mercatorY = position.y - calibration.heightMeters / 2;
   const longitude = (mercatorX / EARTH_RADIUS) * (180 / Math.PI);
   const latitude = Math.atan(Math.sinh(mercatorY / EARTH_RADIUS)) * (180 / Math.PI);
   return [longitude, latitude];
@@ -111,7 +116,7 @@ export function mapLibreToDayz(map: RadarMap, longitude: number, latitude: numbe
   const mercatorX = EARTH_RADIUS * longitude * Math.PI / 180;
   const mercatorY = EARTH_RADIUS * Math.log(Math.tan(Math.PI / 4 + (latitude * Math.PI / 180) / 2));
   const x = mercatorX + calibration.widthMeters / 2;
-  const y = calibration.heightMeters / 2 - mercatorY;
+  const y = mercatorY + calibration.heightMeters / 2;
   const position = {
     x: Math.abs(x) <= COORDINATE_EPSILON ? 0 : Math.abs(x - calibration.widthMeters) <= COORDINATE_EPSILON ? calibration.widthMeters : x,
     y: Math.abs(y) <= COORDINATE_EPSILON ? 0 : Math.abs(y - calibration.heightMeters) <= COORDINATE_EPSILON ? calibration.heightMeters : y,

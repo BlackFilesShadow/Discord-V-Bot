@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
+import { RADAR_COORDINATE_FRAME_VERSION } from '@radar-coordinates';
 
 const DayzRadarMap = lazy(async () => ({ default: (await import('./DayzRadarMap')).DayzRadarMap }));
 
@@ -22,6 +23,7 @@ export interface EditableRadarZone {
   version: number;
   name: string;
   map: RadarMap;
+  coordinateFrameVersion?: number;
   isActive: boolean;
   channelId: string;
   rolePingEnabled: boolean;
@@ -200,6 +202,11 @@ export function ZoneEditor({
 
   return (
     <div className="space-y-7" aria-label="Radar-Zoneneditor">
+      {zone && (zone.coordinateFrameVersion ?? 1) < RADAR_COORDINATE_FRAME_VERSION && (
+        <p role="alert" className="rounded-lg border border-warning/50 bg-warning/10 px-4 py-3 text-sm text-warning">
+          Diese Zone wurde vor der Korrektur der Karten-Z-Achse gespeichert und vorsorglich deaktiviert. Prüfe ihre Lage und Geometrie auf der Karte, bevor du sie erneut speicherst.
+        </p>
+      )}
       <div className="grid gap-5 lg:grid-cols-2">
         <label className="space-y-2 text-sm text-muted">
           <span>Zonenname</span>

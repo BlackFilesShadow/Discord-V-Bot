@@ -7,7 +7,7 @@ import prisma from '../../database/prisma';
 import { config } from '../../config';
 import { logAudit, logger } from '../../utils/logger';
 import { isValidBattleyeGuid } from '../../utils/guid';
-import { isPositionInsideMap } from '../../shared/radarCoordinates';
+import { isPositionInsideMap, RADAR_COORDINATE_FRAME_VERSION } from '../../shared/radarCoordinates';
 import { addBan, isBanActive, type BanClient } from '../bans/banRegistry';
 import { hashBanIdentifier } from '../bans/banTarget';
 import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';
@@ -46,6 +46,7 @@ type ZoneForAutoBan = {
   nitradoConnId: string;
   name: string;
   map: RadarMap;
+  coordinateFrameVersion: number;
   shape: 'CIRCLE' | 'POLYGON';
   isActive: boolean;
   autoBanEnabled: boolean;
@@ -243,6 +244,9 @@ async function validateInsideTransaction(
   if (!zone) return { ok: false, code: 'ZONE_NOT_FOUND' };
   if (!zone.isActive || !zone.autoBanEnabled || !zone.autoBanEnabledAt) {
     return { ok: false, code: 'ZONE_OR_AUTOBAN_DISABLED' };
+  }
+  if (zone.coordinateFrameVersion !== RADAR_COORDINATE_FRAME_VERSION) {
+    return { ok: false, code: 'ZONE_COORDINATE_FRAME_REVIEW_REQUIRED' };
   }
   if (zone.version !== event.zoneVersionSnapshot) return { ok: false, code: 'ZONE_VERSION_CHANGED' };
   if (zone.map !== event.zoneMapSnapshot) return { ok: false, code: 'ZONE_MAP_CHANGED' };

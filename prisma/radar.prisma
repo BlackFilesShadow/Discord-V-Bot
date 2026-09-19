@@ -56,6 +56,7 @@ model RadarZone {
   nitradoConnId       String
   name                String         @db.VarChar(120)
   map                 RadarMap
+  coordinateFrameVersion Int          @default(2)
   shape               RadarZoneShape
   isActive            Boolean        @default(true)
   autoBanEnabled      Boolean        @default(false)
@@ -93,6 +94,7 @@ model RadarZone {
 
   @@index([guildId, nitradoConnId, map, isActive])
   @@index([configId, map, isActive])
+  @@index([configId, map, isActive, coordinateFrameVersion])
   @@index([guildId, nitradoConnId, autoBanEnabled])
 }
 

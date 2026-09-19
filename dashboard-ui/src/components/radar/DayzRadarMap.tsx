@@ -302,10 +302,10 @@ export function DayzRadarMap({
     setMapReady(false);
     setError(null);
     const calibration = RADAR_MAP_CALIBRATIONS[activeMap];
-    const northWest = [...dayzToMapLibre(activeMap, { x: 0, y: 0 })] as [number, number];
+    const northWest = [...dayzToMapLibre(activeMap, { x: 0, y: calibration.heightMeters })] as [number, number];
     const southEast = [...dayzToMapLibre(activeMap, {
       x: calibration.widthMeters,
-      y: calibration.heightMeters,
+      y: 0,
     })] as [number, number];
     const southWest: [number, number] = [northWest[0], southEast[1]];
     const northEast: [number, number] = [southEast[0], northWest[1]];

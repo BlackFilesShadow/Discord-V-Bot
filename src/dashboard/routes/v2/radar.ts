@@ -22,7 +22,7 @@ import {
   type RadarPoint,
 } from '../../../modules/radar/geometry';
 import { lockRadarScope } from '../../../modules/radar/lock';
-import type { RadarMap } from '../../../shared/radarCoordinates';
+import { RADAR_COORDINATE_FRAME_VERSION, type RadarMap } from '../../../shared/radarCoordinates';
 
 export const radarRouter = Router({ mergeParams: true });
 
@@ -244,6 +244,7 @@ function zoneResponse(zone: RadarZoneWithRelations) {
     id: zone.id,
     name: zone.name,
     map: zone.map,
+    coordinateFrameVersion: zone.coordinateFrameVersion,
     isActive: zone.isActive,
     channelId: zone.channelId,
     rolePingEnabled: zone.rolePingEnabled,
@@ -362,6 +363,7 @@ radarRouter.post('/zones', requireGuildPermission('radar.manage'), async (req, r
         nitradoConnId: scope.connId,
         name: data.name,
         map: data.map,
+        coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION,
         shape: data.geometry.shape,
         isActive: data.isActive,
         autoBanEnabled: data.autoBanEnabled,
@@ -441,6 +443,7 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
       data: {
         name: data.name,
         map: data.map,
+        coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION,
         shape: data.geometry.shape,
         isActive: data.isActive,
         autoBanEnabled: data.autoBanEnabled,
