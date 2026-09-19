@@ -49,19 +49,65 @@ describe('Server-Ban Outbox', () => {
     const payload = parseServerBanJobPayload(args.data.payload);
     expect(payload.banId).toBe('ban-1');
     expect(payload.encryptedIdentifier).toBeDefined();
+    expect(payload.encryptedRemoteIdentifier).toBeUndefined();
     expect(payload.encryptedIdentifier).not.toContain(raw);
     expect(decrypt(payload.encryptedIdentifier!, KEY)).toBe(raw);
 
     const persisted = identityUpsert.mock.calls[0][0] as {
       where: { banId: string };
-      create: { banId: string; identifierEnc: string };
-      update: { identifierEnc: string };
+      create: { banId: string; identifierEnc: string; subjectIdentifierEnc: string | null };
+      update: { identifierEnc: string; subjectIdentifierEnc: string | null };
     };
     expect(persisted.where).toEqual({ banId: 'ban-1' });
     expect(persisted.create.banId).toBe('ban-1');
     expect(persisted.create.identifierEnc).toBe(payload.encryptedIdentifier);
+    expect(persisted.create.subjectIdentifierEnc).toBeNull();
     expect(persisted.update.identifierEnc).toBe(payload.encryptedIdentifier);
+    expect(persisted.update.subjectIdentifierEnc).toBeNull();
     expect(decrypt(persisted.create.identifierEnc, KEY)).toBe(raw);
+  });
+
+  it('trennt bei gefencetem Radar-Auto-Ban interne GUID und sichtbaren Nitrado-Spielernamen', async () => {
+    const { client, create, identityUpsert } = makeClient();
+    const subjectGuid = 'K_8HNTXPqt_fEXivA1ULIyMFAAfqxt4uiXBVG_C3_pU=';
+    (client as any).radarAutoBanBanFence = {
+      findFirst: jest.fn(async () => ({ banId: 'ban-radar' })),
+    };
+
+    await expect(enqueueServerBanAdd(
+      client,
+      SCOPE,
+      'ban-radar',
+      subjectGuid,
+      KEY,
+      { remoteIdentifier: 'Cemsmom' },
+    )).resolves.toBe(true);
+
+    const job = create.mock.calls[0][0] as { data: { payload: unknown } };
+    const payload = parseServerBanJobPayload(job.data.payload);
+    expect(payload.radarAutoBan).toBe(true);
+    expect(decrypt(payload.encryptedIdentifier!, KEY)).toBe(subjectGuid);
+    expect(decrypt(payload.encryptedRemoteIdentifier!, KEY)).toBe('Cemsmom');
+
+    const persisted = identityUpsert.mock.calls[0][0] as {
+      create: { identifierEnc: string; subjectIdentifierEnc: string | null };
+    };
+    expect(decrypt(persisted.create.identifierEnc, KEY)).toBe('Cemsmom');
+    expect(decrypt(persisted.create.subjectIdentifierEnc!, KEY)).toBe(subjectGuid);
+  });
+
+  it('verweigert einen abweichenden Remote-Identifier ohne aktiven Radar-Fence', async () => {
+    const { client, create, identityUpsert } = makeClient();
+    await expect(enqueueServerBanAdd(
+      client,
+      SCOPE,
+      'ban-1',
+      'subject-guid',
+      KEY,
+      { remoteIdentifier: 'Cemsmom' },
+    )).rejects.toThrow('nur fuer gefencete Radar-Auto-Bans');
+    expect(identityUpsert).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('aktualisiert die verschluesselte Reconciliation-Identitaet auch bei aktiv dedupliziertem ADD', async () => {
@@ -71,8 +117,9 @@ describe('Server-Ban Outbox', () => {
 
     expect(identityUpsert).toHaveBeenCalledTimes(1);
     expect(create).not.toHaveBeenCalled();
-    const args = identityUpsert.mock.calls[0][0] as { create: { identifierEnc: string } };
+    const args = identityUpsert.mock.calls[0][0] as { create: { identifierEnc: string; subjectIdentifierEnc: string | null } };
     expect(decrypt(args.create.identifierEnc, KEY)).toBe('PlayerOne');
+    expect(args.create.subjectIdentifierEnc).toBeNull();
   });
 
   it('REMOVE persistiert nur die Ban-ID und keinen Reconciliation-Identifier', async () => {
