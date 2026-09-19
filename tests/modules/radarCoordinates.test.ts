@@ -6,6 +6,7 @@ import {
   mapLibreToDayz,
   parseAdmDayzPosition,
   parseAdmTerritoryFlagPosition,
+  radarImageCoordinates,
   type RadarMap,
 } from '../../src/shared/radarCoordinates';
 
@@ -70,6 +71,38 @@ describe('Radar-Koordinatenkern', () => {
       expect(restored?.y).toBeCloseTo(point.y, 6);
       expect(restored?.altitude).toBeNull();
     }
+  });
+
+  it.each(Object.keys(RADAR_MAP_CALIBRATIONS) as RadarMap[])('orientiert DayZ-Z fuer %s explizit nach Norden statt gespiegelt', map => {
+    const { widthMeters, heightMeters } = RADAR_MAP_CALIBRATIONS[map];
+    const [, southLatitude] = dayzToMapLibre(map, { x: widthMeters / 2, y: 0 });
+    const [, northLatitude] = dayzToMapLibre(map, { x: widthMeters / 2, y: heightMeters });
+
+    expect(northLatitude).toBeGreaterThan(southLatitude);
+  });
+
+  it.each(Object.keys(RADAR_MAP_CALIBRATIONS) as RadarMap[])('ordnet die Basemap-Ecken fuer %s top-left clockwise auf kanonisches X/Z', map => {
+    const { widthMeters, heightMeters } = RADAR_MAP_CALIBRATIONS[map];
+    const [northWest, northEast, southEast, southWest] = radarImageCoordinates(map);
+    const restore = (point: [number, number]) => mapLibreToDayz(map, point[0], point[1]);
+
+    expect(restore(northWest)?.x).toBeCloseTo(0, 6);
+    expect(restore(northWest)?.y).toBeCloseTo(heightMeters, 6);
+    expect(restore(northEast)?.x).toBeCloseTo(widthMeters, 6);
+    expect(restore(northEast)?.y).toBeCloseTo(heightMeters, 6);
+    expect(restore(southEast)?.x).toBeCloseTo(widthMeters, 6);
+    expect(restore(southEast)?.y).toBeCloseTo(0, 6);
+    expect(restore(southWest)?.x).toBeCloseTo(0, 6);
+    expect(restore(southWest)?.y).toBeCloseTo(0, 6);
+  });
+
+  it('bildet die produktiv beobachtete Chernarus-X/Z-Position ohne Vertikalspiegelung ab', () => {
+    const position = parseAdmDayzPosition('3703.8, 5996.6, 402.0');
+    expect(position).not.toBeNull();
+    const mapPoint = dayzToMapLibre('CHERNARUS', position!);
+    const restored = mapLibreToDayz('CHERNARUS', mapPoint[0], mapPoint[1]);
+    expect(restored?.x).toBeCloseTo(3703.8, 6);
+    expect(restored?.y).toBeCloseTo(5996.6, 6);
   });
 
   it('erzeugt ausschliesslich map-aware iZurvive-Links aus gueltigen X/Z-Koordinaten', () => {
