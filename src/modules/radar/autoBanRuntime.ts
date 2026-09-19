@@ -25,6 +25,7 @@ import {
   type RadarPoint,
 } from './geometry';
 import { lockRadarScope } from './lock';
+import { radarZoneEventCreated } from './autoBanSignal';
 
 const POLL_INTERVAL_MS = 15_000;
 const LEASE_MS = 60_000;
@@ -38,6 +39,7 @@ const POSITION_EPSILON_METERS = 0.05;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let unsubscribeFastPath: (() => void) | null = null;
 
 type JsonValue = Prisma.JsonValue;
 
@@ -569,11 +571,18 @@ export function startRadarAutoBanRuntime(): void {
   if (timer) return;
   timer = setInterval(() => { void runRadarAutoBanOnce(); }, POLL_INTERVAL_MS);
   timer.unref?.();
+  // Fast-Path: sofort anstossen statt bis zu 15s auf das naechste Intervall
+  // zu warten, sobald runtime.ts ein neues RadarZoneEvent persistiert hat.
+  // Sicherheitslogik, Locks und Retry bleiben unveraendert; das Intervall
+  // bleibt zusaetzlich als Fallback bestehen.
+  unsubscribeFastPath = radarZoneEventCreated.subscribe(() => { void runRadarAutoBanOnce(); });
   void runRadarAutoBanOnce();
-  logger.info(`Radar-Auto-Ban gestartet (Intervall ${POLL_INTERVAL_MS / 1000}s, horizontaler Sicherheitsrand ${AUTO_BAN_SAFETY_MARGIN_METERS}m).`);
+  logger.info(`Radar-Auto-Ban gestartet (Intervall ${POLL_INTERVAL_MS / 1000}s Fallback + Event-Fast-Path, horizontaler Sicherheitsrand ${AUTO_BAN_SAFETY_MARGIN_METERS}m).`);
 }
 
 export function stopRadarAutoBanRuntime(): void {
+  unsubscribeFastPath?.();
+  unsubscribeFastPath = null;
   if (!timer) return;
   clearInterval(timer);
   timer = null;

@@ -143,7 +143,20 @@ jest.mock('../../src/modules/nitrado/jobLease', () => ({
   transitionClaimedNitradoJob: mockTransitionClaim,
 }));
 
-import { executeJob, drainAndStopJobWorker, nitradoConnectionLockKeys } from '../../src/modules/nitrado/jobWorker';
+const jobSignalUnsubscribe = jest.fn();
+const jobSignalSubscribe = jest.fn((..._args: unknown[]) => jobSignalUnsubscribe);
+jest.mock('../../src/modules/nitrado/jobWorkerSignal', () => ({
+  __esModule: true,
+  nitradoJobEnqueued: { subscribe: (...args: unknown[]) => jobSignalSubscribe(...args), fire: jest.fn() },
+}));
+
+import {
+  executeJob,
+  drainAndStopJobWorker,
+  nitradoConnectionLockKeys,
+  startNitradoJobWorker,
+  stopNitradoJobWorker,
+} from '../../src/modules/nitrado/jobWorker';
 import { identityHash } from '../../src/modules/linking/identity';
 
 function claim(id: string): TestClaim {
@@ -507,6 +520,24 @@ describe('KEEP-004 — RESTART_IF_DOWN respektiert administrative Zustaende', ()
 describe('NIT-010 — drainAndStopJobWorker', () => {
   it('resolved ohne laufenden Poll sofort', async () => {
     await expect(drainAndStopJobWorker(200)).resolves.toBeUndefined();
+  });
+});
+
+describe('Enqueue-Fast-Path: sofortiges Poll-Signal statt Warten auf das 10s-Intervall', () => {
+  afterEach(() => {
+    stopNitradoJobWorker();
+  });
+
+  it('abonniert das Enqueue-Signal beim Start und meldet es beim Stop wieder ab', () => {
+    jobSignalSubscribe.mockClear();
+    jobSignalUnsubscribe.mockClear();
+
+    startNitradoJobWorker();
+    expect(jobSignalSubscribe).toHaveBeenCalledTimes(1);
+    expect(jobSignalUnsubscribe).not.toHaveBeenCalled();
+
+    stopNitradoJobWorker();
+    expect(jobSignalUnsubscribe).toHaveBeenCalledTimes(1);
   });
 });
 

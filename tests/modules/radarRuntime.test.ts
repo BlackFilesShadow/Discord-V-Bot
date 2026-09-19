@@ -17,6 +17,12 @@ jest.mock('../../src/dashboard/clientRegistry', () => ({
 jest.mock('../../src/dashboard/socket/emitter', () => ({ __esModule: true, emitRadarEvent: jest.fn() }));
 jest.mock('../../src/utils/logger', () => ({ __esModule: true, logger: { error: jest.fn() } }));
 
+const fastPathFire = jest.fn();
+jest.mock('../../src/modules/radar/autoBanSignal', () => ({
+  __esModule: true,
+  radarZoneEventCreated: { subscribe: jest.fn(() => jest.fn()), fire: (...args: unknown[]) => fastPathFire(...args) },
+}));
+
 import prisma from '../../src/database/prisma';
 import { tryGetDashboardClient } from '../../src/dashboard/clientRegistry';
 import { emitRadarEvent } from '../../src/dashboard/socket/emitter';
@@ -152,6 +158,7 @@ describe('Radar-Worker', () => {
       where: expect.objectContaining({ map: 'CHERNARUS', guildId: GUILD_ID, nitradoConnId: CONN_ID }),
     }));
     expect(radarEventCreate).not.toHaveBeenCalled();
+    expect(fastPathFire).not.toHaveBeenCalled();
   });
 
   it('wertet eine ungepruefte Legacy-Koordinatenzone nie aus', async () => {
@@ -189,6 +196,9 @@ describe('Radar-Worker', () => {
     expect(realtimeEmit).toHaveBeenCalledWith(expect.objectContaining({
       radarEventId: 'radar-event-1', functionKey: 'PLAYER_DETECTION', x: 100, y: 200,
     }));
+    // Fast-Path: nur fuer das tatsaechlich neu persistierte Event feuern, nicht
+    // fuer die durch die Unique-Constraint dedupliziert abgewiesene zweite Zone.
+    expect(fastPathFire).toHaveBeenCalledTimes(1);
   });
 
   it('erzeugt bei Spieler-Erkennung plus Bann-Spieler-Erkennung nur das punitive kanonische Ereignis', async () => {

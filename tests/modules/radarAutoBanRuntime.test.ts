@@ -70,8 +70,19 @@ jest.mock('../../src/utils/logger', () => ({
   logger: { info: jest.fn(), error: jest.fn() },
 }));
 
+const fastPathUnsubscribe = jest.fn();
+const fastPathSubscribe = jest.fn((..._args: unknown[]) => fastPathUnsubscribe);
+jest.mock('../../src/modules/radar/autoBanSignal', () => ({
+  __esModule: true,
+  radarZoneEventCreated: { subscribe: (...args: unknown[]) => fastPathSubscribe(...args), fire: jest.fn() },
+}));
+
 import { RadarAutoBanStatus } from '@prisma/client';
-import { runRadarAutoBanOnce } from '../../src/modules/radar/autoBanRuntime';
+import {
+  runRadarAutoBanOnce,
+  startRadarAutoBanRuntime,
+  stopRadarAutoBanRuntime,
+} from '../../src/modules/radar/autoBanRuntime';
 
 function event(overrides: AnyRow = {}): AnyRow {
   return {
@@ -336,5 +347,23 @@ describe('Radar Auto-Ban Runtime', () => {
         autoBanLastError: 'ALREADY_ACTIVE_BAN',
       }),
     }));
+  });
+});
+
+describe('Event-Fast-Path: sofortiges Poll-Signal statt Warten auf das 15s-Intervall', () => {
+  afterEach(() => {
+    stopRadarAutoBanRuntime();
+  });
+
+  it('abonniert das RadarZoneEvent-Signal beim Start und meldet es beim Stop wieder ab', () => {
+    fastPathSubscribe.mockClear();
+    fastPathUnsubscribe.mockClear();
+
+    startRadarAutoBanRuntime();
+    expect(fastPathSubscribe).toHaveBeenCalledTimes(1);
+    expect(fastPathUnsubscribe).not.toHaveBeenCalled();
+
+    stopRadarAutoBanRuntime();
+    expect(fastPathUnsubscribe).toHaveBeenCalledTimes(1);
   });
 });

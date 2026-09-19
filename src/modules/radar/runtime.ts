@@ -27,6 +27,7 @@ import {
   type RadarGeometry,
   type RadarPoint,
 } from './geometry';
+import { radarZoneEventCreated } from './autoBanSignal';
 
 const POLL_INTERVAL_MS = 15_000;
 const SCAN_BATCH = 200;
@@ -363,6 +364,10 @@ async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): 
             select: { id: true },
           });
           await emitPersistedRadarEvent(created.id);
+          // Sofort-Trigger: der Auto-Ban-Worker muss nicht bis zu 15s auf
+          // sein naechstes Poll-Intervall warten, um dieses Event zu sehen.
+          // Der Intervall bleibt unveraendert als Fallback bestehen.
+          radarZoneEventCreated.fire();
         } catch (error) {
           if ((error as { code?: string }).code !== 'P2002') throw error;
         }
