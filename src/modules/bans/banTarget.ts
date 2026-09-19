@@ -12,6 +12,7 @@
 
 import { timingSafeEqual } from 'crypto';
 import { identityHash } from '../linking/identity';
+import { decrypt } from '../../utils/security';
 
 export interface BanTargetScope {
   guildId: string;
@@ -93,4 +94,55 @@ export function matchesBanIdentifier(
     const actual = Buffer.from(candidate, 'hex');
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   });
+}
+
+/**
+ * Entschluesselt einen gespeicherten Remote-Identifier fuer die Reconciliation.
+ * Fuer normale Banns (isDisplayNameIdentifier=false, Default) muss das Ergebnis
+ * weiterhin per HMAC zu identityHash passen -- das schuetzt vor Korruption/
+ * Verwechslung. Radar-Auto-Banns hinterlegen bei Nitrado bewusst den
+ * Spielernamen statt der GUID (ServerBanEntry.remoteIdentifierIsName); dort
+ * WUERDE dieser Abgleich nie passen, deshalb wird der banId-gebunden
+ * gespeicherte Wert dann direkt vertraut.
+ */
+export function decryptTrustedBanIdentifier(
+  identifierEnc: string,
+  identityHash: string,
+  secret: string,
+  isDisplayNameIdentifier = false,
+): string | null {
+  let identifier: string;
+  try {
+    identifier = decrypt(identifierEnc, secret).trim();
+  } catch {
+    return null;
+  }
+  if (!identifier) return null;
+  if (isDisplayNameIdentifier) return identifier;
+  return matchesBanIdentifier(identifier, identityHash, secret) ? identifier : null;
+}
+
+function normalizeBanIdentifierForCompare(value: string): string {
+  return value.trim().toLocaleLowerCase('en-US');
+}
+
+/**
+ * Findet den exakten Remote-Identifier fuer einen Bann. Mit bekanntem
+ * storedIdentifier (z.B. via decryptTrustedBanIdentifier) wird case-insensitiv
+ * exakt verglichen -- das ist die kanonische Wahrheit, u.a. fuer Radar-Auto-
+ * Banns, deren Remote-Wert (Name) nicht per HMAC gegen identityHash geprueft
+ * werden kann. Ohne storedIdentifier bleibt der Legacy-Fallback ueber die HMAC-
+ * Identitaet erhalten.
+ */
+export function findRemoteBanIdentifier(
+  remoteIdentifiers: string[],
+  identityHash: string,
+  storedIdentifier: string | null,
+  secret: string,
+): string | null {
+  if (storedIdentifier) {
+    const expected = normalizeBanIdentifierForCompare(storedIdentifier);
+    return remoteIdentifiers.find(identifier => normalizeBanIdentifierForCompare(identifier) === expected) ?? null;
+  }
+  return remoteIdentifiers.find(identifier => matchesBanIdentifier(identifier, identityHash, secret)) ?? null;
 }

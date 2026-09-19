@@ -42,6 +42,13 @@ export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 
 export interface ServerBanJobPayload {
   banId: string;
+  /**
+   * Der bei Nitrado tatsaechlich einzutragende Bannlisten-Wert. Fuer normale
+   * Banns ist das identisch mit dem Wert, aus dem identityHash gebildet wurde.
+   * Radar-Auto-Bans hinterlegen hier bewusst den Spielernamen statt der GUID
+   * (siehe ServerBanEntry.remoteIdentifierIsName) -- identityHash bleibt davon
+   * unberuehrt immer GUID-basiert.
+   */
   encryptedIdentifier?: string;
   radarAutoBan?: true;
 }

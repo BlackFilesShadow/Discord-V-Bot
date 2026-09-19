@@ -2152,6 +2152,11 @@ model ServerBanEntry {
   liftedAt          DateTime?
   active            Boolean   @default(true)
   appliedRemotely   Boolean   @default(false)
+  // true = der bei Nitrado hinterlegte Remote-Identifier ist bewusst der
+  // Spielername statt der GUID (Radar-Auto-Ban); identityHash bleibt dabei
+  // immer GUID-basiert, dieser Remote-Wert ist daher NICHT gegen identityHash
+  // HMAC-verifizierbar und muss ueber ServerBanRemoteIdentity vertraut werden.
+  remoteIdentifierIsName Boolean @default(false)
   updatedAt         DateTime  @updatedAt
 
   @@unique([guildId, nitradoConnId, identityHash])

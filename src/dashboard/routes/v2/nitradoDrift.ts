@@ -80,10 +80,18 @@ async function readBinding(scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>
   }
 }
 
-function safeDecryptIdentifier(identifierEnc: string, identityHash: string): string | null {
+function safeDecryptIdentifier(
+  identifierEnc: string,
+  identityHash: string,
+  isDisplayNameIdentifier = false,
+): string | null {
   try {
     const identifier = decrypt(identifierEnc, config.security.encryptionKey).trim();
     if (!identifier) return null;
+    // Radar-Auto-Bans hinterlegen bei Nitrado bewusst den Spielernamen statt
+    // der GUID (ServerBanEntry.remoteIdentifierIsName); dieser Wert kann nie
+    // per HMAC zu identityHash passen und wird dann banId-gebunden vertraut.
+    if (isDisplayNameIdentifier) return identifier;
     return matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey) ? identifier : null;
   } catch {
     return null;
@@ -342,7 +350,7 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
       appliedRemotely: true,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
-    select: { id: true, identityHash: true, reason: true, bannedAt: true, expiresAt: true },
+    select: { id: true, identityHash: true, reason: true, bannedAt: true, expiresAt: true, remoteIdentifierIsName: true },
     orderBy: { bannedAt: 'desc' },
   });
   const identities = local.length > 0
@@ -354,7 +362,7 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
   const identityByBan = new Map(identities.map(row => [row.banId, row.identifierEnc]));
   const storedIdentifierByBan = new Map(local.map(row => {
     const enc = identityByBan.get(row.id);
-    return [row.id, enc ? safeDecryptIdentifier(enc, row.identityHash) : null] as const;
+    return [row.id, enc ? safeDecryptIdentifier(enc, row.identityHash, row.remoteIdentifierIsName) : null] as const;
   }));
 
   const firstMissing = local.filter(row =>
@@ -444,7 +452,7 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
       appliedRemotely: true,
       OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
     },
-    select: { id: true, identityHash: true },
+    select: { id: true, identityHash: true, remoteIdentifierIsName: true },
   });
   if (!local) {
     res.status(409).json({ error: 'Lokaler Ban-Drift-Eintrag wurde zwischenzeitlich geaendert. Bitte neu laden.' });
@@ -455,7 +463,9 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
     where: { banId },
     select: { identifierEnc: true },
   });
-  const storedIdentifier = identity ? safeDecryptIdentifier(identity.identifierEnc, local.identityHash) : null;
+  const storedIdentifier = identity
+    ? safeDecryptIdentifier(identity.identifierEnc, local.identityHash, local.remoteIdentifierIsName)
+    : null;
 
   let remoteIdentifiers: string[];
   try {
