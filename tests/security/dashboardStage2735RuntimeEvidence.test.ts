@@ -78,7 +78,7 @@ describe('Stage 27-35 dashboard runtime evidence', () => {
     const ui = read(slotUi);
     expect(ui).toContain("from '@/lib/api'");
     expect(ui).toContain('describeApiError');
-    expect(ui).toContain("title: 'Gespeichert'");
+    expect(ui).toContain("toast.success('Gespeichert'");
     expect(ui).toContain('onError:');
     expect(ui).toContain('settings-save-error');
     expect(ui).toContain('settings-load-error');

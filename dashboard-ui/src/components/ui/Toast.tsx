@@ -46,8 +46,14 @@ export function Toaster({ children }: { children: ReactNode }) {
   const idRef = useRef(0);
 
   const push = useCallback((message: string, kind: ToastKind = 'info', durationMs = 4500): void => {
-    const id = ++idRef.current;
-    setItems(arr => [...arr, { id, message, kind, duration: durationMs }]);
+    // Dedup: eine identische Meldung (kind+message), die erneut gepusht wird
+    // waehrend sie noch sichtbar ist, stapelt sich nicht erneut. Verhindert
+    // Toast-Fluten bei Polling-Storms (z.B. wiederholte 429/5xx-Fehler).
+    setItems(arr => {
+      if (arr.some(t => t.kind === kind && t.message === message)) return arr;
+      const id = ++idRef.current;
+      return [...arr, { id, message, kind, duration: durationMs }];
+    });
   }, []);
 
   const dismiss = useCallback((id: number): void => {

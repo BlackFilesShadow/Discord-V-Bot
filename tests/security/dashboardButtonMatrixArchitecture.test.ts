@@ -50,6 +50,10 @@ const matrix = JSON.parse(read('docs/dashboard-button-matrix.json')) as ButtonMa
 // inventory are reviewed explicitly below instead of rewriting the historical
 // button matrix and its inventoriedMainSha.
 const HISTORICAL_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsPanel.tsx';
+// Removed while unifying the dashboard onto a single toast system (its own
+// push/dismiss button was never on the majority components/ui/Toast.tsx
+// path); no replacement file takes over its button role.
+const HISTORICAL_TOAST_LIB = 'dashboard-ui/src/lib/toast.tsx';
 const CURRENT_VIRTUAL_ACCOUNT_PANEL = 'dashboard-ui/src/components/economy/VirtualAccountsControlPanel.tsx';
 const CURRENT_SYSTEM_ACCOUNTS_OVERVIEW = 'dashboard-ui/src/components/economy/SystemAccountsOverview.tsx';
 const CURRENT_BLACK_MARKET_PANEL = 'dashboard-ui/src/components/economy/BlackMarketPanel.tsx';
@@ -73,6 +77,7 @@ const CURRENT_SLOT_PAGE_ARCHITECTURE = 'dashboard-ui/src/slot-page-architecture.
 
 const REVIEWED_POST_STAGE_FILES = new Set([
   HISTORICAL_VIRTUAL_ACCOUNT_PANEL,
+  HISTORICAL_TOAST_LIB,
   CURRENT_VIRTUAL_ACCOUNT_PANEL,
   CURRENT_SYSTEM_ACCOUNTS_OVERVIEW,
   CURRENT_BLACK_MARKET_PANEL,
