@@ -35,6 +35,11 @@ export const nitradoDriftRouter = Router({ mergeParams: true });
 type DriftDecision = 'ACCEPT_NITRADO' | 'RESTORE_VBOT';
 const DRIFT_CONFIRM_DELAY_MS = 350;
 
+interface StoredBanIdentity {
+  remoteIdentifier: string;
+  subjectIdentifier: string;
+}
+
 function norm(value: string): string {
   return value.trim().toLocaleLowerCase('en-US');
 }
@@ -80,19 +85,32 @@ async function readBinding(scope: Pick<GuildScope, 'guildId' | 'actorDiscordId'>
   }
 }
 
-function safeDecryptIdentifier(identifierEnc: string, identityHash: string): string | null {
+function safeDecryptBanIdentity(
+  identifierEnc: string,
+  subjectIdentifierEnc: string | null,
+  identityHash: string,
+): StoredBanIdentity | null {
   try {
-    const identifier = decrypt(identifierEnc, config.security.encryptionKey).trim();
-    if (!identifier) return null;
-    return matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey) ? identifier : null;
+    const remoteIdentifier = decrypt(identifierEnc, config.security.encryptionKey).trim();
+    const subjectIdentifier = decrypt(
+      subjectIdentifierEnc ?? identifierEnc,
+      config.security.encryptionKey,
+    ).trim();
+    if (!remoteIdentifier || !subjectIdentifier) return null;
+    if (!matchesBanIdentifier(subjectIdentifier, identityHash, config.security.encryptionKey)) return null;
+    return { remoteIdentifier, subjectIdentifier };
   } catch {
     return null;
   }
 }
 
-function banPresentRemotely(remoteIdentifiers: string[], identityHash: string, storedIdentifier: string | null): boolean {
-  if (storedIdentifier) {
-    const expected = norm(storedIdentifier);
+function banPresentRemotely(
+  remoteIdentifiers: string[],
+  identityHash: string,
+  storedIdentity: StoredBanIdentity | null,
+): boolean {
+  if (storedIdentity) {
+    const expected = norm(storedIdentity.remoteIdentifier);
     return remoteIdentifiers.some(identifier => norm(identifier) === expected);
   }
   return remoteIdentifiers.some(identifier =>
@@ -348,17 +366,22 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
   const identities = local.length > 0
     ? await prisma.serverBanRemoteIdentity.findMany({
         where: { banId: { in: local.map(row => row.id) } },
-        select: { banId: true, identifierEnc: true },
+        select: { banId: true, identifierEnc: true, subjectIdentifierEnc: true },
       })
     : [];
-  const identityByBan = new Map(identities.map(row => [row.banId, row.identifierEnc]));
-  const storedIdentifierByBan = new Map(local.map(row => {
-    const enc = identityByBan.get(row.id);
-    return [row.id, enc ? safeDecryptIdentifier(enc, row.identityHash) : null] as const;
+  const identityByBan = new Map(identities.map(row => [row.banId, row]));
+  const storedIdentityByBan = new Map(local.map(row => {
+    const identity = identityByBan.get(row.id);
+    return [
+      row.id,
+      identity
+        ? safeDecryptBanIdentity(identity.identifierEnc, identity.subjectIdentifierEnc, row.identityHash)
+        : null,
+    ] as const;
   }));
 
   const firstMissing = local.filter(row =>
-    !banPresentRemotely(remoteIdentifiers, row.identityHash, storedIdentifierByBan.get(row.id) ?? null),
+    !banPresentRemotely(remoteIdentifiers, row.identityHash, storedIdentityByBan.get(row.id) ?? null),
   );
   let confirmedMissing = firstMissing;
   if (firstMissing.length > 0) {
@@ -380,7 +403,7 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
       const stillActiveIds = new Set(stillActive.map(row => row.id));
       confirmedMissing = firstMissing.filter(row =>
         stillActiveIds.has(row.id)
-        && !banPresentRemotely(secondRemote, row.identityHash, storedIdentifierByBan.get(row.id) ?? null),
+        && !banPresentRemotely(secondRemote, row.identityHash, storedIdentityByBan.get(row.id) ?? null),
       );
     } catch (error) {
       if (isAdmBindingFenceError(error)) {
@@ -394,17 +417,19 @@ nitradoDriftRouter.get('/bans', requireGuildPermission('bans.manage'), async (re
   }
 
   const items = confirmedMissing.map(row => {
-    const identifier = storedIdentifierByBan.get(row.id) ?? null;
+    const identity = storedIdentityByBan.get(row.id) ?? null;
     return {
       kind: 'BAN' as const,
       banId: row.id,
-      identifier,
-      identifierHint: identifier ? null : row.identityHash.slice(0, 12),
+      // Sichtbare Banliste zeigt die tatsaechliche Remote-Identitaet. Bei Radar
+      // ist das der Spielername; die GUID bleibt nur intern als Subject erhalten.
+      identifier: identity?.remoteIdentifier ?? null,
+      identifierHint: identity ? null : row.identityHash.slice(0, 12),
       reason: row.reason,
       bannedAt: row.bannedAt,
       expiresAt: row.expiresAt,
       state: 'REMOTE_MISSING' as const,
-      canRestore: Boolean(identifier),
+      canRestore: Boolean(identity),
     };
   });
 
@@ -453,9 +478,11 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
 
   const identity = await prisma.serverBanRemoteIdentity.findUnique({
     where: { banId },
-    select: { identifierEnc: true },
+    select: { identifierEnc: true, subjectIdentifierEnc: true },
   });
-  const storedIdentifier = identity ? safeDecryptIdentifier(identity.identifierEnc, local.identityHash) : null;
+  const storedIdentity = identity
+    ? safeDecryptBanIdentity(identity.identifierEnc, identity.subjectIdentifierEnc, local.identityHash)
+    : null;
 
   let remoteIdentifiers: string[];
   try {
@@ -466,18 +493,14 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
     res.status(502).json({ error: 'Banliste konnte nicht frisch von Nitrado gelesen werden.' });
     return;
   }
-  if (banPresentRemotely(remoteIdentifiers, local.identityHash, storedIdentifier)) {
+  if (banPresentRemotely(remoteIdentifiers, local.identityHash, storedIdentity)) {
     res.status(409).json({ error: 'Die Abweichung besteht nicht mehr: Der Ban ist wieder auf Nitrado vorhanden.' });
     return;
   }
 
-  let restoreIdentifier: string | null = null;
-  if (decision === 'RESTORE_VBOT') {
-    restoreIdentifier = storedIdentifier;
-    if (!restoreIdentifier) {
-      res.status(409).json({ error: 'Der verschluesselte Gameserver-Identifier fehlt oder ist ungueltig. Automatische Wiederherstellung ist nicht sicher moeglich.' });
-      return;
-    }
+  if (decision === 'RESTORE_VBOT' && !storedIdentity) {
+    res.status(409).json({ error: 'Die verschluesselte Server-Ban-Identitaet fehlt oder ist ungueltig. Automatische Wiederherstellung ist nicht sicher moeglich.' });
+    return;
   }
 
   try {
@@ -525,12 +548,14 @@ nitradoDriftRouter.post('/bans/resolve', requireGuildPermission('bans.manage'), 
       // Zeile bereits veraendert haben (siehe fresh-Check oben) -- ohne diesen
       // Count-Check wuerde hier trotzdem ein doppelter Restore-Job eingereiht.
       if (flagged.count === 0) return { resolved: false, queued: false };
+      const remoteDiffers = norm(storedIdentity!.remoteIdentifier) !== norm(storedIdentity!.subjectIdentifier);
       const queued = await enqueueServerBanAdd(
         tx as unknown as BanOutboxClient,
         { guildId: scope.guildId, nitradoConnId: connId },
         banId,
-        restoreIdentifier!,
+        storedIdentity!.subjectIdentifier,
         config.security.encryptionKey,
+        remoteDiffers ? { remoteIdentifier: storedIdentity!.remoteIdentifier } : undefined,
       );
       return { resolved: true, queued };
     }));
