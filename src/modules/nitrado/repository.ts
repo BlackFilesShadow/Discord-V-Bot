@@ -185,7 +185,47 @@ export async function createSlot(args: {
   return rowToConn(row);
 }
 
-export async function deleteSlot(guildId: GuildId, slot: number): Promise<NitradoConnId | null> {
+export interface NitradoSlotDeleteOrphanSummary {
+  /** PENDING/RUNNING Outbox-Jobs, die per DB-Cascade sofort mitgeloescht werden. */
+  pendingRemoteJobs: number;
+  /** Aktive, noch NICHT remote angewendete Bans -- ihr Durchsetzungs-Intent geht ohne Spur verloren. */
+  unenforcedActiveBans: number;
+  /** Radar-Zonen mit aktivem Auto-Ban, die ab jetzt auf eine geloeschte Connection zeigen. */
+  radarAutoBanZones: number;
+}
+
+/**
+ * ServerBanEntry/NitradoDriftNotice/Radar* besitzen bewusst keine DB-Relation
+ * zu NitradoConnection (Scoping erfolgt im Code, siehe NitradoAdmCursor-
+ * Kommentar im Schema) und werden hier NICHT geloescht -- Ban-/Radar-Historie
+ * bleibt fuer Audit-Zwecke erhalten. NitradoJob dagegen cascadet per Schema
+ * sofort mit; ein noch nicht ausgefuehrter SERVER_BAN_ADD/WHITELIST_ADD-Job
+ * verschwindet dadurch spurlos. Der Aufrufer bekommt diese Zahlen, um sie in
+ * sein bestehendes NITRADO_SLOT_DELETED-Audit-Log aufzunehmen, statt dass ein
+ * Disconnect fuer Betreiber unsichtbar Durchsetzungs-Intents verwirft.
+ */
+async function summarizeOrphanRiskBeforeDelete(
+  guildId: GuildId,
+  targetId: NitradoConnId,
+): Promise<NitradoSlotDeleteOrphanSummary> {
+  const [pendingRemoteJobs, unenforcedActiveBans, radarAutoBanZones] = await Promise.all([
+    prisma.nitradoJob.count({
+      where: { guildId, nitradoConnId: targetId, status: { in: ['PENDING', 'RUNNING'] } },
+    }),
+    prisma.serverBanEntry.count({
+      where: { guildId, nitradoConnId: targetId, active: true, appliedRemotely: false },
+    }),
+    prisma.radarZone.count({
+      where: { guildId, nitradoConnId: targetId, autoBanEnabled: true },
+    }),
+  ]);
+  return { pendingRemoteJobs, unenforcedActiveBans, radarAutoBanZones };
+}
+
+export async function deleteSlot(
+  guildId: GuildId,
+  slot: number,
+): Promise<{ id: NitradoConnId; orphanSummary: NitradoSlotDeleteOrphanSummary } | null> {
   const row = await prisma.nitradoConnection.findUnique({
     where: { guildId_slot: { guildId, slot } },
     select: { id: true },
@@ -202,6 +242,8 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
       select: { id: true },
     });
     if (!current) return null;
+
+    const orphanSummary = await summarizeOrphanRiskBeforeDelete(guildId, targetId);
 
     const scopedKnowledge = await prisma.guildKnowledgeScope.findMany({
       where: { guildId, nitradoConnId: targetId },
@@ -221,7 +263,7 @@ export async function deleteSlot(guildId: GuildId, slot: number): Promise<Nitrad
       prisma.nitradoAdmBindingState.deleteMany({ where: { guildId, nitradoConnId: targetId } }),
       prisma.nitradoConnection.deleteMany({ where: { id: targetId, guildId, slot } }),
     ]);
-    return targetId;
+    return { id: targetId, orphanSummary };
   });
 }
 

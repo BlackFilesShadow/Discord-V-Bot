@@ -132,6 +132,23 @@ describe('Nitrado restart task dashboard API', () => {
     expect(getTaskActionCatalog).toHaveBeenCalledWith('12345');
   });
 
+  // Regression (FIX-8): Nitrado erlaubt keine explizite Zeitzone bei
+  // Task-Erstellung -- ein Task uebernimmt stillschweigend den jeweils
+  // aktuellen Konto-Default. Zwei Tasks mit identischer HH:MM-Anzeige koennen
+  // dadurch real zu unterschiedlichen Zeitpunkten feuern. "synchronized"
+  // durfte diese Zeitzonen-Drift nicht verschweigen.
+  it('reports not synchronized when matching restart tasks use different timezones', async () => {
+    prismaMock.nitradoRestartPlan.findUnique.mockResolvedValue({ enabled: true, mode: 'INTERVAL', intervalHours: 4, startTime: '00:00', times: ['00:00', '04:00'], revision: 3, syncStatus: 'SYNCED', lastSyncAt: new Date('2026-09-18T00:00:00Z'), lastSyncError: null, nitradoServerId: '12345' });
+    listTasks.mockResolvedValue([
+      { id: 10, hour: '0', minute: '0', day: '*', month: '*', weekday: '*', action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'Europe/Berlin' },
+      { id: 11, hour: '4', minute: '0', day: '*', month: '*', weekday: '*', action_method: 'game_server_restart', last_run: null, next_run: null, timezone: 'UTC' },
+    ]);
+    const res = await request(app()).get(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`);
+    expect(res.status).toBe(200);
+    expect(res.body.remote.synchronized).toBe(false);
+    expect(res.body.remote.restartTasks.map((row: { timezone: string | null }) => row.timezone)).toEqual(['Europe/Berlin', 'UTC']);
+  });
+
   it('rejects malformed restart plans before creating any durable work', async () => {
     const res = await request(app()).put(`/api/v2/guilds/${GUILD}/nitrado-tasks/restart-plan?slot=1`).send({ mode: 'INTERVAL', intervalHours: 5, startTime: '00:00' });
     expect(res.status).toBe(400);

@@ -11,10 +11,15 @@ describe('polling feed delivery idempotency architecture', () => {
 
     expect(manager).toContain("from './feedDeliveryClaim'");
     expect((manager.match(/await deliverFeedItemOnce\(/g) ?? [])).toHaveLength(4);
-    expect(manager).toContain("deliverFeedItemOnce(feed.id, raw.id, () => send(embed))");
-    expect(manager).toContain("deliverFeedItemOnce(feed.id, marker, () => send(embed))");
-    expect(manager).toContain("deliverFeedItemOnce(feed.id, item.id, () => send(embed))");
+    expect(manager).toContain("deliverFeedItemOnce(feed.id, raw.id, () => send(embed, raw.id))");
+    expect(manager).toContain("deliverFeedItemOnce(feed.id, marker, () => send(embed, marker))");
+    expect(manager).toContain("deliverFeedItemOnce(feed.id, item.id, () => send(embed, item.id))");
     expect(manager).not.toContain('await send(embed);');
+    // Jede Zustellung traegt zusaetzlich einen stabilen, feed+item-gebundenen
+    // Discord-Nonce, damit ein Retry nach einer Netzwerk-Ambiguitaet (Antwort
+    // verloren, Nachricht aber evtl. bereits erstellt) nicht dupliziert.
+    expect(manager).toContain('nonce: feedItemNonce(feed.id, itemId)');
+    expect(manager).toContain('enforceNonce: true');
   });
 
   test('warns instead of silently dropping backlog entries beyond the 5-item post cap', () => {
@@ -37,6 +42,12 @@ describe('polling feed delivery idempotency architecture', () => {
     expect(webhook).toContain('claimReplayKey');
     expect(webhook).toContain('releaseReplayKey');
     expect(helper).not.toContain('webhook:');
+    // Derselbe Nonce-Schutz wie beim Polling-Pfad: claimHash identifiziert
+    // bereits eindeutig diese Zustellung und wird (gekuerzt) als Discord-Nonce
+    // mitgegeben, damit ein Retry nach einer Netzwerk-Ambiguitaet nicht
+    // dupliziert.
+    expect(webhook).toContain("nonce: claimHash.replace(/^webhook:/, '').slice(0, 25)");
+    expect(webhook).toContain('enforceNonce: true');
   });
 
   test('runs bounded claim cleanup from the existing normal-feed scheduler only', () => {

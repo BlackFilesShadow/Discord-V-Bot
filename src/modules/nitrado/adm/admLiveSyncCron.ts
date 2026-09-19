@@ -27,7 +27,7 @@ import {
   type AdmPersistClient,
   type AdmSourceMeta,
 } from './serverLogIngestor';
-import { newDateContext, resolveBaseDate, type AdmDateContext } from './admLineParser';
+import { newDateContext, resolveBaseDate, startsWithAdmSessionHeader, type AdmDateContext } from './admLineParser';
 import { verifyLinkChallengesInAdmText } from '../../linking/admChallengeVerifier';
 import type { LinkClient } from '../../linking/linkService';
 import { resumeAutoPausedGameplayFeeds } from '../../gameplayFeeds/autoPauseRecovery';
@@ -75,6 +75,13 @@ type CursorFileState = {
  * same filename and byte size. Size-only candidate detection would miss that
  * rotation forever. A newer mtime on an otherwise fully consumed same-size
  * file is therefore treated as a new generation and must restart at byte 0.
+ *
+ * This only covers the exact-size-match case. A replacement that happens to
+ * be a DIFFERENT size (most commonly larger) than the old, fully consumed
+ * generation is intentionally NOT decided here -- size/mtime alone cannot
+ * distinguish it from organic growth of the same ongoing session. That case
+ * is instead caught content-based in ingestFile() via
+ * startsWithAdmSessionHeader() on the first read at the resumed offset.
  */
 export function shouldRestartReusedAdmFile(file: AdmFile, cursor: CursorFileState): boolean {
   return file.modified_at > cursor.lastModifiedAt
@@ -240,16 +247,23 @@ async function baselineCurrentFile(
   file: AdmFile,
 ): Promise<boolean> {
   const remotePath = resolveAdmRemoteFilePath(profileDir, file);
-  let newOffset = file.size;
+  let newOffset = 0;
   let tail = '';
   if (file.size > 0) {
     const length = Math.min(BASELINE_TAIL_BYTES, file.size);
     const start = file.size - length;
     tail = await downloadValidatedRange(client, conn.nitradoServerId, remotePath, start, length);
     const newline = tail.lastIndexOf('\n');
-    if (newline >= 0) {
-      newOffset = start + Buffer.byteLength(tail.slice(0, newline + 1), 'utf8');
-    }
+    // Kein Zeilenumbruch im gesamten Tail-Fenster gefunden -- die letzte
+    // (moeglicherweise einzige) Zeile darin ist evtl. noch nicht vollstaendig
+    // geschrieben. Der inkrementelle Pfad bewegt eine angeschnittene
+    // Schlusszeile nie ueber den Cursor hinaus; die Baseline muss defensiv
+    // genauso am Fenster-Start bleiben statt die ganze Datei als sicher
+    // konsumiert zu markieren -- sonst koennte ein noch nicht geflushter
+    // Header/erstes Ereignis permanent uebersprungen werden.
+    newOffset = newline >= 0
+      ? start + Buffer.byteLength(tail.slice(0, newline + 1), 'utf8')
+      : start;
   }
 
   const sourceIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
@@ -283,7 +297,7 @@ async function ingestFile(
   if (!Number.isSafeInteger(file.size) || file.size < 0) throw new Error(`Ungueltige ADM-Dateigroesse fuer ${file.name}`);
   const sourceIdentity = admBindingFileIdentity(conn.bindingVersion, file.name);
   const remotePath = resolveAdmRemoteFilePath(profileDir, file);
-  const resetAtStart = resetCursor || startOffset > file.size;
+  let resetAtStart = resetCursor || startOffset > file.size;
   let offset = resetAtStart ? 0 : startOffset;
   let context = await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone);
   let rangeReads = 0;
@@ -299,6 +313,28 @@ async function ingestFile(
     );
     rangeReads += 1;
     if (chunk.length === 0) break;
+
+    // Groesse/mtime allein erkennen eine gleichnamige, GROESSER gewordene
+    // Ersatzdatei nicht zuverlaessig als Rotation (siehe
+    // shouldRestartReusedAdmFile) -- organisches Wachstum derselben Session
+    // sieht identisch aus. DayZ beginnt jede neue Session aber deterministisch
+    // mit einer frischen "AdminLog started on ..."-Kopfzeile. Taucht sie im
+    // ersten Chunk eines eigentlich fortsetzenden Reads auf (offset > 0), ist
+    // das ein eindeutiges nachtraegliches Rotations-Signal: der bereits
+    // gelesene Chunk wird verworfen, der Cursor auf Byte 0 rebased und ab dort
+    // neu gelesen, BEVOR irgendetwas aus dem falschen Byte-Bereich persistiert
+    // oder der Datumskontext vom alten Tag uebernommen wird.
+    if (!resetAtStart && offset > 0 && rangeReads === 1 && startsWithAdmSessionHeader(chunk)) {
+      logger.warn(
+        `ADM-Live-Sync ${conn.id}: ${file.name} zeigt eine neue "AdminLog started on"-Kopfzeile ab Byte ${offset} `
+        + 'trotz fortsetzender Groessen-/mtime-Heuristik; Cursor wird als Sicherheitsnetz auf Byte 0 rebased.',
+      );
+      resetAtStart = true;
+      offset = 0;
+      rangeReads = 0;
+      context = await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone);
+      continue;
+    }
 
     const parsedResult = ingestChunk(chunk, offset, { fileName: file.name, dateCtx: context });
     const result = resetAtStart && rangeReads === 1
@@ -326,7 +362,22 @@ async function ingestFile(
       logger.info(`ADM-Live-Sync ${conn.id}: ${result.events.length} Event(s) aus ${file.name} verarbeitet (Bytes ${offset}-${result.newOffset}, Binding ${conn.bindingVersion}).`);
     }
 
-    if (result.newOffset <= offset) break;
+    if (result.newOffset <= offset) {
+      if (chunk.length >= length) {
+        // Eine einzelne ADM-Zeile ueberschreitet die volle angeforderte
+        // Range-Groesse ohne Zeilenumbruch darin -- ingestChunk kann daraus
+        // keine vollstaendige Zeile extrahieren. Ein stilles break wuerde auf
+        // jedem kuenftigen Poll denselben Byte-Bereich erneut anfordern und
+        // diese Datei (und via Chronologie-Fence auch juengere Dateien)
+        // dauerhaft unsichtbar blockieren. Ein Fehler macht den Stillstand
+        // stattdessen sichtbar (Dashboard/Diagnose ueber recordAdmSourceError).
+        throw new Error(
+          `ADM-Zeile in ${file.name} ab Byte ${offset} ueberschreitet die maximale Range-Groesse `
+          + `(${RANGE_BYTES} Byte) ohne Zeilenumbruch; Ingestion fuer diese Datei blockiert.`,
+        );
+      }
+      break;
+    }
     offset = result.newOffset;
     context = result.events.length > 0
       ? await dateContextForOffset(conn, sourceIdentity, file.name, offset, timeZone)

@@ -95,6 +95,24 @@ describe('NitradoClient whitelist settings safety', () => {
     expect(requestMock).toHaveBeenCalledTimes(1);
   });
 
+  // Regression: addToWhitelist() prüfte Duplikate bisher case-sensitiv
+  // (list.includes), waehrend removeFromWhitelist/addToBanlist/removeFromBanlist
+  // durchgaengig case-insensitiv vergleichen. Ein Re-Add mit anderer Gross-/
+  // Kleinschreibung haette so einen doppelten Eintrag erzeugt.
+  it('erkennt einen bereits vorhandenen Eintrag unabhaengig von Gross-/Kleinschreibung und schreibt kein Duplikat', async () => {
+    requestMock
+      .mockResolvedValueOnce(settings('PlayerOne\r\nPlayerTwo'))
+      .mockResolvedValueOnce(settings('PlayerOne\r\nPlayerTwo'));
+    const client = new NitradoClient('token-1234');
+
+    await expect(client.addToWhitelist('123', 'playerone')).resolves.toBeUndefined();
+
+    // Nur 1x GET (Read-Modify erkennt No-Op) + 1x GET (Verify) -- kein POST,
+    // also kein Duplikat und keine unnoetige Remote-Mutation.
+    expect(requestMock).toHaveBeenCalledTimes(2);
+    expect(requestMock.mock.calls.every(([args]) => (args as { method: string }).method === 'GET')).toBe(true);
+  });
+
   it('quittiert Whitelist-Remove erst nach bestaetigtem Remote-Post-Read', async () => {
     requestMock
       .mockResolvedValueOnce(settings('PlayerOne\r\nPlayerTwo'))

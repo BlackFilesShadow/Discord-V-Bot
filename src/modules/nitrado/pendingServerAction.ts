@@ -44,6 +44,19 @@ export interface PendingServerActionClient {
 
 const FORBIDDEN_KEY = /(?:^|_)(?:token|secret|password|authorization|api[_-]?key|encryptedtoken)(?:$|_)/i;
 
+/**
+ * camelCase/PascalCase (inkl. ALL-CAPS-Akronyme wie "APIKey"/"TOKEN") nach
+ * snake_case. Ein einfaches "vor jedem Grossbuchstaben `_` einfuegen" zerlegt
+ * ALL-CAPS-Substrings wie "API" in "_a_p_i" und zerreisst damit genau die
+ * Substrings, gegen die FORBIDDEN_KEY prueft.
+ */
+function toSnakeCase(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2')
+    .toLowerCase();
+}
+
 function assertPayloadContainsNoSecrets(value: unknown, path = 'payload', seen = new Set<object>()): void {
   if (value === null || value === undefined) return;
   if (typeof value !== 'object') return;
@@ -56,7 +69,7 @@ function assertPayloadContainsNoSecrets(value: unknown, path = 'payload', seen =
   }
 
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    if (FORBIDDEN_KEY.test(key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`))) {
+    if (FORBIDDEN_KEY.test(toSnakeCase(key))) {
       throw new Error(`PendingServerAction darf keine Secrets enthalten (${path}.${key}).`);
     }
     assertPayloadContainsNoSecrets(nested, `${path}.${key}`, seen);

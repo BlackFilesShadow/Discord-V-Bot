@@ -187,6 +187,13 @@ export async function deliverWebhookPayload(
       ...(pingPrefix ? { content: pingPrefix } : {}),
       embeds: [embed],
       allowedMentions: { roles: roleIds, parse: [] },
+      // claimHash identifiziert bereits eindeutig genau diese Zustellung
+      // (Feed+Timestamp+Body). Ohne stabilen Nonce koennte ein Retry nach
+      // einer Netzwerk-Ambiguitaet (Antwort verloren, Nachricht aber evtl.
+      // bereits erstellt) denselben Webhook-Post duplizieren -- Discord
+      // dedupliziert stattdessen selbst anhand desselben Nonce.
+      nonce: claimHash.replace(/^webhook:/, '').slice(0, 25),
+      enforceNonce: true,
     });
   } catch (error) {
     // Discord hat die Nachricht nicht angenommen. Nur in diesem Fall darf der

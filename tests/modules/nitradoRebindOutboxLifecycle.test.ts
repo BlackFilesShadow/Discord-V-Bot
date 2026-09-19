@@ -18,6 +18,7 @@ function makeClient(args: {
     count: Array.isArray(query?.where?.id?.in) ? query.where.id.in.length : 3,
   }));
   const updateWhitelist = jest.fn(async () => ({ count: 4 }));
+  const deleteWhitelistPendingRemovals = jest.fn(async () => ({ count: 1 }));
   const updateBans = jest.fn(async (query: any) => ({ count: query?.where?.id?.in ? query.where.id.in.length : 2 }));
   const updateZones = jest.fn(async () => ({ count: 1 }));
   const updateEvents = jest.fn(async () => ({ count: 2 }));
@@ -32,7 +33,7 @@ function makeClient(args: {
       findFirst,
       updateMany: updateJobs,
     },
-    whitelistEntry: { updateMany: updateWhitelist },
+    whitelistEntry: { updateMany: updateWhitelist, deleteMany: deleteWhitelistPendingRemovals },
     serverBanEntry: { updateMany: updateBans },
     serverBanRemoteIdentity: { deleteMany: deleteSecrets },
     radarZone: { updateMany: updateZones },
@@ -52,6 +53,7 @@ function makeClient(args: {
     findFences,
     updateFences,
     deleteSecrets,
+    deleteWhitelistPendingRemovals,
   };
 }
 
@@ -62,6 +64,7 @@ const BASE_RADAR_COUNTS = {
   radarBansDeactivated: 0,
   radarBanSecretsDeleted: 0,
   radarBanAddJobsCancelled: 0,
+  whitelistPendingRemovalsFinalized: 1,
 };
 
 describe('Nitrado-1U service-rebind outbox lifecycle', () => {
@@ -128,6 +131,7 @@ describe('Nitrado-1U service-rebind outbox lifecycle', () => {
       radarBansDeactivated: 1,
       radarBanSecretsDeleted: 1,
       radarBanAddJobsCancelled: 1,
+      whitelistPendingRemovalsFinalized: 1,
     });
 
     expect(findManyJobs).toHaveBeenCalledWith(expect.objectContaining({
@@ -192,5 +196,32 @@ describe('Nitrado-1U service-rebind outbox lifecycle', () => {
     expect(updateJobs).toHaveBeenCalledTimes(1);
     expect(updateWhitelist).toHaveBeenCalledTimes(1);
     expect(updateBans).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression (FIX-7): ein WHITELIST_REMOVE-Job wird unten via
+  // CANCEL_ON_REBIND_OPERATIONS immer cancelled, aber vorher liess der Reset
+  // PENDING_REMOVE-Zeilen bewusst unangetastet (sie duerfen nie zu LOCAL_ONLY
+  // zurueck). Ohne eine eigene Aufloesung blieb die Zeile dauerhaft verwaist
+  // liegen und blockierte ein sofortiges Re-Add fuer den neuen Service als
+  // "superseded". Der Fix loescht PENDING_REMOVE-Zeilen beim Rebind explizit --
+  // exakt wie whitelistSyncCron.ts es tut, sobald eine Entfernung remote
+  // bestaetigt ist (der neue Service enthaelt den Identifier garantiert nicht).
+  it('finalizes (deletes) orphaned PENDING_REMOVE whitelist rows instead of leaving them stuck', async () => {
+    const { client, updateWhitelist, deleteWhitelistPendingRemovals } = makeClient();
+
+    await prepareNitradoRemoteStateForServiceRebind(client, SCOPE);
+
+    expect(updateWhitelist).toHaveBeenCalledWith({
+      where: { guildId: 'guild-a', nitradoConnId: 'conn-a', syncState: { not: 'PENDING_REMOVE' } },
+      data: { syncState: 'LOCAL_ONLY', lastSyncedAt: null },
+    });
+    expect(deleteWhitelistPendingRemovals).toHaveBeenCalledWith({
+      where: { guildId: 'guild-a', nitradoConnId: 'conn-a', syncState: 'PENDING_REMOVE' },
+    });
+    // Beide laufen vor der Outbox-Barriere (die den zugehoerigen
+    // WHITELIST_REMOVE-Job cancelt), damit alles atomar in derselben
+    // Transaktion committet.
+    expect(updateWhitelist.mock.invocationCallOrder[0])
+      .toBeLessThan(deleteWhitelistPendingRemovals.mock.invocationCallOrder[0]);
   });
 });

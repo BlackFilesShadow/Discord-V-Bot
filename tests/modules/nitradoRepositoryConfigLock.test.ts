@@ -14,6 +14,9 @@ const bindingCreate = jest.fn();
 const bindingUpdate = jest.fn();
 const bindingDeleteMany = jest.fn();
 const profileUpdateMany = jest.fn();
+const nitradoJobCount = jest.fn();
+const serverBanEntryCount = jest.fn();
+const radarZoneCount = jest.fn();
 const transaction = jest.fn();
 const acquireConfigLock = jest.fn();
 const releaseConfigLock = jest.fn();
@@ -56,6 +59,9 @@ jest.mock('../../src/database/prisma', () => ({
       deleteMany: bindingDeleteMany,
     },
     nitradoAdmProfileConfig: { updateMany: profileUpdateMany },
+    nitradoJob: { count: nitradoJobCount },
+    serverBanEntry: { count: serverBanEntryCount },
+    radarZone: { count: radarZoneCount },
     $transaction: transaction,
   },
 }));
@@ -130,6 +136,9 @@ beforeEach(() => {
   });
   bindingDeleteMany.mockReturnValue(Promise.resolve({ count: 1 }));
   profileUpdateMany.mockResolvedValue({ count: 1 });
+  nitradoJobCount.mockResolvedValue(0);
+  serverBanEntryCount.mockResolvedValue(0);
+  radarZoneCount.mockResolvedValue(0);
   transaction.mockImplementation(async (arg: unknown) => {
     if (typeof arg === 'function') {
       return (arg as (client: typeof mockTx) => Promise<unknown>)(mockTx);
@@ -250,7 +259,10 @@ describe('Nitrado-1C/1M/1S/1U repository config/worker serialization', () => {
   });
 
   it('holds the lock through cleanup and removes the ADM binding state', async () => {
-    await expect(deleteSlot(GUILD as never, 1)).resolves.toBe(CONN);
+    await expect(deleteSlot(GUILD as never, 1)).resolves.toEqual({
+      id: CONN,
+      orphanSummary: { pendingRemoteJobs: 0, unenforcedActiveBans: 0, radarAutoBanZones: 0 },
+    });
 
     expect(scopeFindMany).toHaveBeenCalledWith({
       where: { guildId: GUILD, nitradoConnId: CONN },
@@ -260,5 +272,33 @@ describe('Nitrado-1C/1M/1S/1U repository config/worker serialization', () => {
     expect(bindingDeleteMany).toHaveBeenCalledWith({ where: { guildId: GUILD, nitradoConnId: CONN } });
     expect(connectionDeleteMany).toHaveBeenCalledWith({ where: { id: CONN, guildId: GUILD, slot: 1 } });
     expect(releaseConfigLock).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression (FIX-12): NitradoJob cascadet per Schema sofort mit der
+  // Connection mit -- ein noch nicht ausgefuehrter SERVER_BAN_ADD/WHITELIST_
+  // ADD-Job verschwand bisher spurlos, ohne dass der Aufrufer (und damit das
+  // NITRADO_SLOT_DELETED-Audit-Log) davon erfahren hat. deleteSlot muss diese
+  // Zahlen VOR dem Loeschen ermitteln und zurueckgeben.
+  it('reports pending remote jobs, unenforced bans and armed radar auto-ban zones before deleting', async () => {
+    nitradoJobCount.mockResolvedValue(2);
+    serverBanEntryCount.mockResolvedValue(1);
+    radarZoneCount.mockResolvedValue(3);
+
+    await expect(deleteSlot(GUILD as never, 1)).resolves.toEqual({
+      id: CONN,
+      orphanSummary: { pendingRemoteJobs: 2, unenforcedActiveBans: 1, radarAutoBanZones: 3 },
+    });
+
+    expect(nitradoJobCount).toHaveBeenCalledWith({
+      where: { guildId: GUILD, nitradoConnId: CONN, status: { in: ['PENDING', 'RUNNING'] } },
+    });
+    expect(serverBanEntryCount).toHaveBeenCalledWith({
+      where: { guildId: GUILD, nitradoConnId: CONN, active: true, appliedRemotely: false },
+    });
+    expect(radarZoneCount).toHaveBeenCalledWith({
+      where: { guildId: GUILD, nitradoConnId: CONN, autoBanEnabled: true },
+    });
+    // Die Zaehlung muss laufen, BEVOR die Connection geloescht wird.
+    expect(nitradoJobCount.mock.invocationCallOrder[0]).toBeLessThan(connectionDeleteMany.mock.invocationCallOrder[0]);
   });
 });

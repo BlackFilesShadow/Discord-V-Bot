@@ -1,5 +1,9 @@
 import { isKnownDayz129Identifier } from '../../ai/dayz129Catalog';
-import { redactText as baseRedactText } from './redactorBase';
+import {
+  redactText as baseRedactText,
+  redactValue as baseRedactValue,
+  redactObject as baseRedactObject,
+} from './redactorBase';
 import type { RedactOptions } from './redactorBase';
 
 const LONG_IDENTIFIER_RE = /\b[A-Za-z0-9_-]{20,64}={0,2}\b/g;
@@ -80,4 +84,21 @@ export function redactText(input: string, opts: RedactOptions = {}): string {
     const index = Number(rawIndex);
     return protectedValues[index] ?? '';
   });
+}
+
+/**
+ * redactValue()/redactObject() aus redactorBase nutzen intern denselben
+ * einfachen Basis-redactText und kennen die hier definierte Allowlist
+ * (verifizierte DayZ-1.29-Identifier, sichere serverDZ.cfg-Schluessel) nicht.
+ * Ohne diese Weiterleitung maskiert derselbe Wert je nach Pfad unterschiedlich
+ * stark: settings/serviceMeta-JSON (redactObject) strenger als eine rohe Datei
+ * (die diesen redactText direkt nutzt). Diese Wrapper injizieren denselben
+ * geschuetzten Text-Redactor, damit beide Pfade identisch maskieren.
+ */
+export function redactValue(key: string, value: unknown, opts: RedactOptions = {}): unknown {
+  return baseRedactValue(key, value, { ...opts, textRedactor: redactText });
+}
+
+export function redactObject(obj: Record<string, unknown>, opts: RedactOptions = {}): Record<string, unknown> {
+  return baseRedactObject(obj, { ...opts, textRedactor: redactText });
 }

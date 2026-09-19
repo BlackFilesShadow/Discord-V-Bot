@@ -63,6 +63,44 @@ describe('manual Nitrado drift resolution gate', () => {
     expect(route).toContain('Ban-Driftmeldung fehlgeschlagen');
   });
 
+  it('blocks a whitelist drift restore for an identifier that is currently banned', () => {
+    const route = read('src/dashboard/routes/v2/nitradoDrift.ts');
+    const resolve = route.indexOf("nitradoDriftRouter.post('/whitelist/resolve'");
+    const acceptNitrado = route.indexOf("if (decision === 'ACCEPT_NITRADO')", resolve);
+    const acceptEnd = route.indexOf('return { resolved: true, queued: false };', acceptNitrado);
+    const banCheck = route.indexOf('isWhitelistBlockedByActiveServerBan(', acceptEnd);
+    const blocked = route.indexOf('if (blockedByBan) return { resolved: false, queued: false, blockedByBan: true };', banCheck);
+    const localOnly = route.indexOf("data: { syncState: 'LOCAL_ONLY', lastSyncedAt: null }", blocked);
+    const enqueue = route.indexOf('enqueueWhitelistAdd(', localOnly);
+
+    expect(banCheck).toBeGreaterThan(acceptEnd);
+    expect(blocked).toBeGreaterThan(banCheck);
+    expect(localOnly).toBeGreaterThan(blocked);
+    expect(enqueue).toBeGreaterThan(localOnly);
+    expect(route).toContain("error: 'Dieser Identifier ist auf diesem Server aktuell gebannt. Wiederherstellung wurde verhindert.'");
+  });
+
+  it('checks the whitelist and ban drift-restore updateMany counts before enqueueing a job', () => {
+    const route = read('src/dashboard/routes/v2/nitradoDrift.ts');
+    const whitelistResolve = route.indexOf("nitradoDriftRouter.post('/whitelist/resolve'");
+    const whitelistUpdated = route.indexOf('const updated = await tx.whitelistEntry.updateMany(', whitelistResolve);
+    const whitelistGuard = route.indexOf('if (updated.count === 0) return { resolved: false, queued: false };', whitelistUpdated);
+    const whitelistEnqueue = route.indexOf('enqueueWhitelistAdd(', whitelistGuard);
+
+    expect(whitelistUpdated).toBeGreaterThan(whitelistResolve);
+    expect(whitelistGuard).toBeGreaterThan(whitelistUpdated);
+    expect(whitelistEnqueue).toBeGreaterThan(whitelistGuard);
+
+    const banResolve = route.indexOf("nitradoDriftRouter.post('/bans/resolve'");
+    const banFlagged = route.indexOf('const flagged = await tx.serverBanEntry.updateMany(', banResolve);
+    const banGuard = route.indexOf('if (flagged.count === 0) return { resolved: false, queued: false };', banFlagged);
+    const banEnqueue = route.indexOf('enqueueServerBanAdd(', banGuard);
+
+    expect(banFlagged).toBeGreaterThan(banResolve);
+    expect(banGuard).toBeGreaterThan(banFlagged);
+    expect(banEnqueue).toBeGreaterThan(banGuard);
+  });
+
   it('reports an active ban before a pending whitelist removal and allows a post-unban request to supersede it', () => {
     const command = read('src/commands/dashboard/whitelist.ts');
     const guard = read('src/modules/bans/whitelistBanGuard.ts');

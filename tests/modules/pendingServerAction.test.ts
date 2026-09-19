@@ -131,6 +131,30 @@ describe('PendingServerAction / SCOPE-003 + Nitrado-1E', () => {
     })).rejects.toThrow(/keine Secrets/);
   });
 
+  // Regression (FIX-10): "vor jedem Grossbuchstaben ein _ einfuegen" zerlegte
+  // ALL-CAPS-Akronyme wie "APIKey"/"TOKEN" in "_a_p_i_key"/"_t_o_k_e_n" und
+  // zerriss damit genau die Substrings ("api"/"token"), gegen die
+  // FORBIDDEN_KEY prueft -- der Filter griff dadurch nicht mehr.
+  it.each([
+    ['APIKey', { APIKey: 'raw-secret-value' }],
+    ['TOKEN', { TOKEN: 'raw-secret-value' }],
+    ['RCONPassword', { RCONPassword: 'raw-secret-value' }],
+    ['nested.SECRET', { nested: { SECRET: 'raw-secret-value' } }],
+  ])('verweigert ALL-CAPS/Akronym-Secret-Keys wie %s', async (_label, payload) => {
+    const { client } = makeClient();
+    await expect(createPendingServerAction(client, {
+      guildId, nitradoConnId, actorDiscordId, actionType: 'SAFE_ACTION', payload, now,
+    })).rejects.toThrow(/keine Secrets/);
+  });
+
+  it('laesst normale ALL-CAPS/Akronym-Keys ohne Secret-Bedeutung weiterhin zu', async () => {
+    const { client } = makeClient();
+    await expect(createPendingServerAction(client, {
+      guildId, nitradoConnId, actorDiscordId, actionType: 'SAFE_ACTION',
+      payload: { URLPath: '/status', HTTPMethod: 'GET', maxRetries: 3 }, now,
+    })).resolves.toEqual(expect.objectContaining({ actionType: 'SAFE_ACTION' }));
+  });
+
   it('claimt atomar nur einmal und konsumiert erst nach fenced complete', async () => {
     const { client, rows } = makeClient();
     const row = await createPendingServerAction(client, {

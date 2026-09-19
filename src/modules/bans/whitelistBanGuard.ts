@@ -6,7 +6,7 @@
  * oder in einer anderen Guild blockiert daher niemals diese Whitelist-Aktion.
  */
 import { config } from '../../config';
-import { hashBanIdentifier } from './banTarget';
+import { candidateBanIdentifierHashes } from './banTarget';
 import { isBanned, type BanClient, type BanScope } from './banRegistry';
 
 export const ACTIVE_BAN_WHITELIST_WARNING =
@@ -21,10 +21,11 @@ export async function isWhitelistBlockedByActiveServerBan(
   const normalizedGameId = gameId.trim();
   if (!normalizedGameId) return false;
 
-  return isBanned(
-    client,
-    scope,
-    hashBanIdentifier(normalizedGameId, config.security.encryptionKey),
-    now,
-  );
+  // Prueft sowohl die aktuelle case-normalisierte als auch die Legacy-Exakt-
+  // Hash-Form (siehe banTarget.candidateBanIdentifierHashes), damit ein Bann
+  // unabhaengig von Gross-/Kleinschreibung des Whitelist-Antrags erkannt wird.
+  for (const hash of candidateBanIdentifierHashes(normalizedGameId, config.security.encryptionKey)) {
+    if (await isBanned(client, scope, hash, now)) return true;
+  }
+  return false;
 }
