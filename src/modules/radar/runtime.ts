@@ -27,6 +27,7 @@ import {
   type RadarGeometry,
   type RadarPoint,
 } from './geometry';
+import { kickRadarAutoBanRuntime } from './autoBanRuntime';
 
 const POLL_INTERVAL_MS = 15_000;
 const SCAN_BATCH = 200;
@@ -38,6 +39,7 @@ const CONFIG_SWEEP_CONCURRENCY = 3;
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let kickQueued = false;
 
 type ZoneRow = {
   id: string;
@@ -363,6 +365,7 @@ async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): 
             select: { id: true },
           });
           await emitPersistedRadarEvent(created.id);
+          if (definition.punitive) kickRadarAutoBanRuntime();
         } catch (error) {
           if ((error as { code?: string }).code !== 'P2002') throw error;
         }
@@ -459,6 +462,20 @@ export async function runRadarRuntimeOnce(): Promise<void> {
   } finally {
     running = false;
   }
+}
+
+/**
+ * Event-getriebener Best-Effort-Kick nach neu persistierten ADM-Events. Der
+ * 15s-Scheduler bleibt unveraendert als Fallback; parallele Kicks werden
+ * zusammengefasst und der bestehende `running`-Guard verhindert Doppel-Laeufe.
+ */
+export function kickRadarRuntime(): void {
+  if (kickQueued) return;
+  kickQueued = true;
+  setImmediate(() => {
+    kickQueued = false;
+    void runRadarRuntimeOnce();
+  });
 }
 
 export function startRadarRuntime(): void {
