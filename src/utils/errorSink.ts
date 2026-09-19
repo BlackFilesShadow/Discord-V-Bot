@@ -9,6 +9,7 @@
 
 import axios from 'axios';
 import { errorCounter } from './metrics';
+import { logger } from './logger';
 import { redactObject, redactText } from '../modules/nitrado/mirror/redactor';
 
 const WEBHOOK_URL = process.env.ERROR_WEBHOOK_URL || '';
@@ -50,8 +51,25 @@ export interface ErrorContext {
 
 /**
  * Meldet einen Fehler an Metriken + (optional) Discord-Webhook.
+ *
+ * Muss selbst bei kaputten Eingaben synchron niemals werfen: Aufrufer wie der
+ * globale Command-Error-Handler rufen dies unguarded VOR der eigentlichen
+ * Nutzerantwort auf. Eine Exception hier (z.B. aus dem DayZ-Identifier-Check
+ * im Redactor, der bei beschaedigter Wissensbank-Payload fail-closed wirft)
+ * wuerde sonst die komplette Fehlerbehandlung des aufrufenden Codes abbrechen
+ * und dem Nutzer jede Antwort verweigern.
  */
 export function reportError(err: unknown, ctx: ErrorContext): void {
+  try {
+    reportErrorUnsafe(err, ctx);
+  } catch (reportingError) {
+    // Das Error-Reporting selbst darf den aufrufenden Error-Handler nie zum
+    // Absturz bringen. Best effort: nur lokal loggen, kein weiterer Webhook-Call.
+    logger.error('reportError() ist selbst fehlgeschlagen:', reportingError as Error);
+  }
+}
+
+function reportErrorUnsafe(err: unknown, ctx: ErrorContext): void {
   const e = err as Error;
   const message = e?.message ?? String(err);
   errorCounter.inc({ source: ctx.source });
