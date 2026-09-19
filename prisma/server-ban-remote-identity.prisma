@@ -1,9 +1,17 @@
 /// Persistenter, ausschliesslich verschluesselter Gameserver-Identifier fuer
 /// bot-eigene Server-Bans. Er ermoeglicht DB<->Nitrado-Reconciliation nach
 /// externem Drift oder Service-Rebind, ohne Klartext im Ban-Datensatz zu halten.
+///
+/// `identifierEnc` ist die tatsaechlich auf Nitrado verwendete Remote-Identitaet.
+/// Bei normalen/manuellen Bans ist sie identisch mit der lokalen Ban-Identitaet.
+/// Radar-Auto-Bans duerfen dagegen intern weiterhin ueber die eindeutige DayZ-GUID
+/// gefenced werden, waehrend Nitrado in `settings.general.bans` den sichtbaren
+/// Spielernamen fuehrt. In diesem Fall bewahrt `subjectIdentifierEnc` die
+/// verschluesselte interne GUID separat auf.
 model ServerBanRemoteIdentity {
-  banId         String   @id
-  identifierEnc String   @db.Text
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  banId                String   @id
+  identifierEnc        String   @db.Text
+  subjectIdentifierEnc String?  @db.Text
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 }
