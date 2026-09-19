@@ -113,6 +113,7 @@ function zone(overrides: AnyRow = {}): AnyRow {
     nitradoConnId: CONN_ID,
     name: 'Nordbasis',
     map: 'CHERNARUS',
+    coordinateFrameVersion: 2,
     shape: 'CIRCLE',
     isActive: true,
     autoBanEnabled: true,
@@ -271,6 +272,11 @@ describe('Radar Auto-Ban Runtime', () => {
   it('bannt nie bei geaenderter Zonen-Version', async () => {
     zoneFindFirst.mockResolvedValue(zone({ version: 2 }));
     await expectSkipped(event(), 'ZONE_VERSION_CHANGED');
+  });
+
+  it('bannt nie aus einer ungeprueften Legacy-Koordinatenzone', async () => {
+    zoneFindFirst.mockResolvedValue(zone({ coordinateFrameVersion: 1 }));
+    await expectSkipped(event(), 'ZONE_COORDINATE_FRAME_REVIEW_REQUIRED');
   });
 
   it('bannt nie einen verspaeteten ADM-Event aus einer frueheren Zonen-Generation', async () => {

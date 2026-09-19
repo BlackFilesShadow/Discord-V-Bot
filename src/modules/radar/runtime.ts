@@ -11,6 +11,7 @@ import { isValidBattleyeGuid } from '../../utils/guid';
 import {
   dayzIzurviveUrl,
   isPositionInsideMap,
+  RADAR_COORDINATE_FRAME_VERSION,
   type RadarMap,
 } from '../../shared/radarCoordinates';
 import {
@@ -306,6 +307,7 @@ async function evaluateEvent(config: RadarConfig, event: RadarScannedAdmEvent): 
         nitradoConnId: config.nitradoConnId,
         map: config.activeMap,
         isActive: true,
+        coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION,
         functions: { some: { functionKey: definition.key } },
       },
       include: { points: { orderBy: { position: 'asc' } }, functions: true, allowlist: true },

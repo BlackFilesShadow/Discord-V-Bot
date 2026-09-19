@@ -1,5 +1,6 @@
 import {
   RADAR_MAP_CALIBRATIONS,
+  RADAR_COORDINATE_FRAME_VERSION,
   dayzIzurviveUrl,
   dayzToMapLibre,
   isPositionInsideMap,
@@ -70,6 +71,23 @@ describe('Radar-Koordinatenkern', () => {
       expect(restored?.y).toBeCloseTo(point.y, 6);
       expect(restored?.altitude).toBeNull();
     }
+  });
+
+  it.each(Object.keys(RADAR_MAP_CALIBRATIONS) as RadarMap[])('bindet die nordorientierte Basemap an Z=0 im Sueden und Z=max im Norden: %s', map => {
+    const { widthMeters, heightMeters } = RADAR_MAP_CALIBRATIONS[map];
+    const [, southLatitude] = dayzToMapLibre(map, { x: 0, y: 0 });
+    const [, northLatitude] = dayzToMapLibre(map, { x: 0, y: heightMeters });
+
+    expect(RADAR_COORDINATE_FRAME_VERSION).toBe(2);
+    expect(northLatitude).toBeGreaterThan(southLatitude);
+    expect(mapLibreToDayz(map, 0, northLatitude)).toMatchObject({
+      x: widthMeters / 2,
+      y: heightMeters,
+    });
+    expect(mapLibreToDayz(map, 0, southLatitude)).toMatchObject({
+      x: widthMeters / 2,
+      y: 0,
+    });
   });
 
   it('erzeugt ausschliesslich map-aware iZurvive-Links aus gueltigen X/Z-Koordinaten', () => {

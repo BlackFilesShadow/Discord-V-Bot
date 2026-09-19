@@ -203,6 +203,7 @@ describe('Radar-Router', () => {
     expect(created.body.zone.geometry).toEqual(body().geometry);
     expect(created.body.zone).not.toHaveProperty('autoBanEnabled');
     expect(created.body.zone).not.toHaveProperty('altitudeEnabled');
+    expect(created.body.zone.coordinateFrameVersion).toBe(2);
     expect(zones.get(created.body.zone.id)?.autoBanEnabled).toBe(false);
     expect(zones.get(created.body.zone.id)?.altitudeEnabled).toBe(false);
 
@@ -210,6 +211,15 @@ describe('Radar-Router', () => {
     expect(listed.status).toBe(200);
     expect(listed.body.zones).toHaveLength(1);
     expect(listed.body.zones[0].geometry.points).toEqual((body().geometry as { points: unknown[] }).points);
+    expect(listed.body.zones[0].coordinateFrameVersion).toBe(2);
+  });
+
+  it('erlaubt dem Client nicht, eine neue Zone als Legacy-Koordinatenframe zu speichern', async () => {
+    const created = await request(app()).post(`${base}/zones?slot=1`).send(body({ coordinateFrameVersion: 1 }));
+
+    expect(created.status).toBe(201);
+    expect(created.body.zone.coordinateFrameVersion).toBe(2);
+    expect(zones.get(created.body.zone.id)?.coordinateFrameVersion).toBe(2);
   });
 
   it('leitet Auto-Ban ausschliesslich aus BAN-Toggles ab und rearmt bei jedem Speichern', async () => {
