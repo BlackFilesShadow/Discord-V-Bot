@@ -8,6 +8,7 @@ import {
   isPositionInsideMap,
   mapLibreToDayz,
   RADAR_MAP_CALIBRATIONS,
+  radarImageCoordinates,
   type RadarMap,
 } from '@radar-coordinates';
 
@@ -301,14 +302,8 @@ export function DayzRadarMap({
   useEffect(() => {
     setMapReady(false);
     setError(null);
-    const calibration = RADAR_MAP_CALIBRATIONS[activeMap];
-    const northWest = [...dayzToMapLibre(activeMap, { x: 0, y: 0 })] as [number, number];
-    const southEast = [...dayzToMapLibre(activeMap, {
-      x: calibration.widthMeters,
-      y: calibration.heightMeters,
-    })] as [number, number];
-    const southWest: [number, number] = [northWest[0], southEast[1]];
-    const northEast: [number, number] = [southEast[0], northWest[1]];
+    const imageCoordinates = radarImageCoordinates(activeMap);
+    const [northWest, northEast, southEast, southWest] = imageCoordinates;
     const map = new maplibregl.Map({
       container: container.current!,
       style: { version: 8, sources: {}, layers: [] },
@@ -328,7 +323,7 @@ export function DayzRadarMap({
       map.addSource('basemap', {
         type: 'image',
         url: `/radar/maps/${activeMap.toLowerCase()}.png`,
-        coordinates: [northWest, [southEast[0], northWest[1]], southEast, [northWest[0], southEast[1]]],
+        coordinates: imageCoordinates,
       });
       // Keep the pinned BI source geometrically untouched. Linear sampling is
       // pleasant at overview zoom; nearest-neighbour at high zoom avoids the
@@ -560,7 +555,7 @@ export function DayzRadarMap({
         }
       });
 
-      map.fitBounds([northWest, southEast], { padding: 24, duration: 0 });
+      map.fitBounds([southWest, northEast], { padding: 24, duration: 0 });
       redrawGrid();
       setMapReady(true);
     });
