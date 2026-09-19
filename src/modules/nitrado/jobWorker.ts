@@ -11,7 +11,7 @@
  * Operationen:
  *   - WHITELIST_ADD      payload: { gameId }
  *   - WHITELIST_REMOVE   payload: { gameId }
- *   - SERVER_BAN_ADD     payload: { banId, encryptedIdentifier }
+ *   - SERVER_BAN_ADD     payload: { banId, encryptedIdentifier, encryptedRemoteIdentifier? }
  *   - SERVER_BAN_REMOVE  payload: { banId }
  *   - KEEPALIVE          payload: {}              -> validateToken()
  *   - DOWNLOAD_ADM       payload: { profileDir? } -> wird vom ADM-Sync genutzt
@@ -97,6 +97,7 @@ const KNOWN_OPERATIONS = new Set([
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let kickQueued = false;
 
 export interface NitradoJobQueueSnapshot {
   depths: Record<NitradoJobMetricStatus, number>;
@@ -143,6 +144,7 @@ interface JobPayload {
   profileDir?: string;
   banId?: string;
   encryptedIdentifier?: string;
+  encryptedRemoteIdentifier?: string;
   planRevision?: number;
   [key: string]: unknown;
 }
@@ -151,6 +153,10 @@ function jobPayloadGameId(value: unknown): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const gameId = (value as Record<string, unknown>).gameId;
   return typeof gameId === 'string' && gameId.trim() ? gameId.trim() : null;
+}
+
+function normalizeBanIdentifier(value: string): string {
+  return value.trim().toLocaleLowerCase('en-US');
 }
 
 class PermanentJobError extends Error {
@@ -465,6 +471,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
       }
 
       let sensitiveIdentifier: string | null = null;
+      let sensitiveRemoteIdentifier: string | null = null;
 
       try {
         switch (job.operation) {
@@ -525,19 +532,47 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
 
             const ban = await prisma.serverBanEntry.findFirst({
               where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
-              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
+              select: {
+                id: true,
+                identityHash: true,
+                gameLabel: true,
+                active: true,
+                expiresAt: true,
+                appliedRemotely: true,
+              },
             });
             if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
             if (!isBanActive(ban, new Date())) break;
             if (ban.appliedRemotely) break;
 
             try {
-              sensitiveIdentifier = decrypt(banPayload.encryptedIdentifier, config.security.encryptionKey);
+              sensitiveIdentifier = decrypt(banPayload.encryptedIdentifier, config.security.encryptionKey).trim();
             } catch {
               throw new PermanentJobError('Server-Ban-Identifier konnte nicht entschluesselt werden');
             }
-            if (!matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
+            if (!sensitiveIdentifier
+              || !matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
               throw new PermanentJobError('Server-Ban-Identifier passt nicht zur gespeicherten HMAC-Identitaet');
+            }
+
+            sensitiveRemoteIdentifier = sensitiveIdentifier;
+            if (banPayload.encryptedRemoteIdentifier) {
+              if (!banPayload.radarAutoBan) {
+                throw new PermanentJobError('Abweichender Remote-Ban-Identifier ohne Radar-Fence');
+              }
+              try {
+                sensitiveRemoteIdentifier = decrypt(
+                  banPayload.encryptedRemoteIdentifier,
+                  config.security.encryptionKey,
+                ).trim();
+              } catch {
+                throw new PermanentJobError('Remote-Ban-Identifier konnte nicht entschluesselt werden');
+              }
+              if (!sensitiveRemoteIdentifier
+                || !ban.gameLabel
+                || normalizeBanIdentifier(sensitiveRemoteIdentifier) !== normalizeBanIdentifier(ban.gameLabel)) {
+                throw new PermanentJobError('Remote-Ban-Identifier passt nicht zum revalidierten Spielernamen');
+              }
             }
 
             const pendingWhitelistAdds = await prisma.nitradoJob.findMany({
@@ -571,15 +606,16 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
 
             // Safety ordering: ein Spieler darf niemals zuerst aus der Whitelist
             // verschwinden und danach wegen eines Ban-Backend-Fehlers ungebanned
-            // bleiben. Der Remote-Ban wird daher zuerst gelesen/gesetzt und von
-            // NitradoClient frisch bestaetigt. Erst danach folgt Whitelist-Remove.
+            // bleiben. Der Remote-Ban wird daher zuerst mit der explizit
+            // persistierten Remote-Identitaet gelesen/gesetzt. Die Whitelist
+            // bleibt dagegen an die interne Subject-GUID gebunden.
             const before = await client.getBanlist(conn.nitradoServerId);
             const alreadyRemote = before.some(e =>
-              matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
+              normalizeBanIdentifier(e.identifier) === normalizeBanIdentifier(sensitiveRemoteIdentifier!),
             );
             if (!alreadyRemote) {
               await ensureClaimOwned();
-              await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);
+              await client.addToBanlist(conn.nitradoServerId, sensitiveRemoteIdentifier);
             }
 
             await ensureClaimOwned();
@@ -614,14 +650,45 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             if (isBanActive(ban, new Date())) break;
             if (!ban.appliedRemotely) break;
 
+            const storedIdentity = await prisma.serverBanRemoteIdentity.findUnique({
+              where: { banId: ban.id },
+              select: { identifierEnc: true, subjectIdentifierEnc: true },
+            });
+
+            if (storedIdentity) {
+              try {
+                sensitiveIdentifier = decrypt(
+                  storedIdentity.subjectIdentifierEnc ?? storedIdentity.identifierEnc,
+                  config.security.encryptionKey,
+                ).trim();
+                sensitiveRemoteIdentifier = decrypt(
+                  storedIdentity.identifierEnc,
+                  config.security.encryptionKey,
+                ).trim();
+              } catch {
+                throw new PermanentJobError('Persistierte Server-Ban-Identitaet konnte nicht entschluesselt werden');
+              }
+              if (!sensitiveIdentifier
+                || !matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
+                throw new PermanentJobError('Persistierte Server-Ban-Subject-Identitaet passt nicht zur HMAC');
+              }
+              if (!sensitiveRemoteIdentifier) {
+                throw new PermanentJobError('Persistierter Remote-Ban-Identifier ist leer');
+              }
+            }
+
             const remote = await client.getBanlist(conn.nitradoServerId);
-            const match = remote.find(e =>
-              matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
-            );
+            const match = sensitiveRemoteIdentifier
+              ? remote.find(e => normalizeBanIdentifier(e.identifier) === normalizeBanIdentifier(sensitiveRemoteIdentifier!))
+              : remote.find(e => matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey));
             if (match) {
-              sensitiveIdentifier = match.identifier;
+              sensitiveRemoteIdentifier = match.identifier;
+              // Legacy-Fallback ohne persistierte Identitaet: Remote und Subject
+              // waren historisch identisch, daher darf der gefundene Wert auch
+              // als Subject fuer einen moeglichen Race-Re-Add dienen.
+              if (!sensitiveIdentifier) sensitiveIdentifier = match.identifier;
               await ensureClaimOwned();
-              await client.removeFromBanlist(conn.nitradoServerId, sensitiveIdentifier);
+              await client.removeFromBanlist(conn.nitradoServerId, sensitiveRemoteIdentifier);
             }
 
             await prisma.serverBanEntry.updateMany({
@@ -634,12 +701,15 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
               select: { active: true, expiresAt: true },
             });
             if (after && isBanActive(after, new Date()) && sensitiveIdentifier) {
+              const remoteDiffers = sensitiveRemoteIdentifier
+                && normalizeBanIdentifier(sensitiveRemoteIdentifier) !== normalizeBanIdentifier(sensitiveIdentifier);
               await enqueueServerBanAdd(
                 prisma as unknown as BanOutboxClient,
                 { guildId: job.guildId, nitradoConnId: conn.id },
                 ban.id,
                 sensitiveIdentifier,
                 config.security.encryptionKey,
+                remoteDiffers ? { remoteIdentifier: sensitiveRemoteIdentifier! } : undefined,
               );
             }
             break;
@@ -811,9 +881,12 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
           return;
         }
         const rawMsg = e instanceof Error ? e.message : String(e);
-        const msg = sensitiveIdentifier
-          ? rawMsg.split(sensitiveIdentifier).join('[REDACTED]')
-          : rawMsg;
+        const identifiersToRedact = [sensitiveIdentifier, sensitiveRemoteIdentifier]
+          .filter((value): value is string => Boolean(value));
+        const msg = identifiersToRedact.reduce(
+          (text, identifier) => text.split(identifier).join('[REDACTED]'),
+          rawMsg,
+        );
         const httpStatus = e instanceof NitradoApiError ? e.status : null;
         const permanent = e instanceof PermanentJobError
           || e instanceof RestartTaskActionUnsupportedError
@@ -945,6 +1018,20 @@ async function pollOnce(): Promise<void> {
     }
     running = false;
   }
+}
+
+/**
+ * Event-getriebener Best-Effort-Kick fuer frisch erzeugte Remote-Intents.
+ * Der 10s-Poll bleibt unveraendert als Fallback; parallele Kicks werden
+ * zusammengefasst und `pollOnce()` selbst verhindert parallele Laeufe.
+ */
+export function kickNitradoJobWorker(): void {
+  if (kickQueued) return;
+  kickQueued = true;
+  setImmediate(() => {
+    kickQueued = false;
+    void pollOnce();
+  });
 }
 
 export function startNitradoJobWorker(): void {

@@ -37,6 +37,17 @@ interface BanRow {
   appliedRemotely: boolean;
 }
 
+interface StoredIdentityRow {
+  identifierEnc: string;
+  subjectIdentifierEnc: string | null;
+}
+
+type DecodedStoredIdentity =
+  | { kind: 'VALID'; remoteIdentifier: string; subjectIdentifier: string }
+  | { kind: 'MISSING' }
+  | { kind: 'CORRUPT' }
+  | { kind: 'MISMATCH' };
+
 function safeError(error: unknown): string {
   return (error instanceof Error ? error.message : String(error))
     .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
@@ -60,32 +71,52 @@ function mergeRemoteRows(first: NitradoBanlistEntry[], second: NitradoBanlistEnt
   return [...byNorm.values()];
 }
 
-function decryptStoredIdentifier(identifierEnc: string | null, identityHash: string): string | null {
-  if (!identifierEnc) return null;
+/**
+ * Entschluesselt die beiden bewusst getrennten Ban-Identitaeten:
+ * - remoteIdentifier: exakter Wert in Nitrados settings.general.bans;
+ * - subjectIdentifier: interne Policy-/Whitelist-Identitaet, deren HMAC im
+ *   ServerBanEntry liegt (bei Radar die DayZ-GUID).
+ *
+ * Legacy-/manuelle Zeilen haben kein subjectIdentifierEnc; dort ist
+ * identifierEnc weiterhin gleichzeitig Subject und Remote-Identifier.
+ */
+function decodeStoredIdentity(
+  row: StoredIdentityRow | null,
+  identityHash: string,
+): DecodedStoredIdentity {
+  if (!row) return { kind: 'MISSING' };
   try {
-    const identifier = decrypt(identifierEnc, config.security.encryptionKey).trim();
-    if (!identifier) return null;
-    return matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey) ? identifier : null;
+    const remoteIdentifier = decrypt(row.identifierEnc, config.security.encryptionKey).trim();
+    const subjectIdentifier = decrypt(
+      row.subjectIdentifierEnc ?? row.identifierEnc,
+      config.security.encryptionKey,
+    ).trim();
+    if (!remoteIdentifier || !subjectIdentifier) return { kind: 'CORRUPT' };
+    if (!matchesBanIdentifier(subjectIdentifier, identityHash, config.security.encryptionKey)) {
+      return { kind: 'MISMATCH' };
+    }
+    return { kind: 'VALID', remoteIdentifier, subjectIdentifier };
   } catch {
-    return null;
+    return { kind: 'CORRUPT' };
   }
 }
 
 function findRemoteIdentifier(
   remoteRows: NitradoBanlistEntry[],
   ban: Pick<BanRow, 'identityHash'>,
-  storedIdentifier: string | null,
+  storedIdentity: DecodedStoredIdentity,
 ): string | null {
-  // Nitrado behandelt Listen-Identitaeten case-insensitiv. Wenn V-Bot den
-  // verschluesselten Original-Identifier besitzt, ist dessen normalisierte Form
-  // deshalb die kanonische Vergleichswahrheit. Das verhindert False-Drift nur
-  // aufgrund anderer Gross-/Kleinschreibung im Nitrado-Webinterface.
-  if (storedIdentifier) {
-    const target = normIdentifier(storedIdentifier);
+  // Mit persistierter, kryptografisch validierter Identitaet ist der explizite
+  // Remote-Identifier die kanonische Vergleichswahrheit. Das ist bei Radar der
+  // Spielername, waehrend die HMAC weiterhin an der GUID haengt.
+  if (storedIdentity.kind === 'VALID') {
+    const target = normIdentifier(storedIdentity.remoteIdentifier);
     return remoteRows.find(row => normIdentifier(row.identifier) === target)?.identifier ?? null;
   }
 
-  // Legacy-Fallback ohne Repair-Secret: nur die alte HMAC-Evidenz verwenden.
+  // Legacy-Fallback ohne verwertbares Repair-Secret: nur die alte HMAC-Evidenz
+  // verwenden. Das kann nur Faelle aufloesen, in denen Remote- und Subject-ID
+  // historisch identisch waren.
   return remoteRows.find(row =>
     matchesBanIdentifier(row.identifier, ban.identityHash, config.security.encryptionKey),
   )?.identifier ?? null;
@@ -122,12 +153,15 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
 
   const identities = await prisma.serverBanRemoteIdentity.findMany({
     where: { banId: { in: local.map(row => row.id) } },
-    select: { banId: true, identifierEnc: true },
+    select: { banId: true, identifierEnc: true, subjectIdentifierEnc: true },
   });
-  const identityByBan = new Map(identities.map(row => [row.banId, row.identifierEnc]));
-  const storedIdentifierByBan = new Map(local.map(ban => [
+  const identityByBan = new Map<string, StoredIdentityRow>(identities.map(row => [
+    row.banId,
+    { identifierEnc: row.identifierEnc, subjectIdentifierEnc: row.subjectIdentifierEnc },
+  ]));
+  const decodedIdentityByBan = new Map(local.map(ban => [
     ban.id,
-    decryptStoredIdentifier(identityByBan.get(ban.id) ?? null, ban.identityHash),
+    decodeStoredIdentity(identityByBan.get(ban.id) ?? null, ban.identityHash),
   ] as const));
 
   const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
@@ -140,7 +174,11 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
   // menge bedeutet konservativ: Abwesenheit gilt nur, wenn beide Reads fehlen.
   if (local.some(ban =>
     ban.appliedRemotely
-    && !findRemoteIdentifier(remoteRows, ban, storedIdentifierByBan.get(ban.id) ?? null),
+    && !findRemoteIdentifier(
+      remoteRows,
+      ban,
+      decodedIdentityByBan.get(ban.id) ?? { kind: 'MISSING' },
+    ),
   )) {
     await delay(REMOTE_ABSENCE_CONFIRM_DELAY_MS);
     remoteRows = mergeRemoteRows(remoteRows, await api.getBanlist(conn.nitradoServerId));
@@ -187,22 +225,20 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     }
 
     const locallyActive = isBanActive(ban, now);
-    const storedIdentityEnc = identityByBan.get(ban.id) ?? null;
-    const storedIdentifier = storedIdentifierByBan.get(ban.id) ?? null;
+    const storedIdentityRow = identityByBan.get(ban.id) ?? null;
+    const storedIdentity = decodedIdentityByBan.get(ban.id) ?? { kind: 'MISSING' as const };
 
     // Bestands-Selbstheilung fuer den alten Case-Bug: Ein aktiver Ban und ein
     // gleichzeitig noch LOCAL_ONLY/SYNCED gefuehrter Whitelist-Eintrag koennen
-    // fachlich nicht beide wahr sein. Wenn der verschluesselte Original-
-    // Identifier kryptografisch zum Ban gehoert, wird der lokale Whitelist-
-    // Spiegel case-insensitiv auf PENDING_REMOVE gesetzt. Der normale
-    // Whitelist-Reconciler bestaetigt/finalisiert danach gegen Nitrado; hier
-    // findet kein direkter Remote-Whitelist-Write statt.
-    if (locallyActive && storedIdentifier) {
+    // fachlich nicht beide wahr sein. Hier ist ausdruecklich die interne
+    // Subject-Identitaet relevant. Bei Radar bleibt das die GUID, auch wenn auf
+    // Nitrado sichtbar der Spielername gebannt wird.
+    if (locallyActive && storedIdentity.kind === 'VALID') {
       const repaired = await prisma.whitelistEntry.updateMany({
         where: {
           guildId: conn.guildId,
           nitradoConnId: conn.id,
-          gameId: { equals: storedIdentifier, mode: 'insensitive' },
+          gameId: { equals: storedIdentity.subjectIdentifier, mode: 'insensitive' },
           syncState: { in: ['LOCAL_ONLY', 'SYNCED'] },
         },
         data: { syncState: 'PENDING_REMOVE', lastSyncedAt: null },
@@ -213,7 +249,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
           where: {
             guildId: conn.guildId,
             nitradoConnId: conn.id,
-            gameId: { equals: storedIdentifier, mode: 'insensitive' },
+            gameId: { equals: storedIdentity.subjectIdentifier, mode: 'insensitive' },
             status: { in: ['PENDING', 'APPROVED'] },
           },
           data: { status: 'CANCELLED' },
@@ -221,7 +257,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       }
     }
 
-    const remoteIdentifier = findRemoteIdentifier(remoteRows, ban, storedIdentifier);
+    const remoteIdentifier = findRemoteIdentifier(remoteRows, ban, storedIdentity);
 
     if (locallyActive) {
       if (remoteIdentifier) {
@@ -239,18 +275,23 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
           correctedRemoteFlags += updated.count;
         }
 
-        // Legacy-/Upgrade-Backfill: Ein bereits remote vorhandener aktiver Ban
-        // liefert den exakten Identifier. Er wird ausschliesslich verschluesselt
-        // persistiert und kann kuenftige Drift-/Rebind-Reparaturen speisen.
-        if (!storedIdentityEnc) {
+        // Legacy-/Upgrade-Backfill: Dieser Pfad wird nur ohne gespeicherte
+        // Identitaetszeile erreicht. Das Remote-Match stammt dann aus der HMAC-
+        // Fallback-Pruefung, also sind Subject und Remote historisch identisch.
+        if (!storedIdentityRow) {
           const identifierEnc = encrypt(remoteIdentifier, config.security.encryptionKey);
           await prisma.serverBanRemoteIdentity.upsert({
             where: { banId: ban.id },
-            create: { banId: ban.id, identifierEnc },
-            update: { identifierEnc },
+            create: { banId: ban.id, identifierEnc, subjectIdentifierEnc: null },
+            update: { identifierEnc, subjectIdentifierEnc: null },
           });
-          identityByBan.set(ban.id, identifierEnc);
-          storedIdentifierByBan.set(ban.id, remoteIdentifier);
+          const row = { identifierEnc, subjectIdentifierEnc: null };
+          identityByBan.set(ban.id, row);
+          decodedIdentityByBan.set(ban.id, {
+            kind: 'VALID',
+            remoteIdentifier,
+            subjectIdentifier: remoteIdentifier,
+          });
           backfilledSecrets++;
         }
         continue;
@@ -269,7 +310,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       // appliedRemotely=false ist dagegen der normale ausstehende Soll-Zustand
       // fuer einen frisch angelegten Ban oder einen bewusst zur Reparatur
       // freigegebenen Eintrag. Nur diese Faelle duerfen automatisch ADDen.
-      if (!storedIdentityEnc) {
+      if (storedIdentity.kind === 'MISSING') {
         missingRepairSecrets++;
         logAudit('SERVER_BAN_RECONCILE_IDENTITY_MISSING', 'NITRADO', {
           guildId: conn.guildId,
@@ -280,43 +321,41 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
         continue;
       }
 
-      let identifier: string;
-      try {
-        identifier = decrypt(storedIdentityEnc, config.security.encryptionKey);
-      } catch (error) {
+      if (storedIdentity.kind === 'CORRUPT' || storedIdentity.kind === 'MISMATCH') {
         missingRepairSecrets++;
         await prisma.serverBanRemoteIdentity.deleteMany({ where: { banId: ban.id } });
         identityByBan.delete(ban.id);
-        storedIdentifierByBan.delete(ban.id);
-        logAudit('SERVER_BAN_RECONCILE_IDENTITY_CORRUPT', 'NITRADO', {
-          guildId: conn.guildId,
-          nitradoConnId: conn.id,
-          banId: ban.id,
-          error: safeError(error),
-        });
+        decodedIdentityByBan.set(ban.id, { kind: 'MISSING' });
+        logAudit(
+          storedIdentity.kind === 'CORRUPT'
+            ? 'SERVER_BAN_RECONCILE_IDENTITY_CORRUPT'
+            : 'SERVER_BAN_RECONCILE_IDENTITY_MISMATCH',
+          'NITRADO',
+          {
+            guildId: conn.guildId,
+            nitradoConnId: conn.id,
+            banId: ban.id,
+            ...(storedIdentity.kind === 'CORRUPT'
+              ? { error: 'Persistierte Server-Ban-Identitaet konnte nicht sicher entschluesselt werden.' }
+              : {}),
+          },
+        );
         continue;
       }
 
-      if (!matchesBanIdentifier(identifier, ban.identityHash, config.security.encryptionKey)) {
-        missingRepairSecrets++;
-        await prisma.serverBanRemoteIdentity.deleteMany({ where: { banId: ban.id } });
-        identityByBan.delete(ban.id);
-        storedIdentifierByBan.delete(ban.id);
-        logAudit('SERVER_BAN_RECONCILE_IDENTITY_MISMATCH', 'NITRADO', {
-          guildId: conn.guildId,
-          nitradoConnId: conn.id,
-          banId: ban.id,
-        });
-        continue;
-      }
-
+      const remoteDiffers = normIdentifier(storedIdentity.remoteIdentifier)
+        !== normIdentifier(storedIdentity.subjectIdentifier);
       if (await enqueueServerBanAdd(
         outbox,
         { guildId: conn.guildId, nitradoConnId: conn.id },
         ban.id,
-        identifier,
+        storedIdentity.subjectIdentifier,
         config.security.encryptionKey,
-        { recentDeadCooldownMs: SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS, now },
+        {
+          recentDeadCooldownMs: SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS,
+          now,
+          ...(remoteDiffers ? { remoteIdentifier: storedIdentity.remoteIdentifier } : {}),
+        },
       )) {
         repairedAdds++;
       }
@@ -324,7 +363,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     }
 
     // Inaktive/abgelaufene lokale Bans duerfen nur dann Remote-REMOVE erzeugen,
-    // wenn genau ihre Identitaet noch remote beobachtet wird. Externe Bans,
+    // wenn genau ihre Remote-Identitaet noch beobachtet wird. Externe Bans,
     // fuer die es keine bot-eigene Ban-Zeile gibt, bleiben unangetastet.
     if (remoteIdentifier) {
       if (!ban.appliedRemotely) {
@@ -352,11 +391,11 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       });
       correctedRemoteFlags += updated.count;
     }
-    if (storedIdentityEnc) {
+    if (storedIdentityRow) {
       const deleted = await prisma.serverBanRemoteIdentity.deleteMany({ where: { banId: ban.id } });
       cleanedSecrets += deleted.count;
       identityByBan.delete(ban.id);
-      storedIdentifierByBan.delete(ban.id);
+      decodedIdentityByBan.set(ban.id, { kind: 'MISSING' });
     }
   }
 

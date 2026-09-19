@@ -226,7 +226,36 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
 
   const ban = await prisma.serverBanEntry.findFirst({ where: { id: notice.subjectKey, guildId: notice.guildId, nitradoConnId: notice.nitradoConnId, active: true, appliedRemotely: true }, select: { id: true, identityHash: true } });
   if (!ban) { await interaction.editReply('Der lokale Ban wurde bereits geändert.'); return; }
-  if (names.some(name => matchesBanIdentifier(name, ban.identityHash, config.security.encryptionKey))) {
+
+  const identity = await prisma.serverBanRemoteIdentity.findUnique({
+    where: { banId: ban.id },
+    select: { identifierEnc: true, subjectIdentifierEnc: true },
+  });
+  let subjectIdentifier: string | null = null;
+  let remoteIdentifier: string | null = null;
+  if (identity) {
+    try {
+      remoteIdentifier = decrypt(identity.identifierEnc, config.security.encryptionKey).trim();
+      subjectIdentifier = decrypt(
+        identity.subjectIdentifierEnc ?? identity.identifierEnc,
+        config.security.encryptionKey,
+      ).trim();
+      if (!remoteIdentifier
+        || !subjectIdentifier
+        || !matchesBanIdentifier(subjectIdentifier, ban.identityHash, config.security.encryptionKey)) {
+        subjectIdentifier = null;
+        remoteIdentifier = null;
+      }
+    } catch {
+      subjectIdentifier = null;
+      remoteIdentifier = null;
+    }
+  }
+
+  const remotePresent = remoteIdentifier
+    ? names.some(name => normalize(name) === normalize(remoteIdentifier!))
+    : names.some(name => matchesBanIdentifier(name, ban.identityHash, config.security.encryptionKey));
+  if (remotePresent) {
     await clearNitradoDriftNotice(interaction.client, notice.guildId, notice.nitradoConnId, kind, notice.subjectKey);
     await finish(interaction, 'Der Ban ist bei Nitrado wieder vorhanden. Die Meldung wurde geschlossen.');
     return;
@@ -242,14 +271,22 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
     await finish(interaction, 'Nitrado-Zustand übernommen: Der lokale Ban wurde aufgehoben.');
     return;
   }
-  const identity = await prisma.serverBanRemoteIdentity.findUnique({ where: { banId: ban.id }, select: { identifierEnc: true } });
-  if (!identity) { await interaction.editReply('Der verschlüsselte Gameserver-Identifier fehlt. Eine Wiederherstellung ist nicht sicher möglich.'); return; }
-  let identifier: string;
-  try { identifier = decrypt(identity.identifierEnc, config.security.encryptionKey).trim(); } catch { await interaction.editReply('Der gespeicherte Gameserver-Identifier ist nicht lesbar.'); return; }
-  if (!matchesBanIdentifier(identifier, ban.identityHash, config.security.encryptionKey)) { await interaction.editReply('Der gespeicherte Gameserver-Identifier ist ungültig.'); return; }
+
+  if (!identity || !subjectIdentifier || !remoteIdentifier) {
+    await interaction.editReply('Die verschlüsselte Server-Ban-Identität fehlt oder ist nicht sicher lesbar. Eine Wiederherstellung ist nicht möglich.');
+    return;
+  }
+  const remoteDiffers = normalize(remoteIdentifier) !== normalize(subjectIdentifier);
   await prisma.$transaction(async tx => {
     await tx.serverBanEntry.updateMany({ where: { id: ban.id, guildId: notice.guildId, nitradoConnId: notice.nitradoConnId, active: true, appliedRemotely: true }, data: { appliedRemotely: false } });
-    await enqueueServerBanAdd(tx as unknown as BanOutboxClient, { guildId: notice.guildId, nitradoConnId: notice.nitradoConnId }, ban.id, identifier, config.security.encryptionKey);
+    await enqueueServerBanAdd(
+      tx as unknown as BanOutboxClient,
+      { guildId: notice.guildId, nitradoConnId: notice.nitradoConnId },
+      ban.id,
+      subjectIdentifier,
+      config.security.encryptionKey,
+      remoteDiffers ? { remoteIdentifier } : undefined,
+    );
     await tx.nitradoDriftNotice.deleteMany({ where: { id: notice.id, guildId: notice.guildId } });
   });
   logAudit('NITRADO_BAN_DRIFT_RESOLVED', 'MODERATION', { guildId: notice.guildId, actorUserId: interaction.user.id, details: { nitradoConnId: notice.nitradoConnId, banId: ban.id, decision: 'RESTORE_VBOT' } });
