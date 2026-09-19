@@ -52,6 +52,7 @@ jest.mock('../../src/database/prisma', () => ({ __esModule: true, default: prism
 
 const addBan = jest.fn();
 const enqueueServerBanAdd = jest.fn();
+const kickNitradoJobWorker = jest.fn();
 const logAudit = jest.fn();
 jest.mock('../../src/modules/bans/banRegistry', () => ({
   __esModule: true,
@@ -63,6 +64,10 @@ jest.mock('../../src/modules/bans/banRegistry', () => ({
 jest.mock('../../src/modules/bans/banOutbox', () => ({
   __esModule: true,
   enqueueServerBanAdd: (...args: unknown[]) => enqueueServerBanAdd(...args),
+}));
+jest.mock('../../src/modules/nitrado/jobWorker', () => ({
+  __esModule: true,
+  kickNitradoJobWorker: (...args: unknown[]) => kickNitradoJobWorker(...args),
 }));
 jest.mock('../../src/utils/logger', () => ({
   __esModule: true,
@@ -197,7 +202,7 @@ async function expectSkipped(row: AnyRow, code: string): Promise<void> {
 }
 
 describe('Radar Auto-Ban Runtime', () => {
-  it('bannt nur einen vollstaendig revalidierten BAN_* Event und fenced ihn vor dem Outbox-Enqueue', async () => {
+  it('haelt die GUID als interne Identitaet und schreibt den revalidierten Spielernamen als Remote-Ban', async () => {
     const row = event();
     queueOne(row);
 
@@ -236,6 +241,7 @@ describe('Radar Auto-Ban Runtime', () => {
       'ban-1',
       GUID,
       expect.any(String),
+      { remoteIdentifier: 'Player One' },
     );
     expect(addBan.mock.invocationCallOrder[0]).toBeLessThan(fenceUpsert.mock.invocationCallOrder[0]);
     expect(fenceUpsert.mock.invocationCallOrder[0]).toBeLessThan(enqueueServerBanAdd.mock.invocationCallOrder[0]);
@@ -247,6 +253,7 @@ describe('Radar Auto-Ban Runtime', () => {
       'MODERATION',
       expect.not.objectContaining({ identifier: GUID }),
     );
+    expect(kickNitradoJobWorker).toHaveBeenCalledTimes(1);
   });
 
   it('verweigert selbst einen versehentlich gequeueten PLAYER_DETECTION Event als nicht-punitiv', async () => {
@@ -255,6 +262,15 @@ describe('Radar Auto-Ban Runtime', () => {
       functionKey: 'PLAYER_DETECTION',
       zoneFunctionsSnapshot: ['PLAYER_DETECTION'],
     }), 'FUNCTION_NOT_PUNITIVE');
+  });
+
+  it('bannt nie ohne verwertbaren Spielernamen fuer die Remote-Bannliste', async () => {
+    await expectSkipped(event({ actorName: '   ' }), 'ACTOR_NAME_INVALID_OR_MISSING');
+  });
+
+  it('bannt nie wenn der gespeicherte Spielername nicht mehr zur ADM-Evidenz passt', async () => {
+    admFindFirst.mockResolvedValue(adm({ actorName: 'Different Player' }));
+    await expectSkipped(event({ actorName: 'Player One' }), 'EVENT_POSITION_OR_FUNCTION_MISMATCH');
   });
 
   it('bannt nie innerhalb des 10m-Grenzsicherheitsbereichs', async () => {
@@ -329,6 +345,7 @@ describe('Radar Auto-Ban Runtime', () => {
     expect(addBan).not.toHaveBeenCalled();
     expect(fenceUpsert).not.toHaveBeenCalled();
     expect(enqueueServerBanAdd).not.toHaveBeenCalled();
+    expect(kickNitradoJobWorker).not.toHaveBeenCalled();
     expect(txUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         autoBanStatus: RadarAutoBanStatus.APPLIED,
