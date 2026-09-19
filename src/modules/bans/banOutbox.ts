@@ -1,12 +1,18 @@
 /**
  * Privacy-sichere Nitrado-Outbox fuer Server-Banns.
  *
- * ADD braucht den echten Gameserver-Identifier. Er wird vor Persistenz mit
- * AES-256-GCM verschluesselt. Nitrado-1W persistiert dieselbe verschluesselte
- * Identitaet zusaetzlich banId-gebunden fuer spaetere DB<->Nitrado-
- * Reconciliation; Klartext wird weiterhin niemals gespeichert.
- * REMOVE braucht keinen Klartext: der Worker liest die Nitrado-Banlist live und
- * findet den passenden Identifier per HMAC gegen ServerBanEntry.identityHash.
+ * ADD braucht die interne Ban-Identitaet und optional eine davon abweichende
+ * Remote-Identitaet. Beide werden vor Persistenz mit AES-256-GCM verschluesselt.
+ * Normalfall/manueller Ban: beide sind identisch. Radar-Auto-Ban: die interne
+ * Identitaet bleibt die eindeutige DayZ-GUID, waehrend Nitrado den sichtbaren
+ * Spielernamen in settings.general.bans erhaelt.
+ *
+ * Nitrado-1W persistiert die Remote-Identitaet banId-gebunden fuer spaetere
+ * DB<->Nitrado-Reconciliation. Falls Subject und Remote abweichen, wird die
+ * interne Subject-Identitaet separat verschluesselt mitpersistiert. Klartext
+ * wird weiterhin niemals gespeichert.
+ * REMOVE braucht keinen Klartext in der Job-Payload: der Worker loest die
+ * persistierte Remote-Identitaet zur Laufzeit wieder auf.
  *
  * Nitrado-1A: Dedupe ist ueber einen DB-Advisory-xact-Lock pro
  * Guild+Connection+Operation+Ban-ID cross-process atomar. Damit koennen zwei
@@ -41,7 +47,10 @@ export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 
 export interface ServerBanJobPayload {
   banId: string;
+  /** Verschluesselte interne Policy-/Subject-Identitaet (bei Radar die GUID). */
   encryptedIdentifier?: string;
+  /** Optional abweichende Remote-Identitaet fuer Nitrados Banliste (bei Radar der Spielername). */
+  encryptedRemoteIdentifier?: string;
   radarAutoBan?: true;
 }
 
@@ -55,6 +64,12 @@ export interface ServerBanAddEnqueueOptions {
   recentDeadCooldownMs?: number;
   /** Test-/Scheduler-Zeitpunkt; Produktion verwendet standardmaessig jetzt. */
   now?: Date;
+  /**
+   * Abweichender sichtbarer Identifier fuer die Nitrado-Banliste.
+   * Darf ausschliesslich bei einem aktiv gefenceten Radar-Auto-Ban verwendet
+   * werden; die interne HMAC-/Whitelist-Identitaet bleibt `rawIdentifier`.
+   */
+  remoteIdentifier?: string;
 }
 
 export interface ServerBanRemoveEnqueueOptions {
@@ -73,8 +88,8 @@ interface BanRemoteIdentityTxClient {
   serverBanRemoteIdentity: {
     upsert(args: {
       where: { banId: string };
-      create: { banId: string; identifierEnc: string };
-      update: { identifierEnc: string };
+      create: { banId: string; identifierEnc: string; subjectIdentifierEnc: string | null };
+      update: { identifierEnc: string; subjectIdentifierEnc: string | null };
     }): Promise<unknown>;
   };
   radarAutoBanBanFence?: {
@@ -94,10 +109,14 @@ function asPayload(value: unknown): ServerBanJobPayload | null {
   const v = value as Record<string, unknown>;
   if (typeof v.banId !== 'string' || !v.banId.trim()) return null;
   if (v.encryptedIdentifier !== undefined && typeof v.encryptedIdentifier !== 'string') return null;
+  if (v.encryptedRemoteIdentifier !== undefined && typeof v.encryptedRemoteIdentifier !== 'string') return null;
   if (v.radarAutoBan !== undefined && v.radarAutoBan !== true) return null;
   return {
     banId: v.banId,
     ...(typeof v.encryptedIdentifier === 'string' ? { encryptedIdentifier: v.encryptedIdentifier } : {}),
+    ...(typeof v.encryptedRemoteIdentifier === 'string'
+      ? { encryptedRemoteIdentifier: v.encryptedRemoteIdentifier }
+      : {}),
     ...(v.radarAutoBan === true ? { radarAutoBan: true as const } : {}),
   };
 }
@@ -117,18 +136,28 @@ async function ensureJobInLock(
 ): Promise<boolean> {
   if (operation === 'SERVER_BAN_ADD' && options.whitelistIdentifier) {
     // Ein Bann bedeutet immer auch: derselbe Spieler darf lokal nicht weiter
-    // als SYNCED-Whitelist-Wahrheit stehen. Diese Spiegelmutation liegt unter
-    // derselben Connection-/Subject-Transaktion und verwendet dieselbe
-    // case-insensitive Identitaet wie der Nitrado-Whitelist-Remove.
+    // als SYNCED-Whitelist-Wahrheit stehen. Bei Radar ist dies bewusst die GUID
+    // und NICHT der sichtbare Remote-Banname.
     await markWhitelistRemoveIntent(tx, scope, options.whitelistIdentifier);
   }
 
   if (operation === 'SERVER_BAN_ADD' && payload.encryptedIdentifier) {
     const identityTx = tx as unknown as BanRemoteIdentityTxClient;
+    const remoteIdentifierEnc = payload.encryptedRemoteIdentifier ?? payload.encryptedIdentifier;
+    const subjectIdentifierEnc = payload.encryptedRemoteIdentifier
+      ? payload.encryptedIdentifier
+      : null;
     await identityTx.serverBanRemoteIdentity.upsert({
       where: { banId: payload.banId },
-      create: { banId: payload.banId, identifierEnc: payload.encryptedIdentifier },
-      update: { identifierEnc: payload.encryptedIdentifier },
+      create: {
+        banId: payload.banId,
+        identifierEnc: remoteIdentifierEnc,
+        subjectIdentifierEnc,
+      },
+      update: {
+        identifierEnc: remoteIdentifierEnc,
+        subjectIdentifierEnc,
+      },
     });
   }
 
@@ -217,7 +246,12 @@ async function hasActiveRadarFence(
   return fence !== null;
 }
 
-/** Queued Remote-Ban; Klartext-Identifier wird nie in der Job-Payload gespeichert. */
+/**
+ * Queued Remote-Ban. `rawIdentifier` ist immer die interne Ban-/Whitelist-
+ * Identitaet. Nur ein aktiv gefenceter Radar-Auto-Ban darf ueber
+ * `options.remoteIdentifier` einen abweichenden sichtbaren Nitrado-Banname
+ * mitgeben. Klartext-Identifier werden nie in der Job-Payload gespeichert.
+ */
 export async function enqueueServerBanAdd(
   client: BanOutboxClient,
   scope: BanOutboxScope,
@@ -228,7 +262,18 @@ export async function enqueueServerBanAdd(
 ): Promise<boolean> {
   const identifier = rawIdentifier.trim();
   if (!identifier) throw new Error('Leerer Server-Ban-Identifier');
+
   const radarAutoBan = await hasActiveRadarFence(client, scope, banId);
+  const requestedRemoteIdentifier = options.remoteIdentifier?.trim() ?? '';
+  if (requestedRemoteIdentifier && !radarAutoBan) {
+    throw new Error('Abweichender Remote-Ban-Identifier ist nur fuer gefencete Radar-Auto-Bans erlaubt');
+  }
+  const remoteIdentifier = requestedRemoteIdentifier || identifier;
+  if (!remoteIdentifier) throw new Error('Leerer Remote-Ban-Identifier');
+
+  const differsFromSubject = remoteIdentifier.toLocaleLowerCase('en-US')
+    !== identifier.toLocaleLowerCase('en-US');
+
   return ensureJob(
     client,
     scope,
@@ -236,6 +281,9 @@ export async function enqueueServerBanAdd(
     {
       banId,
       encryptedIdentifier: encrypt(identifier, encryptionKey),
+      ...(differsFromSubject
+        ? { encryptedRemoteIdentifier: encrypt(remoteIdentifier, encryptionKey) }
+        : {}),
       ...(radarAutoBan ? { radarAutoBan: true as const } : {}),
     },
     {
@@ -247,12 +295,12 @@ export async function enqueueServerBanAdd(
 }
 
 /**
- * Queued Remote-Unban; Identifier wird spaeter aus der Remote-Banlist
- * aufgeloest. Automatische Scheduler respektieren standardmaessig einen
- * Connection-weiten Recent-DEAD-Cooldown, damit permanente Remote-/
- * Konfigurationsfehler keinen endlosen Job-Neuanlage-Sturm erzeugen.
- * Explizite Bedieneraktionen koennen den Cooldown mit
- * `bypassRecentDeadCooldown` bewusst umgehen.
+ * Queued Remote-Unban; Identifier wird spaeter aus der persistenten
+ * ServerBanRemoteIdentity und der Remote-Banlist aufgeloest. Automatische
+ * Scheduler respektieren standardmaessig einen Connection-weiten
+ * Recent-DEAD-Cooldown, damit permanente Remote-/Konfigurationsfehler keinen
+ * endlosen Job-Neuanlage-Sturm erzeugen. Explizite Bedieneraktionen koennen den
+ * Cooldown mit `bypassRecentDeadCooldown` bewusst umgehen.
  */
 export async function enqueueServerBanRemove(
   client: BanOutboxClient,
