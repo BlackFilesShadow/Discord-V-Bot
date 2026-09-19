@@ -36,6 +36,7 @@ import {
   type NitradoOutboxTxClient,
 } from '../nitrado/outboxLock';
 import { markWhitelistRemoveIntent } from '../whitelist/whitelistOutbox';
+import { nitradoJobEnqueued } from '../nitrado/jobWorkerSignal';
 
 export type ServerBanJobOperation = 'SERVER_BAN_ADD' | 'SERVER_BAN_REMOVE';
 
@@ -188,11 +189,16 @@ async function ensureJob(
     banId,
   ].join(':');
 
-  return withNitradoOutboxConnectionLock(client, scope, tx =>
+  const created = await withNitradoOutboxConnectionLock(client, scope, tx =>
     withNitradoOutboxSubjectLock(tx, lockSubject, lockedTx =>
       ensureJobInLock(lockedTx, scope, operation, payload, options),
     ),
   );
+  // Fast-Path: sobald der Job committed ist, den Nitrado-Job-Worker sofort
+  // anstossen statt bis zu 10s auf sein naechstes Poll-Intervall zu warten.
+  // Das Intervall bleibt unveraendert als Fallback bestehen.
+  if (created) nitradoJobEnqueued.fire();
+  return created;
 }
 
 async function hasActiveRadarFence(

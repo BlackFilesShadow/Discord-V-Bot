@@ -64,6 +64,7 @@ import {
   markRestartPlanSyncPendingError,
   parsePlanTimes,
 } from './restartTaskPlanStore';
+import { nitradoJobEnqueued } from './jobWorkerSignal';
 
 const JOB_POLL_INTERVAL_MS = 10_000;
 const MAX_PARALLEL = 4;
@@ -97,6 +98,7 @@ const KNOWN_OPERATIONS = new Set([
 
 let timer: NodeJS.Timeout | null = null;
 let running = false;
+let unsubscribeJobSignal: (() => void) | null = null;
 
 export interface NitradoJobQueueSnapshot {
   depths: Record<NitradoJobMetricStatus, number>;
@@ -949,12 +951,19 @@ async function pollOnce(): Promise<void> {
 
 export function startNitradoJobWorker(): void {
   if (timer) return;
-  logger.info(`NitradoJob-Worker gestartet (Intervall ${JOB_POLL_INTERVAL_MS}ms, Parallel ${MAX_PARALLEL})`);
+  logger.info(`NitradoJob-Worker gestartet (Intervall ${JOB_POLL_INTERVAL_MS}ms Fallback + Enqueue-Fast-Path, Parallel ${MAX_PARALLEL})`);
   timer = setInterval(() => { void pollOnce(); }, JOB_POLL_INTERVAL_MS);
   timer.unref?.();
+  // Fast-Path: sofort pollen statt bis zu 10s auf das naechste Intervall zu
+  // warten, sobald die Outbox einen neuen Job committed hat. Claim/Lease/
+  // Connection-Lock/Retry bleiben unveraendert; das Intervall bleibt
+  // zusaetzlich als Fallback bestehen.
+  unsubscribeJobSignal = nitradoJobEnqueued.subscribe(() => { void pollOnce(); });
 }
 
 export function stopNitradoJobWorker(): void {
+  unsubscribeJobSignal?.();
+  unsubscribeJobSignal = null;
   if (timer) { clearInterval(timer); timer = null; }
 }
 

@@ -42,6 +42,15 @@ import {
   type AdmBindingSnapshot,
 } from './bindingFence';
 
+// Bewusst NICHT fuer Server mit aktivem Radar-Auto-Ban verkuerzt: das
+// dominante Latenz-Element bei BAN_PLAYER_DETECTION ist der ~5-Minuten-Ab-
+// stand, in dem DayZ selbst PLAYER_POSITION-Zeilen ins ADM schreibt -- das
+// aendert kein Nitrado-Poll-Intervall. Ein engeres Intervall wuerde stattdessen
+// den globalen Sweep ueber ALLE aktiven Connections verdichten und damit den
+// DayZ-PS-FileServer unnoetig zusaetzlich belasten (siehe NITRADO_SAFE_SEEK_BYTES
+// unten), fuer einen Erkennungsgewinn von im Mittel nur wenigen Sekunden. Die
+// eigentliche Beschleunigung sitzt event-driven direkt hinter dem ADM-Schreiben
+// in radar/autoBanSignal.ts und nitrado/jobWorkerSignal.ts.
 const POLL_INTERVAL_MS = 30_000;
 // Realer DayZ-PS-FileServer: 4 KiB ist stabil; groessere Seek-Ranges koennen
 // bereits bei ~100 KiB mit 5xx bzw. signierten 404 abbrechen. 4048 entspricht

@@ -1,3 +1,9 @@
+const jobEnqueuedFire = jest.fn();
+jest.mock('../../src/modules/nitrado/jobWorkerSignal', () => ({
+  __esModule: true,
+  nitradoJobEnqueued: { subscribe: jest.fn(() => jest.fn()), fire: (...args: unknown[]) => jobEnqueuedFire(...args) },
+}));
+
 import {
   SERVER_BAN_ADD_AUTO_DEAD_COOLDOWN_MS,
   SERVER_BAN_REMOVE_AUTO_DEAD_COOLDOWN_MS,
@@ -7,6 +13,10 @@ import {
   type BanOutboxClient,
 } from '../../src/modules/bans/banOutbox';
 import { decrypt } from '../../src/utils/security';
+
+beforeEach(() => {
+  jobEnqueuedFire.mockClear();
+});
 
 const KEY = '0'.repeat(64);
 const SCOPE = { guildId: 'guild-a', nitradoConnId: 'conn-a' };
@@ -62,6 +72,9 @@ describe('Server-Ban Outbox', () => {
     expect(persisted.create.identifierEnc).toBe(payload.encryptedIdentifier);
     expect(persisted.update.identifierEnc).toBe(payload.encryptedIdentifier);
     expect(decrypt(persisted.create.identifierEnc, KEY)).toBe(raw);
+    // Fast-Path: nach committetem Enqueue den Job-Worker sofort statt erst
+    // beim naechsten 10s-Intervall anstossen.
+    expect(jobEnqueuedFire).toHaveBeenCalledTimes(1);
   });
 
   it('aktualisiert die verschluesselte Reconciliation-Identitaet auch bei aktiv dedupliziertem ADD', async () => {
@@ -73,6 +86,8 @@ describe('Server-Ban Outbox', () => {
     expect(create).not.toHaveBeenCalled();
     const args = identityUpsert.mock.calls[0][0] as { create: { identifierEnc: string } };
     expect(decrypt(args.create.identifierEnc, KEY)).toBe('PlayerOne');
+    // Dedupliziert: kein neuer Job, also auch kein Fast-Path-Trigger noetig.
+    expect(jobEnqueuedFire).not.toHaveBeenCalled();
   });
 
   it('REMOVE persistiert nur die Ban-ID und keinen Reconciliation-Identifier', async () => {
