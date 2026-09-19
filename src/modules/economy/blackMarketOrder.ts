@@ -240,6 +240,18 @@ export async function createMarketOrder(args: {
         if (!row.active || row.archivedAt) throw new Error(`Angebot "${row.name}" wurde waehrend der Bestellung deaktiviert.`);
         if (row.vendorAccountId !== vendorAccountId) throw new Error('Angebot wurde waehrend der Bestellung einem anderen Haendler zugeordnet.');
       }
+      // Preise koennen sich zwischen dem ungesperrten Initial-Read (oben,
+      // fuer totalAmount) und dieser FOR-UPDATE-Sperre geaendert haben. Ohne
+      // diesen Abgleich wuerde die tatsaechlich gebuchte Geldbewegung
+      // (totalAmount) vom nun gesperrten, ggf. aktuelleren Preis abweichen,
+      // waehrend die EconomyMarketPurchase-Zeilen unten mit dem gesperrten
+      // Preis angelegt werden -> Diskrepanz zwischen gebuchtem Betrag und
+      // dokumentiertem Bestellwert. Gleiche Absicherung wie in
+      // blackMarketOrderV2.ts (lockedTotal-Check).
+      const lockedTotal = rows.reduce((sum, row) => sum + row.price, 0n);
+      if (lockedTotal !== totalAmount) {
+        throw new Error('Mindestens ein Preis hat sich waehrend der Bestellung geaendert. Bitte Angebot erneut oeffnen.');
+      }
       return { listings: rows };
     },
     mutate: async ({ raw, preflight }) => {
