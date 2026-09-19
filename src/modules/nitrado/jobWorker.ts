@@ -34,7 +34,7 @@ import { NitradoClient, NitradoApiError } from './nitradoClient';
 import { reconcileWhitelistRemoteIntent } from './whitelistIntent';
 import { emitGuildEvent } from '../../dashboard/socket/emitter';
 import { isBanActive } from '../bans/banRegistry';
-import { matchesBanIdentifier } from '../bans/banTarget';
+import { matchesBanIdentifier, decryptTrustedBanIdentifier, findRemoteBanIdentifier } from '../bans/banTarget';
 import {
   enqueueServerBanAdd,
   enqueueServerBanRemove,
@@ -525,7 +525,7 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
 
             const ban = await prisma.serverBanEntry.findFirst({
               where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
-              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
+              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true, remoteIdentifierIsName: true },
             });
             if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
             if (!isBanActive(ban, new Date())) break;
@@ -536,7 +536,12 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             } catch {
               throw new PermanentJobError('Server-Ban-Identifier konnte nicht entschluesselt werden');
             }
-            if (!matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
+            // Radar-Auto-Bans hinterlegen bei Nitrado bewusst den Spielernamen
+            // statt der GUID (ServerBanEntry.remoteIdentifierIsName); dieser
+            // Wert kann daher nie per HMAC zu identityHash passen und wird ueber
+            // den fachlich bereits geprueften Radar-Fence oben vertraut.
+            if (!ban.remoteIdentifierIsName
+              && !matchesBanIdentifier(sensitiveIdentifier, ban.identityHash, config.security.encryptionKey)) {
               throw new PermanentJobError('Server-Ban-Identifier passt nicht zur gespeicherten HMAC-Identitaet');
             }
 
@@ -574,9 +579,12 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             // bleiben. Der Remote-Ban wird daher zuerst gelesen/gesetzt und von
             // NitradoClient frisch bestaetigt. Erst danach folgt Whitelist-Remove.
             const before = await client.getBanlist(conn.nitradoServerId);
-            const alreadyRemote = before.some(e =>
-              matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
-            );
+            const alreadyRemote = findRemoteBanIdentifier(
+              before.map(e => e.identifier),
+              ban.identityHash,
+              ban.remoteIdentifierIsName ? sensitiveIdentifier : null,
+              config.security.encryptionKey,
+            ) !== null;
             if (!alreadyRemote) {
               await ensureClaimOwned();
               await client.addToBanlist(conn.nitradoServerId, sensitiveIdentifier);
@@ -608,18 +616,36 @@ export async function executeJob(claim: NitradoJobClaim): Promise<void> {
             const banPayload = parsePermanentServerBanPayload(payload);
             const ban = await prisma.serverBanEntry.findFirst({
               where: { id: banPayload.banId, guildId: job.guildId, nitradoConnId: conn.id },
-              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true },
+              select: { id: true, identityHash: true, active: true, expiresAt: true, appliedRemotely: true, remoteIdentifierIsName: true },
             });
             if (!ban) throw new PermanentJobError('Server-Ban-Eintrag im Job-Scope nicht gefunden');
             if (isBanActive(ban, new Date())) break;
             if (!ban.appliedRemotely) break;
 
+            // Radar-Auto-Bans stehen bei Nitrado unter dem Spielernamen, nicht
+            // der GUID (ServerBanEntry.remoteIdentifierIsName). Der HMAC-Abgleich
+            // unten kann diesen Wert daher nie finden; die banId-gebunden
+            // gespeicherte Identitaet wird dann stattdessen direkt vertraut.
+            let storedRemoteIdentifier: string | null = null;
+            if (ban.remoteIdentifierIsName) {
+              const storedIdentity = await prisma.serverBanRemoteIdentity.findUnique({
+                where: { banId: ban.id },
+                select: { identifierEnc: true },
+              });
+              storedRemoteIdentifier = storedIdentity
+                ? decryptTrustedBanIdentifier(storedIdentity.identifierEnc, ban.identityHash, config.security.encryptionKey, true)
+                : null;
+            }
+
             const remote = await client.getBanlist(conn.nitradoServerId);
-            const match = remote.find(e =>
-              matchesBanIdentifier(e.identifier, ban.identityHash, config.security.encryptionKey),
+            const matchedIdentifier = findRemoteBanIdentifier(
+              remote.map(e => e.identifier),
+              ban.identityHash,
+              storedRemoteIdentifier,
+              config.security.encryptionKey,
             );
-            if (match) {
-              sensitiveIdentifier = match.identifier;
+            if (matchedIdentifier) {
+              sensitiveIdentifier = matchedIdentifier;
               await ensureClaimOwned();
               await client.removeFromBanlist(conn.nitradoServerId, sensitiveIdentifier);
             }

@@ -16,7 +16,7 @@ import { resolveDelegatedPermissionContext } from '../permissions/access';
 import { NitradoClient } from './nitradoClient';
 import { enqueueWhitelistAdd, type WhitelistOutboxClient } from '../whitelist/whitelistOutbox';
 import { enqueueServerBanAdd, type BanOutboxClient } from '../bans/banOutbox';
-import { matchesBanIdentifier } from '../bans/banTarget';
+import { decryptTrustedBanIdentifier, findRemoteBanIdentifier, matchesBanIdentifier } from '../bans/banTarget';
 import { Colors, compactDescription, compactEmbed } from '../../utils/embedDesign';
 
 type DriftKind = 'WHITELIST' | 'BAN';
@@ -224,9 +224,24 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
     return;
   }
 
-  const ban = await prisma.serverBanEntry.findFirst({ where: { id: notice.subjectKey, guildId: notice.guildId, nitradoConnId: notice.nitradoConnId, active: true, appliedRemotely: true }, select: { id: true, identityHash: true } });
+  const ban = await prisma.serverBanEntry.findFirst({ where: { id: notice.subjectKey, guildId: notice.guildId, nitradoConnId: notice.nitradoConnId, active: true, appliedRemotely: true }, select: { id: true, identityHash: true, remoteIdentifierIsName: true } });
   if (!ban) { await interaction.editReply('Der lokale Ban wurde bereits geändert.'); return; }
-  if (names.some(name => matchesBanIdentifier(name, ban.identityHash, config.security.encryptionKey))) {
+
+  // Radar-Auto-Bans stehen bei Nitrado unter dem Spielernamen, nicht der GUID
+  // (ban.remoteIdentifierIsName). matchesBanIdentifier kann diesen Wert daher
+  // nie finden; die banId-gebunden gespeicherte Identitaet wird dann
+  // stattdessen direkt vertraut.
+  let storedIdentifier: string | null = null;
+  if (ban.remoteIdentifierIsName) {
+    const storedIdentity = await prisma.serverBanRemoteIdentity.findUnique({ where: { banId: ban.id }, select: { identifierEnc: true } });
+    storedIdentifier = storedIdentity
+      ? decryptTrustedBanIdentifier(storedIdentity.identifierEnc, ban.identityHash, config.security.encryptionKey, true)
+      : null;
+  }
+  const reappeared = ban.remoteIdentifierIsName
+    ? findRemoteBanIdentifier(names, ban.identityHash, storedIdentifier, config.security.encryptionKey) !== null
+    : names.some(name => matchesBanIdentifier(name, ban.identityHash, config.security.encryptionKey));
+  if (reappeared) {
     await clearNitradoDriftNotice(interaction.client, notice.guildId, notice.nitradoConnId, kind, notice.subjectKey);
     await finish(interaction, 'Der Ban ist bei Nitrado wieder vorhanden. Die Meldung wurde geschlossen.');
     return;
@@ -242,11 +257,16 @@ export async function handleNitradoDriftButton(interaction: ButtonInteraction): 
     await finish(interaction, 'Nitrado-Zustand übernommen: Der lokale Ban wurde aufgehoben.');
     return;
   }
-  const identity = await prisma.serverBanRemoteIdentity.findUnique({ where: { banId: ban.id }, select: { identifierEnc: true } });
-  if (!identity) { await interaction.editReply('Der verschlüsselte Gameserver-Identifier fehlt. Eine Wiederherstellung ist nicht sicher möglich.'); return; }
   let identifier: string;
-  try { identifier = decrypt(identity.identifierEnc, config.security.encryptionKey).trim(); } catch { await interaction.editReply('Der gespeicherte Gameserver-Identifier ist nicht lesbar.'); return; }
-  if (!matchesBanIdentifier(identifier, ban.identityHash, config.security.encryptionKey)) { await interaction.editReply('Der gespeicherte Gameserver-Identifier ist ungültig.'); return; }
+  if (ban.remoteIdentifierIsName) {
+    if (!storedIdentifier) { await interaction.editReply('Der verschlüsselte Gameserver-Identifier fehlt oder ist ungültig. Eine Wiederherstellung ist nicht sicher möglich.'); return; }
+    identifier = storedIdentifier;
+  } else {
+    const identity = await prisma.serverBanRemoteIdentity.findUnique({ where: { banId: ban.id }, select: { identifierEnc: true } });
+    if (!identity) { await interaction.editReply('Der verschlüsselte Gameserver-Identifier fehlt. Eine Wiederherstellung ist nicht sicher möglich.'); return; }
+    try { identifier = decrypt(identity.identifierEnc, config.security.encryptionKey).trim(); } catch { await interaction.editReply('Der gespeicherte Gameserver-Identifier ist nicht lesbar.'); return; }
+    if (!matchesBanIdentifier(identifier, ban.identityHash, config.security.encryptionKey)) { await interaction.editReply('Der gespeicherte Gameserver-Identifier ist ungültig.'); return; }
+  }
   await prisma.$transaction(async tx => {
     await tx.serverBanEntry.updateMany({ where: { id: ban.id, guildId: notice.guildId, nitradoConnId: notice.nitradoConnId, active: true, appliedRemotely: true }, data: { appliedRemotely: false } });
     await enqueueServerBanAdd(tx as unknown as BanOutboxClient, { guildId: notice.guildId, nitradoConnId: notice.nitradoConnId }, ban.id, identifier, config.security.encryptionKey);

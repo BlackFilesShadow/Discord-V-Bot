@@ -426,6 +426,13 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
         data: { status: 'CANCELLED' },
       });
 
+      // Nitrados echte Bannliste soll den Spielernamen zeigen statt der GUID.
+      // identityHash und das Whitelist-Matching oben bleiben davon unberuehrt
+      // immer GUID-basiert (validation.identifier); nur ohne verwertbaren
+      // Namen bleibt auch der Remote-Bannlisten-Wert die GUID.
+      const remoteBanlistIdentifier = validation.actorName?.trim() || null;
+      const remoteIdentifierIsName = remoteBanlistIdentifier !== null;
+
       await addBan(
         tx as unknown as BanClient,
         scope,
@@ -435,6 +442,7 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
           reason: validation.reason,
           bannedByDiscordId: event.autoBanAuthorizedBy!,
           expiresAt: null,
+          remoteIdentifierIsName,
         },
         now,
       );
@@ -456,7 +464,7 @@ async function processAutoBanEvent(eventId: string, attempts: number): Promise<v
         tx as unknown as BanOutboxClient,
         scope,
         ban.id,
-        validation.identifier,
+        remoteBanlistIdentifier ?? validation.identifier,
         config.security.encryptionKey,
       );
       await tx.radarZoneEvent.updateMany({

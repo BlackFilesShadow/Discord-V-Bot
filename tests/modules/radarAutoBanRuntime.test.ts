@@ -230,11 +230,14 @@ describe('Radar Auto-Ban Runtime', () => {
         invalidatedAt: null,
       },
     });
+    // Nitrados echte Bannliste soll den Spielernamen zeigen statt der GUID
+    // (siehe ServerBanEntry.remoteIdentifierIsName); die interne Identitaet
+    // bleibt ueber addBan/identityHash weiterhin GUID-basiert (oben geprueft).
     expect(enqueueServerBanAdd).toHaveBeenCalledWith(
       expect.anything(),
       { guildId: GUILD_ID, nitradoConnId: CONN_ID },
       'ban-1',
-      GUID,
+      'Player One',
       expect.any(String),
     );
     expect(addBan.mock.invocationCallOrder[0]).toBeLessThan(fenceUpsert.mock.invocationCallOrder[0]);

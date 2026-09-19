@@ -34,7 +34,15 @@ export interface BanClient {
 export async function addBan(
   client: BanClient,
   scope: BanScope,
-  args: { identityHash: string; gameLabel?: string | null; reason?: string | null; bannedByDiscordId: string; expiresAt?: Date | null },
+  args: {
+    identityHash: string;
+    gameLabel?: string | null;
+    reason?: string | null;
+    bannedByDiscordId: string;
+    expiresAt?: Date | null;
+    /** true = der bei Nitrado hinterlegte Remote-Identifier ist bewusst der Spielername statt der GUID (siehe ServerBanEntry.remoteIdentifierIsName). */
+    remoteIdentifierIsName?: boolean;
+  },
   now: Date = new Date(),
 ): Promise<void> {
   const where = { guildId_nitradoConnId_identityHash: { guildId: scope.guildId, nitradoConnId: scope.nitradoConnId, identityHash: args.identityHash } };
@@ -45,6 +53,7 @@ export async function addBan(
       gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
       bannedByDiscordId: args.bannedByDiscordId, bannedAt: now,
       expiresAt: args.expiresAt ?? null,
+      remoteIdentifierIsName: args.remoteIdentifierIsName ?? false,
       active: true, appliedRemotely: false, liftedAt: null,
     },
     // Re-Ban: reaktivieren, Metadaten erneuern UND Remote-Status bewusst auf
@@ -54,6 +63,7 @@ export async function addBan(
       gameLabel: args.gameLabel ?? null, reason: args.reason ?? null,
       bannedByDiscordId: args.bannedByDiscordId, bannedAt: now,
       expiresAt: args.expiresAt ?? null,
+      remoteIdentifierIsName: args.remoteIdentifierIsName ?? false,
       active: true, appliedRemotely: false, liftedAt: null,
     },
   });

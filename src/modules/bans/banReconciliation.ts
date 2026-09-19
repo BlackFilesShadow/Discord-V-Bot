@@ -35,6 +35,8 @@ interface BanRow {
   active: boolean;
   expiresAt: Date | null;
   appliedRemotely: boolean;
+  /** true = Nitrado hinterlegt bewusst den Spielernamen statt der GUID (Radar-Auto-Ban). */
+  remoteIdentifierIsName: boolean;
 }
 
 function safeError(error: unknown): string {
@@ -60,11 +62,19 @@ function mergeRemoteRows(first: NitradoBanlistEntry[], second: NitradoBanlistEnt
   return [...byNorm.values()];
 }
 
-function decryptStoredIdentifier(identifierEnc: string | null, identityHash: string): string | null {
+function decryptStoredIdentifier(
+  identifierEnc: string | null,
+  identityHash: string,
+  isDisplayNameIdentifier = false,
+): string | null {
   if (!identifierEnc) return null;
   try {
     const identifier = decrypt(identifierEnc, config.security.encryptionKey).trim();
     if (!identifier) return null;
+    // Radar-Auto-Bans hinterlegen bei Nitrado bewusst den Spielernamen statt
+    // der GUID (ban.remoteIdentifierIsName); dieser Wert kann nie per HMAC zu
+    // identityHash passen und wird dann banId-gebunden direkt vertraut.
+    if (isDisplayNameIdentifier) return identifier;
     return matchesBanIdentifier(identifier, identityHash, config.security.encryptionKey) ? identifier : null;
   } catch {
     return null;
@@ -113,6 +123,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
       active: true,
       expiresAt: true,
       appliedRemotely: true,
+      remoteIdentifierIsName: true,
     },
     orderBy: { updatedAt: 'asc' },
     take: BAN_BATCH,
@@ -127,7 +138,7 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
   const identityByBan = new Map(identities.map(row => [row.banId, row.identifierEnc]));
   const storedIdentifierByBan = new Map(local.map(ban => [
     ban.id,
-    decryptStoredIdentifier(identityByBan.get(ban.id) ?? null, ban.identityHash),
+    decryptStoredIdentifier(identityByBan.get(ban.id) ?? null, ban.identityHash, ban.remoteIdentifierIsName),
   ] as const));
 
   const token = decrypt(conn.encryptedToken, config.security.encryptionKey);
@@ -197,7 +208,10 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
     // Spiegel case-insensitiv auf PENDING_REMOVE gesetzt. Der normale
     // Whitelist-Reconciler bestaetigt/finalisiert danach gegen Nitrado; hier
     // findet kein direkter Remote-Whitelist-Write statt.
-    if (locallyActive && storedIdentifier) {
+    // Radar-Auto-Bans hinterlegen storedIdentifier bewusst als Spielername statt
+    // GUID; die Whitelist ist weiterhin GUID-gefuehrt (WhitelistEntry.gameId),
+    // ein Namensabgleich waere hier fachlich falsch und muss ausbleiben.
+    if (locallyActive && storedIdentifier && !ban.remoteIdentifierIsName) {
       const repaired = await prisma.whitelistEntry.updateMany({
         where: {
           guildId: conn.guildId,
@@ -297,7 +311,11 @@ async function reconcileLockedConnection(conn: BanReconcileConnection, now: Date
         continue;
       }
 
-      if (!matchesBanIdentifier(identifier, ban.identityHash, config.security.encryptionKey)) {
+      // Radar-Auto-Bans hinterlegen hier bewusst den Spielernamen statt der
+      // GUID (ban.remoteIdentifierIsName); der kann nie per HMAC zu
+      // identityHash passen und wird stattdessen banId-gebunden vertraut.
+      if (!ban.remoteIdentifierIsName
+        && !matchesBanIdentifier(identifier, ban.identityHash, config.security.encryptionKey)) {
         missingRepairSecrets++;
         await prisma.serverBanRemoteIdentity.deleteMany({ where: { banId: ban.id } });
         identityByBan.delete(ban.id);
