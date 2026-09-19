@@ -18,6 +18,7 @@ import {
   createCircleGeometry,
   createPolygonGeometry,
   geometryFitsMap,
+  sameGeometry,
   type RadarGeometry,
   type RadarPoint,
 } from '../../../modules/radar/geometry';
@@ -160,6 +161,27 @@ function geometryFrom(body: SaveBody, map: RadarMap): RadarGeometry | null {
       ? createPolygonGeometry(raw.points)
       : null;
   return geometry && geometryFitsMap(map, geometry) ? geometry : null;
+}
+
+/**
+ * Ein Zonen-Speichervorgang darf eine Legacy-Geometrie (vor dem
+ * Koordinatenrahmen-Fix gespeichert) niemals stillschweigend als geprueft
+ * markieren. Nur wenn die Geometrie sich nachweislich geaendert hat, darf
+ * coordinateFrameVersion auf die aktuelle Version angehoben werden.
+ */
+class LegacyGeometryUnchangedError extends Error {}
+
+function geometryFromRow(row: {
+  shape: 'CIRCLE' | 'POLYGON';
+  centerX: unknown;
+  centerY: unknown;
+  radiusMeters: unknown;
+  points: Array<{ x: unknown; y: unknown }>;
+}): RadarGeometry | null {
+  if (row.shape === 'CIRCLE') {
+    return createCircleGeometry(Number(row.centerX), Number(row.centerY), Number(row.radiusMeters));
+  }
+  return createPolygonGeometry(row.points.map(point => ({ x: Number(point.x), y: Number(point.y) })));
 }
 
 function editorStateFrom(value: SaveBody['editorState']): NonNullable<SaveBody['editorState']> {
@@ -426,85 +448,114 @@ radarRouter.put('/zones/:zoneId', requireGuildPermission('radar.manage'), async 
   if (roleValidation) { res.status(400).json({ error: roleValidation }); return; }
   const data = checked.data;
 
-  const updated = await prisma.$transaction(async tx => {
-    await lockRadarScope(tx, scope.guildId, scope.connId);
-    const existing = await tx.radarZone.findFirst({
-      where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
-      select: { id: true },
-    });
-    if (!existing) return null;
-
-    // Every save starts a new punitive generation. A BAN_* toggle automatically
-    // arms the worker; no separate dashboard master switch can drift from it.
-    const autoBanEnabledAt = data.autoBanEnabled ? new Date() : null;
-    const autoBanAuthorizedBy = data.autoBanEnabled ? scope.actorId : null;
-    const result = await tx.radarZone.updateMany({
-      where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
-      data: {
-        name: data.name,
-        map: data.map,
-        coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION,
-        shape: data.geometry.shape,
-        isActive: data.isActive,
-        autoBanEnabled: data.autoBanEnabled,
-        autoBanEnabledAt,
-        autoBanAuthorizedBy,
-        altitudeEnabled: false,
-        minAltitudeMeters: null,
-        maxAltitudeMeters: null,
-        centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
-        centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
-        radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
-        minX: data.geometry.minX,
-        minY: data.geometry.minY,
-        maxX: data.geometry.maxX,
-        maxY: data.geometry.maxY,
-        channelId: data.channelId,
-        rolePingEnabled: data.rolePingEnabled,
-        roleIds: data.roleIds,
-        embedColor: data.embedColor,
-        editorCenterX: data.editorState.centerX,
-        editorCenterY: data.editorState.centerY,
-        editorZoom: data.editorState.zoom,
-        editorBearing: data.editorState.bearing,
-        editorPitch: data.editorState.pitch,
-        updatedBy: scope.actorId,
-        version: { increment: 1 },
-      },
-    });
-    if (result.count !== 1) return null;
-
-    await Promise.all([
-      tx.radarZonePoint.deleteMany({ where: { zoneId: req.params.zoneId } }),
-      tx.radarZoneFunction.deleteMany({ where: { zoneId: req.params.zoneId } }),
-      tx.radarZoneAllowlist.deleteMany({ where: { zoneId: req.params.zoneId } }),
-    ]);
-    if (data.geometry.shape === 'POLYGON') {
-      await tx.radarZonePoint.createMany({
-        data: data.geometry.points.map((point, position) => ({ zoneId: req.params.zoneId, position, x: point.x, y: point.y })),
+  let updated;
+  try {
+    updated = await prisma.$transaction(async tx => {
+      await lockRadarScope(tx, scope.guildId, scope.connId);
+      const existing = await tx.radarZone.findFirst({
+        where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
+        select: {
+          id: true,
+          coordinateFrameVersion: true,
+          shape: true,
+          centerX: true,
+          centerY: true,
+          radiusMeters: true,
+          points: { select: { x: true, y: true }, orderBy: { position: 'asc' } },
+        },
       });
-    }
-    await Promise.all([
-      tx.radarZoneFunction.createMany({ data: data.enabledFunctions.map(functionKey => ({ zoneId: req.params.zoneId, functionKey })) }),
-      tx.radarZoneAllowlist.createMany({
-        data: data.allowlist.map(entry => ({
-          zoneId: req.params.zoneId,
-          source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL',
-          gameId: entry.gameId!.trim(),
-          playerName: entry.playerName?.trim() || null,
-        })),
-      }),
-    ]);
+      if (!existing) return null;
 
-    return tx.radarZone.findFirst({
-      where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId },
-      include: {
-        points: { orderBy: { position: 'asc' } },
-        functions: { orderBy: { functionKey: 'asc' } },
-        allowlist: { orderBy: { gameId: 'asc' } },
-      },
+      // A zone saved before the coordinate-frame fix must never be silently
+      // re-armed by an unrelated edit (renaming, toggling a function, ...).
+      // Only a genuinely repositioned geometry proves the zone was reviewed.
+      if (existing.coordinateFrameVersion < RADAR_COORDINATE_FRAME_VERSION) {
+        const previousGeometry = geometryFromRow(existing);
+        if (previousGeometry && sameGeometry(previousGeometry, data.geometry)) {
+          throw new LegacyGeometryUnchangedError();
+        }
+      }
+
+      // Every save starts a new punitive generation. A BAN_* toggle automatically
+      // arms the worker; no separate dashboard master switch can drift from it.
+      const autoBanEnabledAt = data.autoBanEnabled ? new Date() : null;
+      const autoBanAuthorizedBy = data.autoBanEnabled ? scope.actorId : null;
+      const result = await tx.radarZone.updateMany({
+        where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId, version: req.body.version },
+        data: {
+          name: data.name,
+          map: data.map,
+          coordinateFrameVersion: RADAR_COORDINATE_FRAME_VERSION,
+          shape: data.geometry.shape,
+          isActive: data.isActive,
+          autoBanEnabled: data.autoBanEnabled,
+          autoBanEnabledAt,
+          autoBanAuthorizedBy,
+          altitudeEnabled: false,
+          minAltitudeMeters: null,
+          maxAltitudeMeters: null,
+          centerX: data.geometry.shape === 'CIRCLE' ? data.geometry.centerX : null,
+          centerY: data.geometry.shape === 'CIRCLE' ? data.geometry.centerY : null,
+          radiusMeters: data.geometry.shape === 'CIRCLE' ? data.geometry.radiusMeters : null,
+          minX: data.geometry.minX,
+          minY: data.geometry.minY,
+          maxX: data.geometry.maxX,
+          maxY: data.geometry.maxY,
+          channelId: data.channelId,
+          rolePingEnabled: data.rolePingEnabled,
+          roleIds: data.roleIds,
+          embedColor: data.embedColor,
+          editorCenterX: data.editorState.centerX,
+          editorCenterY: data.editorState.centerY,
+          editorZoom: data.editorState.zoom,
+          editorBearing: data.editorState.bearing,
+          editorPitch: data.editorState.pitch,
+          updatedBy: scope.actorId,
+          version: { increment: 1 },
+        },
+      });
+      if (result.count !== 1) return null;
+
+      await Promise.all([
+        tx.radarZonePoint.deleteMany({ where: { zoneId: req.params.zoneId } }),
+        tx.radarZoneFunction.deleteMany({ where: { zoneId: req.params.zoneId } }),
+        tx.radarZoneAllowlist.deleteMany({ where: { zoneId: req.params.zoneId } }),
+      ]);
+      if (data.geometry.shape === 'POLYGON') {
+        await tx.radarZonePoint.createMany({
+          data: data.geometry.points.map((point, position) => ({ zoneId: req.params.zoneId, position, x: point.x, y: point.y })),
+        });
+      }
+      await Promise.all([
+        tx.radarZoneFunction.createMany({ data: data.enabledFunctions.map(functionKey => ({ zoneId: req.params.zoneId, functionKey })) }),
+        tx.radarZoneAllowlist.createMany({
+          data: data.allowlist.map(entry => ({
+            zoneId: req.params.zoneId,
+            source: entry.source === 'SERVER_WHITELIST' ? 'SERVER_WHITELIST' : 'MANUAL',
+            gameId: entry.gameId!.trim(),
+            playerName: entry.playerName?.trim() || null,
+          })),
+        }),
+      ]);
+
+      return tx.radarZone.findFirst({
+        where: { id: req.params.zoneId, guildId: scope.guildId, nitradoConnId: scope.connId },
+        include: {
+          points: { orderBy: { position: 'asc' } },
+          functions: { orderBy: { functionKey: 'asc' } },
+          allowlist: { orderBy: { gameId: 'asc' } },
+        },
+      });
     });
-  });
+  } catch (error) {
+    if (error instanceof LegacyGeometryUnchangedError) {
+      res.status(400).json({
+        error: 'Diese Zone wurde vor der Korrektur der Karten-Z-Achse gespeichert. Bitte Kreis oder Polygon auf der Karte neu positionieren, bevor sie erneut gespeichert wird.',
+      });
+      return;
+    }
+    throw error;
+  }
 
   if (!updated) {
     res.status(409).json({ error: 'Radar-Zone wurde zwischenzeitlich geändert oder nicht gefunden.' }); return;

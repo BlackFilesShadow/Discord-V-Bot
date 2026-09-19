@@ -294,6 +294,40 @@ describe('Radar-Router', () => {
     expect(zones.get(created.body.zone.id)?.autoBanEnabledAt).toBeInstanceOf(Date);
   });
 
+  it('verweigert das Speichern einer Legacy-Zone ohne echte Neupositionierung und erlaubt es nach Geometrie-Aenderung', async () => {
+    const instance = app();
+    const created = await request(instance).post(`${base}/zones?slot=1`).send(body({ isActive: false }));
+    expect(created.status).toBe(201);
+    const id = created.body.zone.id as string;
+
+    // Simuliert eine Zone, die vor dem Koordinatenrahmen-Fix gespeichert wurde
+    // (so wie die Migration 20260919013000_radar_coordinate_frame_v2 es fuer
+    // Bestandszonen markiert).
+    zones.get(id)!.coordinateFrameVersion = 1;
+
+    const untouched = await request(instance).put(`${base}/zones/${id}?slot=1`).send(body({
+      version: zones.get(id)!.version,
+      name: 'Nordtor umbenannt',
+      isActive: true,
+    }));
+    expect(untouched.status).toBe(400);
+    expect(zones.get(id)!.coordinateFrameVersion).toBe(1);
+    expect(zones.get(id)!.isActive).toBe(false);
+
+    const repositioned = await request(instance).put(`${base}/zones/${id}?slot=1`).send(body({
+      version: zones.get(id)!.version,
+      name: 'Nordtor umbenannt',
+      isActive: true,
+      geometry: {
+        type: 'POLYGON',
+        points: [{ x: 200, y: 200 }, { x: 500, y: 200 }, { x: 500, y: 500 }, { x: 200, y: 500 }],
+      },
+    }));
+    expect(repositioned.status).toBe(200);
+    expect(zones.get(id)!.coordinateFrameVersion).toBe(2);
+    expect(zones.get(id)!.isActive).toBe(true);
+  });
+
   it('lehnt fremde IDs, veraltete Versionen und ungueltige GUID-, Rollen- oder Funktionswerte ab', async () => {
     const instance = app();
     const invalid = await request(instance).post(`${base}/zones?slot=1`).send(body({
